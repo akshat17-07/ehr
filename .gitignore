@@ -1,0 +1,7 @@
+node_modules/
+dist/
+cdk.out/
+outputs.json
+coverage/
+.env*
+*.age
