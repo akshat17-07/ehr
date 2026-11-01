@@ -15,6 +15,7 @@ import {
   SEXES,
   updatePatient,
 } from './patients.js';
+import { addGuardian } from './guardians.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
 // /staff/patients (api-list.md 6.3).
@@ -30,6 +31,7 @@ const mobile = z
 
 const name = z.string().trim().min(2).max(100);
 const text = z.string().trim().min(1).max(200);
+const relation = z.string().trim().min(2).max(50);
 
 const address = z
   .object({
@@ -53,7 +55,7 @@ const newPatient = z
     mobile: mobile.optional(),
     email: z.email().max(254).optional(),
     address: address.optional(),
-    guardian: z.object({ name, relation: z.string().trim().min(2).max(50), mobile: mobile.optional() }).strict().optional(),
+    guardian: z.object({ name, relation, mobile: mobile.optional() }).strict().optional(),
   })
   .strict()
   .refine((p) => (p.dob === undefined) !== (p.ageYears === undefined), { message: 'give dob or ageYears (one of them)', path: ['dob'] });
@@ -73,6 +75,16 @@ const patientChange = z
   })
   .strict()
   .refine((p) => p.dob === undefined || p.ageYears === undefined, { message: 'give dob or ageYears, not both', path: ['dob'] });
+
+const newGuardian = z
+  .object({
+    name,
+    relation,
+    mobile: mobile.optional(),
+    guardianPatientId: z.uuid().optional(),
+    portalAccess: z.boolean().optional(),
+  })
+  .strict();
 
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
@@ -139,4 +151,12 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const patient = await getPatient(db, c.req.param('id'));
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json(await patientTimeline(db, patient.id, query));
+  })
+  // #26
+  .post('/:id/guardians', requirePermission('patient.update'), async (c) => {
+    const input = newGuardian.parse(await bodyOf(c));
+    const id = c.req.param('id');
+    const guardian = await addGuardian(await dbOf(c), id, input, userOf(c).sub);
+    auditDetails(c, { patientId: guardian.patientId, recordType: 'guardian', recordId: guardian.id });
+    return c.json(guardian, 201);
   });

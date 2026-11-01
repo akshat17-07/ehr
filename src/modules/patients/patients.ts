@@ -4,6 +4,7 @@ import { nextCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { dateText, listVersions, updateRecord, type Version } from '../../db/records.js';
+import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -23,9 +24,9 @@ export const UHID = /^U\d{8,}$/i;
 /** Days without activity after which a patient is inactive. Per role or user once #185/#186 are built. */
 export const INACTIVE_AFTER_DAYS = 10;
 
-export interface Patient {
-  id: string;
-  version: number;
+export type BaseFields = ReturnType<typeof baseFields>;
+
+export interface Patient extends BaseFields {
   uhid: string;
   name: string;
   sex: Sex;
@@ -71,8 +72,7 @@ function ageOf(r: Record<string, unknown>, today: string): number | undefined {
 export function toPatient(r: Record<string, unknown>, now = new Date()): Patient {
   const lastActivity = r.last_activity_at instanceof Date ? r.last_activity_at : undefined;
   const patient: Patient = {
-    id: String(r.id),
-    version: Number(r.version),
+    ...baseFields(r as unknown as BaseRow),
     uhid: String(r.uhid),
     name: String(r.name),
     sex: r.sex as Sex,
@@ -139,12 +139,6 @@ export async function getPatient(db: Queryable, id: string, now = new Date()): P
   return toPatient(rows[0], now);
 }
 
-export interface NewGuardian {
-  name: string;
-  relation: string;
-  mobile?: string;
-}
-
 /** #20. Either dob or ageYears. */
 export interface NewPatient {
   name: string;
@@ -154,7 +148,8 @@ export interface NewPatient {
   mobile?: string;
   email?: string;
   address?: Address;
-  guardian?: NewGuardian;
+  /** Added with the patient; more with #26. */
+  guardian?: { name: string; relation: string; mobile?: string };
 }
 
 const MAX_UHID_TRIES = 5;

@@ -254,3 +254,30 @@ describe('GET /staff/patients/{id}/timeline', () => {
     expect((await app.request('/staff/patients/9a710000-0000-4000-8000-000000000999/timeline', {}, reception)).status).toBe(404);
   });
 });
+
+describe('POST /staff/patients/{id}/guardians', () => {
+  const rahul = '9a710000-0000-4000-8000-000000000005';
+  const ramesh = '9a710000-0000-4000-8000-000000000001';
+  const add = (id: string, body: unknown) =>
+    app.request(`/staff/patients/${id}/guardians`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, reception);
+
+  it('adds a guardian, linked to a patient record if they are one, with portal access', async () => {
+    const res = await add(rahul, { name: 'Ramesh Kumar Sharma', relation: 'grandfather', mobile: '9826000001', guardianPatientId: ramesh, portalAccess: true });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: rahul, guardianPatientId: ramesh, relation: 'grandfather', mobile: '9826000001',
+      portalAccess: true, version: 1, status: 'active', createdBy: 'dev-reception' });
+    expect(await (await add(rahul, { name: 'Anita Verma', relation: 'mother' })).json()).toMatchObject({ portalAccess: false });
+    const audit = await db.query("SELECT record_type FROM audit_events WHERE patient_id = $1 AND action = 'create'", [rahul]);
+    expect(audit.rows).toEqual([{ record_type: 'guardian' }, { record_type: 'guardian' }]);
+  });
+
+  it('422 for portal access without a mobile, a patient as their own guardian, or an unknown guardian patient', async () => {
+    for (const body of [
+      { name: 'No Mobile', relation: 'father', portalAccess: true },
+      { name: 'Self', relation: 'self', guardianPatientId: rahul },
+      { name: 'Ghost', relation: 'uncle', guardianPatientId: '9a710000-0000-4000-8000-000000000999' },
+      { name: 'X', relation: 'uncle' },
+    ]) expect((await add(rahul, body)).status, JSON.stringify(body)).toBe(422);
+    expect((await add('9a710000-0000-4000-8000-000000000999', { name: 'Anita Verma', relation: 'mother' })).status).toBe(404);
+  });
+});
