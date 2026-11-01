@@ -1,6 +1,8 @@
 import type { LambdaEvent } from 'hono/aws-lambda';
 import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
+import type { Queryable } from '../db/migrate.js';
+import type { UserPermissions } from '../permissions/check.js';
 import type { AuditDetails } from './audit.js';
 import { AppError } from './errors.js';
 
@@ -21,7 +23,14 @@ export interface CurrentUser {
 
 export type AuthEnv = {
   Bindings: { event?: LambdaEvent };
-  Variables: { user?: CurrentUser; audit?: AuditDetails };
+  Variables: {
+    user?: CurrentUser;
+    audit?: AuditDetails;
+    /** The database, set by createApp for every request. */
+    db?: () => Promise<Queryable>;
+    /** The caller's permissions, loaded on the first check of the request. */
+    permissions?: UserPermissions;
+  };
 };
 
 type Claims = Record<string, unknown>;

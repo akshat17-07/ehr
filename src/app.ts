@@ -35,6 +35,10 @@ export function createApp({ db = getDb }: AppDeps = {}) {
 
   // Every request except /health gets an audit row (middleware/audit.ts).
   const audited = new Hono<AuthEnv>()
+    .use(async (c, next) => {
+      c.set('db', db);
+      await next();
+    })
     .use(auditRequests(db))
     .route('/staff', staff)
     .route('/admin', admin)

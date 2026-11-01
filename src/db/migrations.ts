@@ -106,4 +106,10 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC grants_user ON grants (user_id, ends_at)',
     ],
   },
+  {
+    // A user's bundles (#157) sit with their custom lists, so one row read gives everything beyond their type.
+    // NULL = no bundles (DSQL adds columns without defaults).
+    id: '0007_user_bundles',
+    statements: () => ['ALTER TABLE user_permissions ADD COLUMN bundles text'],
+  },
 ];

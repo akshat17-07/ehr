@@ -5,7 +5,8 @@ import { AppError } from '../middleware/errors.js';
 import { isPermission, type Permission } from './catalog.js';
 import { GRANT_ONLY } from './defaults.js';
 
-// user_permissions: a staff member's own extra permissions (allow) and removed ones (deny), set with #307.
+// user_permissions: a staff member's own extra permissions (allow) and removed ones (deny), set with #307,
+// and their bundles (#157). All three are JSON arrays; bundles is empty (NULL) until first set.
 // A user without a row has none (version 0). Every change keeps the old row (user_permissions_versions).
 
 export interface CustomPermissions {
@@ -13,6 +14,8 @@ export interface CustomPermissions {
   version: number;
   allow: Permission[];
   deny: Permission[];
+  /** Bundle names. */
+  bundles: string[];
 }
 
 export interface CustomChange {
@@ -29,9 +32,15 @@ export interface CustomChange {
 const parse = (text: unknown) => JSON.parse(String(text)) as Permission[];
 
 export async function getCustomPermissions(db: Queryable, userId: string): Promise<CustomPermissions> {
-  const { rows } = await db.query('SELECT version, allow, deny FROM user_permissions WHERE user_id = $1', [userId]);
+  const { rows } = await db.query('SELECT version, allow, deny, bundles FROM user_permissions WHERE user_id = $1', [userId]);
   const row = rows[0];
-  return row ? { version: Number(row.version), allow: parse(row.allow), deny: parse(row.deny) } : { version: 0, allow: [], deny: [] };
+  if (!row) return { version: 0, allow: [], deny: [], bundles: [] };
+  return {
+    version: Number(row.version),
+    allow: parse(row.allow),
+    deny: parse(row.deny),
+    bundles: row.bundles === null ? [] : (JSON.parse(String(row.bundles)) as string[]),
+  };
 }
 
 /** Checks a change: known keys only, none in both lists, no grant-only permission in allow. Returns the lists sorted, once each. */
@@ -65,7 +74,7 @@ export async function saveCustomPermissions(db: Queryable, change: CustomChange)
       if ((error as { code?: string }).code === '23505') throw new AppError(409, 'conflict', 'someone else saved this record first');
       throw error;
     }
-    return { version: 1, allow, deny };
+    return { version: 1, allow, deny, bundles: [] };
   }
 
   const { rows } = await db.query('SELECT id FROM user_permissions WHERE user_id = $1', [change.userId]);
@@ -77,5 +86,5 @@ export async function saveCustomPermissions(db: Queryable, change: CustomChange)
     set,
     reason: change.reason,
   });
-  return { version: Number(row.version), allow, deny };
+  return { version: Number(row.version), allow, deny, bundles: row.bundles === null ? [] : (JSON.parse(String(row.bundles)) as string[]) };
 }

@@ -11,16 +11,16 @@ describe('custom permissions', () => {
   afterAll(() => db.close());
 
   it('a user starts with none, version 0', async () => {
-    expect(await getCustomPermissions(db, 'nobody')).toEqual({ version: 0, allow: [], deny: [] });
+    expect(await getCustomPermissions(db, 'nobody')).toEqual({ version: 0, allow: [], deny: [], bundles: [] });
   });
 
   it('saves the first change, then edits with the version check, keeping the old row', async () => {
     const first = { userId: 'u-nurse', allow: ['bill.view'], deny: ['breakglass.invoke'], by: 'u-admin', reason: 'billing desk' };
-    expect(await saveCustomPermissions(db, { ...first, version: 0 })).toEqual({ version: 1, allow: ['bill.view'], deny: ['breakglass.invoke'] });
+    expect(await saveCustomPermissions(db, { ...first, version: 0 })).toEqual({ version: 1, allow: ['bill.view'], deny: ['breakglass.invoke'], bundles: [] });
     await expect(saveCustomPermissions(db, { ...first, version: 0 })).rejects.toMatchObject({ status: 409 });
 
     const second = { ...first, version: 1, allow: ['bill.view', 'bill.create', 'bill.view'], reason: 'more billing' };
-    expect(await saveCustomPermissions(db, second)).toEqual({ version: 2, allow: ['bill.create', 'bill.view'], deny: ['breakglass.invoke'] });
+    expect(await saveCustomPermissions(db, second)).toEqual({ version: 2, allow: ['bill.create', 'bill.view'], deny: ['breakglass.invoke'], bundles: [] });
     await expect(saveCustomPermissions(db, second)).rejects.toMatchObject({ status: 409 });
 
     expect(await getCustomPermissions(db, 'u-nurse')).toMatchObject({ version: 2, allow: ['bill.create', 'bill.view'] });
