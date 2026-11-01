@@ -41,6 +41,9 @@ export interface Patient {
   inactive: boolean;
   allergies: string[];
   activePolicyId?: string;
+  /** Unknown emergency patients (#21): what they look like, and who brought them in. */
+  emergencyNote?: string;
+  broughtBy?: string;
 }
 
 /** What a search shows: no labels, address or allergies. */
@@ -83,6 +86,8 @@ export function toPatient(r: Record<string, unknown>, now = new Date()): Patient
     inactive: !lastActivity || now.getTime() - lastActivity.getTime() > INACTIVE_AFTER_DAYS * 86_400_000,
     allergies: JSON.parse(String(r.allergies)) as string[],
     activePolicyId: opt(r.active_policy_id),
+    emergencyNote: opt(r.emergency_note),
+    broughtBy: opt(r.brought_by),
   };
   for (const key of Object.keys(patient) as (keyof Patient)[]) if (patient[key] === undefined) delete patient[key];
   return patient;
@@ -167,30 +172,88 @@ async function insertWithUhid(db: Queryable, now: Date, insert: (uhid: string) =
   }
 }
 
-/** #20: a new patient with a new UHID. Registering counts as activity, so the patient starts active. */
-export async function registerPatient(db: Queryable, input: NewPatient, by: string, now = new Date()): Promise<Patient> {
+interface PatientRow {
+  name: string;
+  sex: Sex;
+  dob?: string;
+  ageYears?: number;
+  mobile?: string;
+  email?: string;
+  address?: Address;
+  unknown?: boolean;
+  emergencyNote?: string;
+  broughtBy?: string;
+}
+
+/**
+ * Adds the patient row (and `more`, in the same transaction) under the year's next UHID. Registering counts as
+ * activity, so the patient starts active.
+ */
+async function addPatient(
+  db: Queryable,
+  row: PatientRow,
+  by: string,
+  now: Date,
+  more?: (tx: Queryable, id: string) => Promise<void>,
+): Promise<Patient> {
   const id = randomUUID();
   await insertWithUhid(db, now, (uhid) =>
     withTransaction(db, async (tx) => {
       await tx.query(
         `INSERT INTO patients (id, status, created_by, updated_by, uhid, name, name_search, sex, dob, age_years, age_recorded_on,
-           mobile, email, address, labels, allergies, last_activity_at)
-         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '[]', '[]', $13)`,
+           mobile, email, address, unknown, emergency_note, brought_by, labels, allergies, last_activity_at)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '[]', '[]', $16)`,
         [
-          id, by, uhid, input.name, input.name.toLowerCase(), input.sex, input.dob ?? null, input.ageYears ?? null,
-          input.ageYears === undefined ? null : indiaDate(now), input.mobile ?? null, input.email ?? null,
-          input.address ? JSON.stringify(input.address) : null, now,
+          id, by, uhid, row.name, row.name.toLowerCase(), row.sex, row.dob ?? null, row.ageYears ?? null,
+          row.ageYears === undefined ? null : indiaDate(now), row.mobile ?? null, row.email ?? null,
+          row.address ? JSON.stringify(row.address) : null, row.unknown ?? false, row.emergencyNote ?? null,
+          row.broughtBy ?? null, now,
         ],
       );
-      if (input.guardian) {
-        const g = input.guardian;
-        await tx.query(
-          `INSERT INTO guardians (id, status, created_by, updated_by, patient_id, name, relation, mobile)
-           VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
-          [randomUUID(), by, id, g.name, g.relation, g.mobile ?? null],
-        );
-      }
+      await more?.(tx, id);
     }),
   );
   return getPatient(db, id, now);
+}
+
+/** #20: a new patient with a new UHID, and their guardian if given. */
+export async function registerPatient(db: Queryable, input: NewPatient, by: string, now = new Date()): Promise<Patient> {
+  const { guardian, ...row } = input;
+  return addPatient(db, row, by, now, async (tx, id) => {
+    if (!guardian) return;
+    await tx.query(
+      `INSERT INTO guardians (id, status, created_by, updated_by, patient_id, name, relation, mobile)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
+      [randomUUID(), by, id, guardian.name, guardian.relation, guardian.mobile ?? null],
+    );
+  });
+}
+
+export interface EmergencyPatient {
+  /** O when not known. */
+  sex?: Sex;
+  approxAgeYears?: number;
+  description: string;
+  broughtBy?: string;
+}
+
+/**
+ * #21: a patient who can't give their name (unconscious, alone) gets a UHID at once, named "Unknown-<n>", so care
+ * and billing can start. The real details are filled in later with PATCH (#23, `unknown: false`).
+ */
+export async function registerEmergency(db: Queryable, input: EmergencyPatient, by: string, now = new Date()): Promise<Patient> {
+  const n = await nextCount(db, 'unknown-patient');
+  return addPatient(
+    db,
+    {
+      name: `Unknown-${n}`,
+      sex: input.sex ?? 'O',
+      ageYears: input.approxAgeYears,
+      unknown: true,
+      emergencyNote: input.description,
+      broughtBy: input.broughtBy,
+    },
+    by,
+    now,
+  );
 }

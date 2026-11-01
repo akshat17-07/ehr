@@ -6,7 +6,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { indiaDate } from '../../time/india.js';
-import { registerPatient, searchPatients, SEXES } from './patients.js';
+import { registerEmergency, registerPatient, searchPatients, SEXES } from './patients.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -49,6 +49,15 @@ const newPatient = z
   .strict()
   .refine((p) => (p.dob === undefined) !== (p.ageYears === undefined), { message: 'give dob or ageYears (one of them)', path: ['dob'] });
 
+const emergencyPatient = z
+  .object({
+    sex: z.enum(SEXES).optional(),
+    approxAgeYears: z.number().int().min(0).max(130).optional(),
+    description: z.string().trim().min(3).max(1000),
+    broughtBy: text.optional(),
+  })
+  .strict();
+
 export const patientsRoutes = new Hono<AuthEnv>()
   // #19
   .get('/', requirePermission('patient.search'), async (c) => {
@@ -59,6 +68,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
   .post('/', requirePermission('patient.register'), async (c) => {
     const input = newPatient.parse(await c.req.json());
     const patient = await registerPatient(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json(patient, 201);
+  })
+  // #21
+  .post('/emergency', requirePermission('patient.register'), async (c) => {
+    const input = emergencyPatient.parse(await c.req.json());
+    const patient = await registerEmergency(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json(patient, 201);
   });

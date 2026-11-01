@@ -98,3 +98,29 @@ describe('POST /staff/patients', () => {
     expect((await register({ name: 'Nurse Try', sex: 'M', ageYears: 5 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/patients/emergency', () => {
+  const emergency = (body: unknown, who = reception) =>
+    app.request('/staff/patients/emergency', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('registers an unknown patient as Unknown-<n> with a UHID, at once', async () => {
+    const res = await emergency({ sex: 'M', approxAgeYears: 40, description: 'Road accident, blue shirt', broughtBy: '108 ambulance' });
+    expect(res.status).toBe(201);
+    const first = (await res.json()) as Record<string, unknown> & { uhid: string };
+    expect(first).toMatchObject({ name: 'Unknown-1', sex: 'M', ageYears: 40, unknown: true, inactive: false,
+      emergencyNote: 'Road accident, blue shirt', broughtBy: '108 ambulance' });
+    expect(first.uhid).toMatch(/^U\d{8}$/);
+
+    const doctor = asStaff('dev-doctor', ['doctor']);
+    const second = (await (await emergency({ description: 'Found unconscious at bus stand' }, doctor)).json()) as Record<string, unknown>;
+    expect(second).toMatchObject({ name: 'Unknown-2', sex: 'O', unknown: true });
+    expect(second.ageYears).toBeUndefined();
+    expect(await uhids('unknown-')).toEqual([first.uhid, second.uhid]);
+  });
+
+  it('422 without a description; 403 without patient.register', async () => {
+    expect((await emergency({ sex: 'F' })).status).toBe(422);
+    expect((await emergency({ description: 'x' })).status).toBe(422);
+    expect((await emergency({ description: 'Elderly woman' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

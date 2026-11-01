@@ -391,4 +391,9 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC guardians_patient ON guardians (patient_id)',
     ],
   },
+  {
+    // Who brought in an unknown emergency patient (#21). DSQL can add a column with no default.
+    id: '0026_patients_brought_by',
+    statements: () => ['ALTER TABLE patients ADD COLUMN brought_by text'],
+  },
 ];
