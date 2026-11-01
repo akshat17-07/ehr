@@ -8,7 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
-import { createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters } from './encounters.js';
+import { createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
 
 // Encounters (api-list.md #36-#40), mounted at /staff/encounters.
 
@@ -27,6 +27,16 @@ const newEncounter = z
     departmentId: z.uuid(),
     doctorId: z.uuid(),
     appointmentId: z.uuid().optional(),
+  })
+  .strict();
+
+const encounterChange = z
+  .object({
+    version: z.number().int().min(1),
+    departmentId: z.uuid().optional(),
+    doctorId: z.uuid().optional(),
+    type: z.enum(ENCOUNTER_TYPES).optional(),
+    reason: z.string().trim().min(3).max(500).optional(),
   })
   .strict();
 
@@ -54,4 +64,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, encounter.patientId));
     return c.json(await encounterDetail(db, encounter));
+  })
+  // #39
+  .patch('/:id', requirePermission('encounter.update'), async (c) => {
+    const change = encounterChange.parse(await bodyOf(c));
+    const encounter = await updateEncounter(await dbOf(c), c.req.param('id'), change, userOf(c).sub);
+    auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id, reason: change.reason });
+    return c.json(encounter);
   });

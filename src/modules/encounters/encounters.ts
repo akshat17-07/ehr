@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
@@ -135,4 +136,34 @@ export interface EncounterDetail extends Encounter {
 export async function encounterDetail(db: Queryable, encounter: Encounter, now = new Date()): Promise<EncounterDetail> {
   const patients = await patientSummaries(db, [encounter.patientId], now);
   return { ...encounter, patient: patients.get(encounter.patientId) as PatientSummary, vitals: [], notes: [], diagnoses: [], prescriptions: [] };
+}
+
+/** 409 once the encounter is closed: it can then only be added to (addenda), not changed. */
+export function assertOpen(encounter: Encounter): void {
+  if (encounter.status !== 'open') throw new AppError(409, 'closed', 'this encounter is closed');
+}
+
+export interface EncounterChange {
+  version: number;
+  departmentId?: string;
+  doctorId?: string;
+  type?: EncounterType;
+  reason?: string;
+}
+
+/** #39: moves an open encounter to another doctor or department, or changes its type (an OPD visit admitted as IPD). */
+export async function updateEncounter(db: Queryable, id: string, change: EncounterChange, by: string): Promise<Encounter> {
+  const current = await getEncounter(db, id);
+  assertOpen(current);
+  const doctorId = change.doctorId ?? current.doctorId;
+  const departmentId = change.departmentId ?? current.departmentId;
+  if (change.doctorId !== undefined || change.departmentId !== undefined) await checkDoctor(db, doctorId, departmentId);
+  await updateRecord(db, 'encounters', {
+    id,
+    version: change.version,
+    by,
+    reason: change.reason,
+    set: { doctor_id: doctorId, department_id: departmentId, type: change.type ?? current.type },
+  });
+  return getEncounter(db, id);
 }

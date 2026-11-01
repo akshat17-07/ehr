@@ -24,6 +24,10 @@ const list = async (query = '', who = doctor) => {
 };
 const post = (body: unknown, who = doctor) =>
   app.request('/staff/encounters', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const patch = (id: string, body: unknown, who = doctor) =>
+  app.request(`/staff/encounters/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const open = async (patientId: string) =>
+  ((await (await post({ patientId, type: 'OPD', departmentId: med, doctorId })).json()) as { id: string }).id;
 const checkIn = (n: number) => app.request(`/staff/appointments/${seedId('a9900000', n)}/check-in`, { method: 'POST' }, reception);
 
 // Ramesh (dev-doctor, MED) then Rahul (dev-surgeon, SUR) arrive.
@@ -111,5 +115,29 @@ describe('GET /staff/encounters/{id}', () => {
     expect((await get(seedId('e0c00000', 999))).status).toBe(404);
     expect((await get('nope')).status).toBe(404);
     expect((await get(old, reception)).status).toBe(403);
+  });
+});
+
+describe('PATCH /staff/encounters/{id}', () => {
+  const sita = seedId('9a710000', 2);
+  const headDoctorId = seedId('a0000000', 2);
+
+  it('moves an open encounter to another doctor and makes it IPD, keeping the old version and the reason', async () => {
+    const id = await open(sita);
+    const res = await patch(id, { version: 1, doctorId: headDoctorId, type: 'IPD', reason: 'admitted for observation' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ version: 2, doctorId: headDoctorId, type: 'IPD', departmentId: med });
+    const history = await db.query('SELECT version, reason FROM encounters_versions WHERE record_id = $1', [id]);
+    expect(history.rows).toEqual([{ version: 1, reason: 'admitted for observation' }]);
+    expect((await patch(id, { version: 1, type: 'OPD' })).status).toBe(409);
+  });
+
+  it('422 for a doctor outside the department or a missing version; 409 once closed', async () => {
+    const id = await open(sita);
+    expect((await patch(id, { version: 1, departmentId: seedId('de000000', 2) })).status).toBe(422);
+    expect((await patch(id, { type: 'IPD' })).status).toBe(422);
+    await db.query("UPDATE encounters SET status = 'closed' WHERE id = $1", [id]);
+    expect(await (await patch(id, { version: 1, type: 'IPD' })).json()).toMatchObject({ error: 'closed' });
+    expect((await patch(seedId('e0c00000', 999), { version: 1, type: 'IPD' })).status).toBe(404);
   });
 });
