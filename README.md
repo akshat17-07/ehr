@@ -117,7 +117,7 @@ Requires Node 22+.
 npm install
 npm test          # unit tests
 npm run typecheck
-npm run dev       # API on http://localhost:3000
+npm run dev       # API on http://localhost:3000, database in .data/db (see below)
 
 cd infra
 npm install
@@ -134,6 +134,8 @@ npm run synth     # CloudFormation templates, no AWS access needed
 3. `cdk synth`, which also bundles both Lambdas
 
 If any step fails, the commit is refused. Install both folders first (`npm install` here and in `infra/`). CI runs the same command on every push.
+
+Locally the database is **PGlite**: real Postgres compiled to WebAssembly, installed by `npm install` (no Docker, no AWS). With no `DSQL_ENDPOINT` set, `npm run dev` keeps it in `.data/db` (git-ignored; delete the folder to start empty) and applies every migration on start. Tests use an in-memory one, so every migration is tested against real Postgres. Two DSQL-only statements differ locally: `AWS IAM GRANT` is skipped and `CREATE INDEX ASYNC` becomes `CREATE INDEX` (`toPostgres` in `src/db/migrations.ts`).
 
 Locally there is no API Gateway, so a test user is passed in a header (development only):
 

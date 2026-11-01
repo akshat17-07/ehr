@@ -3,5 +3,6 @@ dist/
 cdk.out/
 outputs.json
 coverage/
+.data/
 .env*
 *.age

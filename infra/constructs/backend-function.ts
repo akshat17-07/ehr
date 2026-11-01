@@ -40,6 +40,8 @@ export function backendFunction(scope: Construct, id: string, props: BackendFunc
       target: 'node22',
       minify: true,
       sourceMap: true,
+      // The AWS SDK is in the Lambda runtime; PGlite is the local-only database and never runs in AWS.
+      externalModules: ['@aws-sdk/*', '@electric-sql/pglite'],
       // Some dependencies (pg) still call require(); give ESM output a require function.
       banner: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
     },

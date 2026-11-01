@@ -1,4 +1,4 @@
-import { migrations as allMigrations, type Migration, type MigrationContext } from './migrations.js';
+import { migrations as allMigrations, toPostgres, type Migration, type MigrationContext } from './migrations.js';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
@@ -27,7 +27,9 @@ export async function migrate(
   const applied: string[] = [];
   for (const migration of migrations) {
     if (done.has(migration.id)) continue;
-    for (const sql of migration.statements(ctx)) {
+    for (const statement of migration.statements(ctx)) {
+      const sql = ctx.dialect === 'postgres' ? toPostgres(statement) : statement;
+      if (sql === null) continue;
       try {
         await db.query(sql);
       } catch (error) {

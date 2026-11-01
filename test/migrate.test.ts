@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { migrate, type Queryable } from '../src/db/migrate.js';
-import type { Migration } from '../src/db/migrations.js';
+import { toPostgres, type Migration } from '../src/db/migrations.js';
 
 function fakeDb(applied: string[] = [], failWith?: { sql: string; code: string }) {
   const log: string[] = [];
@@ -48,5 +48,14 @@ describe('migrate', () => {
     const { db, log } = fakeDb([], { sql: 'CREATE ROLE ehr_app WITH LOGIN', code: '42501' });
     await expect(migrate(db, ctx, migrations)).rejects.toThrow('boom');
     expect(log.some((l) => l.startsWith('INSERT'))).toBe(false);
+  });
+});
+
+describe('toPostgres (local database)', () => {
+  it('skips IAM grants and makes async indexes normal', () => {
+    expect(toPostgres("AWS IAM GRANT ehr_app TO 'arn'")).toBeNull();
+    expect(toPostgres('CREATE INDEX ASYNC ix ON t (a)')).toBe('CREATE INDEX ix ON t (a)');
+    expect(toPostgres('CREATE UNIQUE INDEX ASYNC ix ON t (a)')).toBe('CREATE UNIQUE INDEX ix ON t (a)');
+    expect(toPostgres('CREATE TABLE t (id text)')).toBe('CREATE TABLE t (id text)');
   });
 });
