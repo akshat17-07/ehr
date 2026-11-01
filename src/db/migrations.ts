@@ -396,4 +396,21 @@ export const migrations: Migration[] = [
     id: '0026_patients_brought_by',
     statements: () => ['ALTER TABLE patients ADD COLUMN brought_by text'],
   },
+  {
+    // A patient's consents (api-list.md Consent): never changed except withdrawn_at (#256).
+    id: '0027_consents',
+    statements: () => [
+      ...createTable('consents', [
+        'patient_id uuid NOT NULL',
+        'kind text NOT NULL',
+        'notice_version text',
+        'language text NOT NULL',
+        'given boolean NOT NULL',
+        'given_at timestamptz NOT NULL',
+        'withdrawn_at timestamptz',
+        'document_id uuid',
+      ]),
+      'CREATE INDEX ASYNC consents_patient ON consents (patient_id)',
+    ],
+  },
 ];

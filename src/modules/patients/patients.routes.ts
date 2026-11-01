@@ -15,6 +15,7 @@ import {
   SEXES,
   updatePatient,
 } from './patients.js';
+import { CONSENT_KINDS, LANGUAGES, recordConsent } from './consents.js';
 import { addGuardian } from './guardians.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
@@ -83,6 +84,15 @@ const newGuardian = z
     mobile: mobile.optional(),
     guardianPatientId: z.uuid().optional(),
     portalAccess: z.boolean().optional(),
+  })
+  .strict();
+
+const newConsent = z
+  .object({
+    kind: z.enum(CONSENT_KINDS),
+    noticeVersion: z.string().trim().min(1).max(50).optional(),
+    language: z.enum(LANGUAGES),
+    given: z.boolean(),
   })
   .strict();
 
@@ -159,4 +169,11 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const guardian = await addGuardian(await dbOf(c), id, input, userOf(c).sub);
     auditDetails(c, { patientId: guardian.patientId, recordType: 'guardian', recordId: guardian.id });
     return c.json(guardian, 201);
+  })
+  // #27
+  .post('/:id/consents', requirePermission('patient.update'), async (c) => {
+    const input = newConsent.parse(await bodyOf(c));
+    const consent = await recordConsent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: consent.patientId, recordType: 'consent', recordId: consent.id });
+    return c.json(consent, 201);
   });

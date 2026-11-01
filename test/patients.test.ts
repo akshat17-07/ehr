@@ -281,3 +281,29 @@ describe('POST /staff/patients/{id}/guardians', () => {
     expect((await add('9a710000-0000-4000-8000-000000000999', { name: 'Anita Verma', relation: 'mother' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/patients/{id}/consents', () => {
+  const ramesh = '9a710000-0000-4000-8000-000000000001';
+  const consent = (body: unknown, id = ramesh) =>
+    app.request(`/staff/patients/${id}/consents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, reception);
+
+  it('records a consent given or refused, with the notice version and language', async () => {
+    const res = await consent({ kind: 'privacy_notice', noticeVersion: '2026-01', language: 'hi', given: true });
+    expect(res.status).toBe(201);
+    const given = (await res.json()) as Record<string, unknown>;
+    expect(given).toMatchObject({ patientId: ramesh, kind: 'privacy_notice', noticeVersion: '2026-01', language: 'hi', given: true, createdBy: 'dev-reception' });
+    expect(Date.now() - Date.parse(String(given.givenAt))).toBeLessThan(60_000);
+    expect(given.withdrawnAt).toBeUndefined();
+    expect(await (await consent({ kind: 'research', language: 'en', given: false })).json()).toMatchObject({ kind: 'research', given: false });
+  });
+
+  it('422 without the notice version of a privacy notice, or for bad input; 404 for no such patient', async () => {
+    for (const body of [
+      { kind: 'privacy_notice', language: 'en', given: true },
+      { kind: 'marketing', language: 'en', given: true },
+      { kind: 'treatment', language: 'fr', given: true },
+      { kind: 'treatment', language: 'en' },
+    ]) expect((await consent(body)).status, JSON.stringify(body)).toBe(422);
+    expect((await consent({ kind: 'treatment', language: 'en', given: true }, '9a710000-0000-4000-8000-000000000999')).status).toBe(404);
+  });
+});
