@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import {
   createUser,
   deactivateUser,
+  demoteHeadDoctor,
   getUser,
   listUsers,
   promoteHeadDoctor,
@@ -110,4 +111,8 @@ export const usersRoutes = new Hono<AuthEnv>()
   .post('/:id/promote-head-doctor', requirePermission('role.promote_head_doctor'), async (c) => {
     const reason = await reasonOf(c);
     return c.json(await promoteHeadDoctor(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
+  })
+  .post('/:id/demote-head-doctor', requirePermission('role.promote_head_doctor'), async (c) => {
+    const reason = await reasonOf(c);
+    return c.json(await demoteHeadDoctor(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
   });

@@ -292,3 +292,23 @@ describe('POST /admin/users/{id}/promote-head-doctor', () => {
     expect((await post(await idOf('dev-doctor'), { reason: 'not allowed' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
   });
 });
+
+describe('POST /admin/users/{id}/demote-head-doctor', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+  const post = async (id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}/demote-head-doctor`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string } };
+  };
+
+  it('moves a Head Doctor back to doctor, and the admin pages close to them at once', async () => {
+    accounts.accounts.set('head-doctor@dev.local', { sub: 'dev-head-doctor', name: 'x', groups: ['head_doctor'], enabled: true });
+    expect(await post(await idOf('dev-head-doctor'), { reason: 'stepped down' })).toMatchObject({ status: 200, body: { type: 'doctor' } });
+    expect(accounts.accounts.get('head-doctor@dev.local')?.groups).toEqual(['doctor']);
+    expect((await app.request('/admin/me', {}, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+  });
+
+  it('409 unless a Head Doctor; needs a reason', async () => {
+    expect(await post(await idOf('dev-doctor'), { reason: 'not a head' })).toMatchObject({ status: 409, body: { error: 'wrong_type' } });
+    expect((await post(await idOf('dev-surgeon'), {})).status).toBe(422);
+  });
+});

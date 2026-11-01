@@ -297,3 +297,7 @@ async function changeType(
 /** #161: an active doctor becomes a Head Doctor. */
 export const promoteHeadDoctor = (db: Queryable, accounts: StaffAccounts, id: string, by: string, reason: string) =>
   changeType(db, accounts, id, { from: 'doctor', to: 'head_doctor', activeOnly: true, by, reason });
+
+/** #162: a Head Doctor goes back to doctor. (Grant rules come with #168; when they do, this ends the user's rules.) */
+export const demoteHeadDoctor = (db: Queryable, accounts: StaffAccounts, id: string, by: string, reason: string) =>
+  changeType(db, accounts, id, { from: 'head_doctor', to: 'doctor', activeOnly: false, by, reason });
