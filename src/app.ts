@@ -1,3 +1,4 @@
+import { patientMergesRoutes } from './modules/patients/merges.routes.js';
 import { patientsRoutes } from './modules/patients/patients.routes.js';
 import { referenceRoutes } from './modules/reference/reference.routes.js';
 import { Hono } from 'hono';
@@ -49,6 +50,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/me/access-requests', myAccessRequestsRoutes)
     .route('/me/payslips', myPayslipsRoutes)
     .route('/patients', patientsRoutes)
+    .route('/patient-merges', patientMergesRoutes)
     .route('/', referenceRoutes);
   const admin = new Hono<AuthEnv>()
     .use(requireUser('staff', MANAGEMENT_GROUPS))

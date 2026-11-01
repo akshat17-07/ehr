@@ -413,4 +413,18 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC consents_patient ON consents (patient_id)',
     ],
   },
+  {
+    // Proposed merges of duplicate patients (api-list.md PatientMerge); status pending / approved / rejected.
+    id: '0028_patient_merges',
+    statements: () => [
+      ...createTable('patient_merges', [
+        'keep_patient_id uuid NOT NULL',
+        'merge_patient_id uuid NOT NULL',
+        'reason text NOT NULL',
+        'proposed_by text NOT NULL',
+        'approved_by text',
+      ]),
+      'CREATE INDEX ASYNC patient_merges_status ON patient_merges (status)',
+    ],
+  },
 ];

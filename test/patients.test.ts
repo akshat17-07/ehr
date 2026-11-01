@@ -307,3 +307,29 @@ describe('POST /staff/patients/{id}/consents', () => {
     expect((await consent({ kind: 'treatment', language: 'en', given: true }, '9a710000-0000-4000-8000-000000000999')).status).toBe(404);
   });
 });
+
+describe('POST /staff/patient-merges', () => {
+  const ramesh = '9a710000-0000-4000-8000-000000000001';
+  const irfan = '9a710000-0000-4000-8000-000000000003';
+  const sita = '9a710000-0000-4000-8000-000000000002'; // merged in the search tests above
+  const head = asStaff('dev-head-doctor', ['head_doctor']);
+  const propose = (body: unknown, who = head) =>
+    app.request('/staff/patient-merges', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('proposes a merge, pending until a second person approves', async () => {
+    const res = await propose({ keepPatientId: ramesh, mergePatientId: irfan, reason: 'same person, registered twice' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ keepPatientId: ramesh, mergePatientId: irfan, status: 'pending', proposedBy: 'dev-head-doctor' });
+    expect((await db.query('SELECT merged_into FROM patients WHERE id = $1', [irfan])).rows).toEqual([{ merged_into: null }]);
+  });
+
+  it('409 if a patient is already merged or in a pending merge; 422 for the same or an unknown patient; 403 for others', async () => {
+    const rahul = '9a710000-0000-4000-8000-000000000005';
+    expect((await propose({ keepPatientId: rahul, mergePatientId: irfan, reason: 'dup' })).status).toBe(409);
+    expect((await propose({ keepPatientId: rahul, mergePatientId: sita, reason: 'dup' })).status).toBe(409);
+    expect((await propose({ keepPatientId: rahul, mergePatientId: rahul, reason: 'dup' })).status).toBe(422);
+    expect((await propose({ keepPatientId: rahul, mergePatientId: '9a710000-0000-4000-8000-000000000999', reason: 'dup' })).status).toBe(422);
+    expect((await propose({ keepPatientId: rahul, mergePatientId: irfan })).status).toBe(422);
+    expect((await propose({ keepPatientId: rahul, mergePatientId: irfan, reason: 'dup' }, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});
