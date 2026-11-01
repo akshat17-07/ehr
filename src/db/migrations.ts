@@ -175,4 +175,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC alerts_user ON alerts (user_id, created_at)',
     ],
   },
+  {
+    // Requests to open an inactive patient's record (api-list.md AccessRequest). status: pending, approved, rejected.
+    id: '0012_access_requests',
+    statements: () => [
+      ...createTable('access_requests', [
+        'patient_id text NOT NULL',
+        'requested_by text NOT NULL',
+        'reason text NOT NULL',
+        'approver_id text',
+        'decided_at timestamptz',
+        'decision_reason text',
+        'valid_until timestamptz',
+      ]),
+      'CREATE INDEX ASYNC access_requests_requested_by ON access_requests (requested_by, created_at)',
+      // The approvals inbox (#174) lists by status.
+      'CREATE INDEX ASYNC access_requests_status ON access_requests (status, created_at)',
+    ],
+  },
 ];
