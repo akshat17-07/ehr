@@ -80,4 +80,12 @@ export const migrations: Migration[] = [
       ...seedBundles(),
     ],
   },
+  {
+    // Each staff member's custom allow / deny lists (#307). user_id is the Cognito sub; the lists are JSON arrays.
+    id: '0005_user_permissions',
+    statements: () => [
+      ...createTable('user_permissions', ['user_id text NOT NULL', 'allow text NOT NULL', 'deny text NOT NULL']),
+      'CREATE UNIQUE INDEX ASYNC user_permissions_user ON user_permissions (user_id)',
+    ],
+  },
 ];
