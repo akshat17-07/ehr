@@ -6,7 +6,7 @@ import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { openEncounter, type Encounter } from '../encounters/encounters.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
-import { PATIENT_SELECT, toPatient, toSummary, type BaseFields, type PatientSummary } from '../patients/patients.js';
+import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // OPD appointments (api-list.md Appointment): a patient booked with a doctor of a department, for a time slot.
 // Stored status: booked, arrived (checked in, #34) or cancelled (#35). A booked appointment from an earlier day
@@ -72,10 +72,7 @@ export async function listAppointments(db: Queryable, query: AppointmentQuery, n
 
 /** The appointments of `rows`, each with its patient's summary (one query for all the patients). */
 async function withPatients(db: Queryable, rows: Record<string, unknown>[], now: Date): Promise<Appointment[]> {
-  if (rows.length === 0) return [];
-  const ids = [...new Set(rows.map((r) => String(r.patient_id)))];
-  const patients = await db.query(`${PATIENT_SELECT} WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
-  const byId = new Map(patients.rows.map((p) => [String(p.id), toSummary(toPatient(p, now))]));
+  const byId = await patientSummaries(db, rows.map((r) => String(r.patient_id)), now);
   return rows.map((r) => ({ ...toAppointment(r, now), patient: byId.get(String(r.patient_id)) }));
 }
 

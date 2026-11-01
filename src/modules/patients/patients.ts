@@ -94,6 +94,14 @@ export function toPatient(r: Record<string, unknown>, now = new Date()): Patient
   return patient;
 }
 
+/** The summaries of the patients `ids`, by id (one query for a whole list). */
+export async function patientSummaries(db: Queryable, ids: string[], now = new Date()): Promise<Map<string, PatientSummary>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const { rows } = await db.query(`${PATIENT_SELECT} WHERE id IN (${unique.map((_, i) => `$${i + 1}`).join(', ')})`, unique);
+  return new Map(rows.map((p) => [String(p.id), toSummary(toPatient(p, now))]));
+}
+
 export function toSummary(p: Patient): PatientSummary {
   const { id, uhid, name, sex, dob, ageYears, mobile, unknown, inactive } = p;
   const summary: PatientSummary = { id, uhid, name, sex, dob, ageYears, mobile, unknown, inactive };

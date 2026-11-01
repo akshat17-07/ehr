@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
-import type { BaseFields } from '../patients/patients.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
+import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // Encounters (api-list.md Encounter): one visit, OPD, IPD or ER, with a doctor of a department. status: open until
 // closed (#40). Opening one is activity, so the patient's last_activity_at moves to now.
@@ -22,6 +24,8 @@ export interface Encounter extends Omit<BaseFields, 'status'> {
   appointmentId?: string;
   startedAt: string;
   closedAt?: string;
+  /** On lists, so the doctor sees who is waiting. */
+  patient?: PatientSummary;
 }
 
 export function toEncounter(r: Record<string, unknown>): Encounter {
@@ -67,4 +71,34 @@ export async function openEncounter(db: Queryable, input: NewEncounter, by: stri
     ]);
     return toEncounter(rows[0] as Record<string, unknown>);
   });
+}
+
+export interface EncounterQuery extends PageQuery {
+  /** India date the encounter started, YYYY-MM-DD; today if not given. */
+  date?: string;
+  doctorId?: string;
+  departmentId?: string;
+  type?: EncounterType;
+  status?: EncounterStatus;
+}
+
+const DAY_MS = 86_400_000;
+
+/** #36: one day's encounters in the order they started (the waiting order), each with the patient's summary. */
+export async function listEncounters(db: Queryable, query: EncounterQuery, now = new Date()): Promise<Page<Encounter>> {
+  const start = indiaDayStart(query.date ?? indiaDate(now));
+  const params: unknown[] = [start, new Date(start.getTime() + DAY_MS)];
+  const where = ['started_at >= $1', 'started_at < $2'];
+  if (query.doctorId) where.push(`doctor_id = $${params.push(query.doctorId)}`);
+  if (query.departmentId) where.push(`department_id = $${params.push(query.departmentId)}`);
+  if (query.type) where.push(`type = $${params.push(query.type)}`);
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  const page = await pageRows(
+    db,
+    { select: 'SELECT * FROM encounters', where, params, orderBy: ['started_at', 'id'], direction: 'asc' },
+    query,
+    toEncounter,
+  );
+  const byId = await patientSummaries(db, page.items.map((e) => e.patientId), now);
+  return { ...page, items: page.items.map((e) => ({ ...e, patient: byId.get(e.patientId) })) };
 }
