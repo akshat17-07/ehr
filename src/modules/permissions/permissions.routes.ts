@@ -4,12 +4,13 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { PERMISSIONS } from '../../permissions/catalog.js';
 import { loadPermissions, requirePermission } from '../../permissions/check.js';
-import { checkCustomLists, getCustomPermissions, saveCustomPermissions } from '../../permissions/custom.js';
+import { bundlesNamed } from '../../permissions/bundles.js';
+import { checkCustomLists, getCustomPermissions, saveBundles, saveCustomPermissions } from '../../permissions/custom.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { listTypePermissions, saveTypePermissions } from '../../permissions/type-permissions.js';
-import { getUser } from '../users/users.js';
-import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
+import { checkBundles, getUser } from '../users/users.js';
 import { AppError } from '../../middleware/errors.js';
+import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -20,6 +21,14 @@ const customChange = z
     version: z.number().int().min(0),
     allow: z.array(z.string()).max(200),
     deny: z.array(z.string()).max(200),
+    reason,
+  })
+  .strict();
+
+const bundlesChange = z
+  .object({
+    version: z.number().int().min(0),
+    bundles: z.array(z.string().min(1).max(50)).max(20),
     reason,
   })
   .strict();
@@ -80,4 +89,26 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
 
     await saveCustomPermissions(db, { userId: user.cognitoSub, version: body.version, allow, deny, by: caller.sub, reason: body.reason });
     return c.json(await loadPermissions(db, user.cognitoSub, [user.type]));
+  })
+
+  // #157: set a user's bundles (the same limits as #307).
+  .put('/users/:id/bundles', requirePermission('user.permissions'), async (c) => {
+    const db = await dbOf(c);
+    const caller = userOf(c);
+    const body = bundlesChange.parse(await c.req.json().catch(() => undefined));
+    const user = await getUser(db, c.req.param('id'));
+    assertMayChangeUser(caller, { sub: user.cognitoSub, type: user.type });
+
+    const names = [...new Set(body.bundles)];
+    await checkBundles(db, names);
+    const bundles = await bundlesNamed(db, names);
+    const added = bundles.filter((b) => !user.bundles.includes(b.name));
+    assertMayGive(caller, added.flatMap((b) => b.permissions));
+    if (user.type === 'admin' && user.active) {
+      const fromBundles = bundles.map((b) => ({ bundle: b.name, permissions: b.permissions }));
+      await assertAdminRemains(db, { bundles: { sub: user.cognitoSub, fromBundles } });
+    }
+
+    await saveBundles(db, { userId: user.cognitoSub, version: body.version, bundles: names, by: caller.sub, reason: body.reason });
+    return c.json(await getUser(db, user.id));
   });

@@ -142,3 +142,35 @@ describe('PUT /admin/type-permissions/{type}', () => {
     expect(res).toMatchObject({ status: 409, body: { error: 'last_admin' } });
   });
 });
+
+describe('PUT /admin/users/{id}/bundles', () => {
+  const putBundles = async (sub: string, body: unknown, who = admin) => {
+    const res = await app.request(
+      `/admin/users/${await idOf(sub)}/bundles`,
+      { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } },
+      who,
+    );
+    return { status: res.status, body: (await res.json()) as { bundles: string[]; error?: string } };
+  };
+
+  it('sets bundles on a user with or without a permissions row, with the version check', async () => {
+    // dev-billing already has a row (version 1); dev-medical has none (version 0).
+    expect(await putBundles('dev-billing', { version: 1, bundles: ['billing', 'reception'], reason: 'covers the front desk' })).toMatchObject({
+      status: 200,
+      body: { bundles: ['billing', 'reception'] },
+    });
+    expect(await putBundles('dev-medical', { version: 0, bundles: ['reception'], reason: 'covers the front desk' })).toMatchObject({
+      status: 200,
+      body: { bundles: ['reception'] },
+    });
+    expect((await putBundles('dev-medical', { version: 0, bundles: [], reason: 'stale edit' })).status).toBe(409);
+    const perms = await app.request(`/admin/users/${await idOf('dev-medical')}/permissions`, {}, admin);
+    expect(await perms.json()).toMatchObject({ version: 1, fromBundles: [{ bundle: 'reception' }], custom: { allow: [], deny: [] } });
+  });
+
+  it('422 for an unknown bundle; 403 for own account and a Head Doctor on an Admin', async () => {
+    expect((await putBundles('dev-nurse', { version: 1, bundles: ['nope'], reason: 'unknown one' })).status).toBe(422);
+    expect((await putBundles('dev-head-doctor', { version: 0, bundles: ['billing'], reason: 'for myself' }, head)).status).toBe(403);
+    expect((await putBundles('dev-admin', { version: 1, bundles: ['billing'], reason: 'head on admin' }, head)).status).toBe(403);
+  });
+});

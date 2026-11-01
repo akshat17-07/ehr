@@ -34,6 +34,8 @@ export function assertMayGive(caller: CurrentUser, permissions: readonly string[
 export interface PermissionChange {
   /** New custom lists for one user (by sub). */
   custom?: { sub: string; allow: Permission[]; deny: Permission[] };
+  /** New bundles for one user (by sub). */
+  bundles?: { sub: string; fromBundles: { bundle: string; permissions: Permission[] }[] };
   /** New permissions of the admin type. */
   adminType?: Permission[];
   /** A user being deactivated (by sub). */
@@ -47,7 +49,8 @@ export async function assertAdminRemains(db: Queryable, change: PermissionChange
     if (sub === change.deactivate) continue;
     const perms = await loadPermissions(db, sub, ['admin'], now);
     const custom = change.custom?.sub === sub ? change.custom : perms.custom;
-    const effective = effectiveOf({ ...perms, fromType: change.adminType ?? perms.fromType, custom });
+    const fromBundles = change.bundles?.sub === sub ? change.bundles.fromBundles : perms.fromBundles;
+    const effective = effectiveOf({ ...perms, fromType: change.adminType ?? perms.fromType, fromBundles, custom });
     if (USER_POWERS.every((p) => effective.has(p))) return;
   }
   throw new AppError(409, 'last_admin', 'at least one active Admin must keep every user.* permission');

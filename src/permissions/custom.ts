@@ -61,30 +61,48 @@ export function checkCustomLists(allow: string[], deny: string[]): { allow: Perm
 /** Saves a user's custom permissions if `version` is still the latest (409 otherwise). */
 export async function saveCustomPermissions(db: Queryable, change: CustomChange): Promise<CustomPermissions> {
   const { allow, deny } = checkCustomLists(change.allow, change.deny);
-  const set = { allow: JSON.stringify(allow), deny: JSON.stringify(deny) };
+  return saveRow(db, change, { allow: JSON.stringify(allow), deny: JSON.stringify(deny) });
+}
 
+export interface BundlesChange {
+  userId: string;
+  /** As in CustomChange. */
+  version: number;
+  /** Names of bundles that exist (the caller checks). */
+  bundles: string[];
+  by: string;
+  reason: string;
+}
+
+/** Saves a user's bundles (#157) if `version` is still the latest (409 otherwise). */
+export async function saveBundles(db: Queryable, change: BundlesChange): Promise<CustomPermissions> {
+  return saveRow(db, change, { bundles: JSON.stringify([...new Set(change.bundles)].sort()) });
+}
+
+const stale = () => new AppError(409, 'conflict', 'someone else saved this record first');
+
+/** Writes the user's row: a new one for version 0, else an update with the version check. */
+async function saveRow(
+  db: Queryable,
+  change: { userId: string; version: number; by: string; reason: string },
+  set: { allow?: string; deny?: string; bundles?: string },
+): Promise<CustomPermissions> {
   if (change.version === 0) {
     try {
       await db.query(
-        `INSERT INTO user_permissions (id, status, created_by, updated_by, user_id, allow, deny) VALUES ($1, 'active', $2, $2, $3, $4, $5)`,
-        [randomUUID(), change.by, change.userId, set.allow, set.deny],
+        `INSERT INTO user_permissions (id, status, created_by, updated_by, user_id, allow, deny, bundles)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
+        [randomUUID(), change.by, change.userId, set.allow ?? '[]', set.deny ?? '[]', set.bundles ?? null],
       );
     } catch (error) {
       // 23505: the user already has a row, so version 0 is stale.
-      if ((error as { code?: string }).code === '23505') throw new AppError(409, 'conflict', 'someone else saved this record first');
+      if ((error as { code?: string }).code === '23505') throw stale();
       throw error;
     }
-    return { version: 1, allow, deny, bundles: [] };
+  } else {
+    const { rows } = await db.query('SELECT id FROM user_permissions WHERE user_id = $1', [change.userId]);
+    if (!rows[0]) throw stale();
+    await updateRecord(db, 'user_permissions', { id: String(rows[0].id), version: change.version, by: change.by, set, reason: change.reason });
   }
-
-  const { rows } = await db.query('SELECT id FROM user_permissions WHERE user_id = $1', [change.userId]);
-  if (!rows[0]) throw new AppError(409, 'conflict', 'someone else saved this record first');
-  const row = await updateRecord(db, 'user_permissions', {
-    id: String(rows[0].id),
-    version: change.version,
-    by: change.by,
-    set,
-    reason: change.reason,
-  });
-  return { version: Number(row.version), allow, deny, bundles: row.bundles === null ? [] : (JSON.parse(String(row.bundles)) as string[]) };
+  return getCustomPermissions(db, change.userId);
 }
