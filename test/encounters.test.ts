@@ -161,3 +161,31 @@ describe('POST /staff/encounters/{id}/close', () => {
     expect((await close(await open(seedId('9a710000', 2)), reception)).status).toBe(403);
   });
 });
+
+describe('POST /staff/encounters/{id}/vitals', () => {
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const vitals = (id: string, body: unknown, who = nurse) =>
+    app.request(`/staff/encounters/${id}/vitals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('records a set of readings; the encounter shows them', async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await vitals(id, { bpSys: 132, bpDia: 86, pulse: 78, tempC: 37.2, spo2: 98, weightKg: 61.5 });
+    expect(res.status).toBe(201);
+    const vital = (await res.json()) as Record<string, unknown>;
+    expect(vital).toMatchObject({ encounterId: id, patientId: seedId('9a710000', 2), bpSys: 132, bpDia: 86, tempC: 37.2, weightKg: 61.5, createdBy: 'dev-nurse' });
+    expect(vital).not.toHaveProperty('heightCm');
+    expect((await vitals(id, { bloodSugarMgDl: 140, takenAt: new Date(Date.now() - 600_000).toISOString() })).status).toBe(201);
+    const detail = (await (await app.request(`/staff/encounters/${id}`, {}, doctor)).json()) as { vitals: Record<string, unknown>[] };
+    expect(detail.vitals.map((v) => v.bloodSugarMgDl ?? v.bpSys)).toEqual([140, 132]);
+  });
+
+  it('422 for no readings, a reading out of range, half a BP or a future time; 409 once closed; 403 for reception', async () => {
+    const id = await open(seedId('9a710000', 2));
+    for (const body of [{}, { pulse: 900 }, { bpSys: 120 }, { bpSys: 80, bpDia: 90 }, { spo2: '98' }, { pulse: 70, takenAt: '2099-01-01T00:00:00Z' }, { pulse: 70, mood: 'ok' }]) {
+      expect((await vitals(id, body)).status, JSON.stringify(body)).toBe(422);
+    }
+    expect((await vitals(id, { pulse: 70 }, reception)).status).toBe(403);
+    await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor);
+    expect((await vitals(id, { pulse: 70 })).status).toBe(409);
+  });
+});

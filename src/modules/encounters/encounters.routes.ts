@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
+import { recordVital, VITAL_FIELDS, type VitalField } from './vitals.js';
 import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
 
 // Encounters (api-list.md #36-#40), mounted at /staff/encounters.
@@ -39,6 +40,19 @@ const encounterChange = z
     reason: z.string().trim().min(3).max(500).optional(),
   })
   .strict();
+
+const newVital = z
+  .object({
+    takenAt: z.iso.datetime({ offset: true }).optional(),
+    ...(Object.fromEntries(VITAL_FIELDS.map(([field, , min, max]) => [field, z.number().min(min).max(max).optional()])) as Record<
+      VitalField,
+      z.ZodOptional<z.ZodNumber>
+    >),
+  })
+  .strict()
+  .refine((v) => VITAL_FIELDS.some(([field]) => v[field] !== undefined), 'at least one reading is needed')
+  .refine((v) => (v.bpSys === undefined) === (v.bpDia === undefined), 'bpSys and bpDia go together')
+  .refine((v) => v.bpSys === undefined || v.bpDia === undefined || v.bpDia < v.bpSys, 'bpDia must be below bpSys');
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -77,4 +91,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const encounter = await closeEncounter(await dbOf(c), c.req.param('id'), userOf(c).sub);
     auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
     return c.json(encounter);
+  })
+  // #41
+  .post('/:id/vitals', requirePermission('vitals.record'), async (c) => {
+    const input = newVital.parse(await bodyOf(c));
+    const vital = await recordVital(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: vital.patientId, recordType: 'vital', recordId: vital.id });
+    return c.json(vital, 201);
   });

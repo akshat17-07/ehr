@@ -8,6 +8,7 @@ import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 import { checkDoctor } from '../users/users.js';
+import { encounterVitals, type Vital } from './vitals.js';
 
 // Encounters (api-list.md Encounter): one visit, OPD, IPD or ER, with a doctor of a department. status: open until
 // closed (#40). Opening one is activity, so the patient's last_activity_at moves to now.
@@ -126,8 +127,8 @@ export async function getEncounter(db: Queryable, id: string): Promise<Encounter
 /** #38: the encounter with its patient and everything recorded in it. */
 export interface EncounterDetail extends Encounter {
   patient: PatientSummary;
-  // Filled in as each part is built: vitals #157, notes #161, diagnoses #166, prescriptions #178.
-  vitals: unknown[];
+  vitals: Vital[];
+  // Filled in as each part is built: notes #161, diagnoses #166, prescriptions #178.
   notes: unknown[];
   diagnoses: unknown[];
   prescriptions: unknown[];
@@ -135,7 +136,14 @@ export interface EncounterDetail extends Encounter {
 
 export async function encounterDetail(db: Queryable, encounter: Encounter, now = new Date()): Promise<EncounterDetail> {
   const patients = await patientSummaries(db, [encounter.patientId], now);
-  return { ...encounter, patient: patients.get(encounter.patientId) as PatientSummary, vitals: [], notes: [], diagnoses: [], prescriptions: [] };
+  return {
+    ...encounter,
+    patient: patients.get(encounter.patientId) as PatientSummary,
+    vitals: await encounterVitals(db, encounter.id),
+    notes: [],
+    diagnoses: [],
+    prescriptions: [],
+  };
 }
 
 /** 409 once the encounter is closed: it can then only be added to (addenda), not changed. */

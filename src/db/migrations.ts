@@ -481,4 +481,26 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC encounters_appointment ON encounters (appointment_id)',
     ],
   },
+  {
+    // Vitals (api-list.md Vital): one set of readings per row, any of them missing.
+    id: '0032_vitals',
+    statements: () => [
+      ...createTable('vitals', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'taken_at timestamptz NOT NULL',
+        'bp_sys integer',
+        'bp_dia integer',
+        'pulse integer',
+        'temp_c numeric(4,1)',
+        'spo2 integer',
+        'resp_rate integer',
+        'weight_kg numeric(6,2)',
+        'height_cm numeric(5,1)',
+        'blood_sugar_mg_dl integer',
+      ]),
+      'CREATE INDEX ASYNC vitals_encounter ON vitals (encounter_id, taken_at)',
+      'CREATE INDEX ASYNC vitals_patient ON vitals (patient_id, taken_at)',
+    ],
+  },
 ];
