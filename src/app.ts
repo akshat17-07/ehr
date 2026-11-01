@@ -10,6 +10,7 @@ import {
 import { getDb } from './db/client.js';
 import type { Queryable } from './db/migrate.js';
 import { signGetUrl, type SignGetUrl } from './files/signed-url.js';
+import { cognitoStaffAccounts, type StaffAccounts } from './identity/staff-accounts.js';
 import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
 import { healthRoutes } from './modules/health/health.routes.js';
@@ -32,9 +33,11 @@ export interface AppDeps {
   db?: () => Promise<Queryable>;
   /** Signed S3 links (tests pass a fake). */
   signUrl?: SignGetUrl;
+  /** Cognito staff accounts (tests pass a fake). */
+  staffAccounts?: StaffAccounts;
 }
 
-export function createApp({ db = getDb, signUrl = signGetUrl }: AppDeps = {}) {
+export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = cognitoStaffAccounts }: AppDeps = {}) {
   const staff = new Hono<AuthEnv>()
     .use(requireUser('staff', WORKFORCE_GROUPS))
     .route('/me', meRoutes)
@@ -55,6 +58,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl }: AppDeps = {}) {
     .use(async (c, next) => {
       c.set('db', db);
       c.set('signGetUrl', signUrl);
+      c.set('staffAccounts', staffAccounts);
       await next();
     })
     .use(auditRequests(db))

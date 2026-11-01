@@ -66,6 +66,13 @@ export class Api extends Construct {
     });
     props.database.grantConnect(this.role);
     props.files.grantPutAndRead(this.role);
+    // Staff accounts are made and disabled by the API (#154, #158); never deleted, so no AdminDeleteUser.
+    props.auth.staff.pool.grant(
+      this.role,
+      'cognito-idp:AdminCreateUser',
+      'cognito-idp:AdminAddUserToGroup',
+      'cognito-idp:AdminDisableUser',
+    );
 
     this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
       corsPreflight: {

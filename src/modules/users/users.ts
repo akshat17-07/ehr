@@ -1,4 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { withTransaction } from '../../db/transaction.js';
+import { isUsernameTaken, type StaffAccounts } from '../../identity/staff-accounts.js';
+import { bundlesNamed } from '../../permissions/bundles.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { AppError } from '../../middleware/errors.js';
 import { STAFF_TYPES, type StaffType } from '../../permissions/defaults.js';
@@ -99,3 +103,88 @@ export async function getUser(db: Queryable, id: string): Promise<User> {
 }
 
 export const isStaffType = (v: string): v is StaffType => (STAFF_TYPES as readonly string[]).includes(v);
+
+export interface NewUser {
+  name: string;
+  email: string;
+  mobile: string;
+  /** Not head_doctor: a doctor is promoted with #161. */
+  type: Exclude<StaffType, 'head_doctor'>;
+  departmentIds: string[];
+  councilName?: string;
+  councilRegNo?: string;
+  regValidTill?: string;
+  pharmacistRegNo?: string;
+  bundles: string[];
+}
+
+const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+const emailTaken = () => new AppError(409, 'email_taken', 'a user with this email already exists');
+
+/** Departments that exist and are active, else 422. */
+export async function checkDepartments(db: Queryable, ids: string[]): Promise<void> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+  const { rows } = await db.query(
+    `SELECT id FROM departments WHERE active AND id IN (${unique.map((_, i) => `$${i + 1}`).join(', ')})`,
+    unique,
+  );
+  const found = new Set(rows.map((r) => String(r.id)));
+  const missing = unique.filter((id) => !found.has(id));
+  if (missing.length > 0) throw invalid(`unknown or inactive department: ${missing.join(', ')}`);
+}
+
+/** Bundles that exist, else 422. */
+export async function checkBundles(db: Queryable, names: string[]): Promise<void> {
+  const found = new Set((await bundlesNamed(db, names)).map((b) => b.name));
+  const missing = names.filter((n) => !found.has(n));
+  if (missing.length > 0) throw invalid(`unknown bundle: ${missing.join(', ')}`);
+}
+
+/**
+ * #154: makes the Cognito account (Cognito emails the invite), puts it in its type's group, then saves the user.
+ * If anything after the invite fails, the new account is disabled, so no one can sign in to a half-made user.
+ */
+export async function createUser(db: Queryable, accounts: StaffAccounts, input: NewUser, by: string): Promise<User> {
+  const email = input.email.toLowerCase();
+  await checkDepartments(db, input.departmentIds);
+  const bundles = [...new Set(input.bundles)].sort();
+  await checkBundles(db, bundles);
+  if ((await db.query('SELECT 1 FROM users WHERE email = $1', [email])).rows.length > 0) throw emailTaken();
+
+  let sub: string;
+  try {
+    sub = await accounts.invite({ email, name: input.name });
+  } catch (error) {
+    if (isUsernameTaken(error)) throw emailTaken();
+    throw error;
+  }
+
+  const id = randomUUID();
+  try {
+    await accounts.addToGroup(email, input.type);
+    await withTransaction(db, async (tx) => {
+      await tx.query(
+        `INSERT INTO users (id, status, created_by, updated_by, cognito_sub, name, email, mobile, type, department_ids,
+           council_name, council_reg_no, reg_valid_till, pharmacist_reg_no, active)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)`,
+        [
+          id, by, sub, input.name, email, input.mobile, input.type, JSON.stringify([...new Set(input.departmentIds)]),
+          input.councilName ?? null, input.councilRegNo ?? null, input.regValidTill ?? null, input.pharmacistRegNo ?? null,
+        ],
+      );
+      if (bundles.length > 0) {
+        await tx.query(
+          `INSERT INTO user_permissions (id, status, created_by, updated_by, user_id, allow, deny, bundles)
+           VALUES ($1, 'active', $2, $2, $3, '[]', '[]', $4)`,
+          [randomUUID(), by, sub, JSON.stringify(bundles)],
+        );
+      }
+    });
+  } catch (error) {
+    await accounts.disable(email).catch((e: unknown) => console.error('Could not disable half-made account', email, e));
+    if ((error as { code?: string }).code === '23505') throw emailTaken();
+    throw error;
+  }
+  return getUser(db, id);
+}
