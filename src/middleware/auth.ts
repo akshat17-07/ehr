@@ -5,6 +5,12 @@ import { AppError } from './errors.js';
 
 export type Pool = 'staff' | 'patient';
 
+// Cognito groups allowed on each route prefix (see app.ts). Must match STAFF_GROUPS in infra/constructs/auth.ts.
+export const WORKFORCE_GROUPS = ['admin', 'head_doctor', 'doctor', 'nurse', 'staff', 'medical'] as const;
+export const MANAGEMENT_GROUPS = ['admin', 'head_doctor'] as const;
+export const INSURANCE_GROUPS = ['insurance'] as const;
+export const GP_GROUPS = ['gp'] as const;
+
 export interface CurrentUser {
   sub: string;
   email: string;
@@ -22,9 +28,11 @@ type Claims = Record<string, unknown>;
 /**
  * API Gateway's JWT authorizer has already checked the token's signature, expiry and audience
  * before the Lambda runs. This middleware only reads the claims it passes on and makes sure the
- * token came from the expected Cognito pool (staff tokens can't call patient routes, and back).
+ * token came from the expected Cognito pool (staff tokens can't call patient routes, and back),
+ * and, when `groups` is given, that the user is in at least one of them.
+ * Per-endpoint permissions are checked after this, by the endpoint.
  */
-export const requireUser = (pool: Pool) =>
+export const requireUser = (pool: Pool, groups?: readonly string[]) =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const claims = claimsFromEvent(c.env?.event) ?? devClaims(c.req.header('x-dev-user'));
     if (!claims || typeof claims.sub !== 'string') throw new AppError(401, 'unauthenticated');
@@ -33,11 +41,14 @@ export const requireUser = (pool: Pool) =>
     const issuer = typeof claims.iss === 'string' ? claims.iss : '';
     if (expectedPoolId && !issuer.endsWith(`/${expectedPoolId}`)) throw new AppError(403, 'wrong_pool');
 
+    const userGroups = parseGroups(claims['cognito:groups']);
+    if (groups && !userGroups.some((g) => groups.includes(g))) throw new AppError(403, 'wrong_group');
+
     c.set('user', {
       sub: claims.sub,
       email: typeof claims.email === 'string' ? claims.email : '',
       pool,
-      groups: parseGroups(claims['cognito:groups']),
+      groups: userGroups,
     });
     await next();
   });
