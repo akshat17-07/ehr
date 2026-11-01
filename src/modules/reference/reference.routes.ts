@@ -4,7 +4,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
 import { listDepartments } from './departments.js';
 import { getHospital } from './hospital.js';
-import { listTariffs } from './tariffs.js';
+import { listTariffs, rateBoardRows } from './tariffs.js';
 
 // Reference data every staff member reads (api-list.md 7.1 "Reference data").
 
@@ -32,4 +32,10 @@ export const referenceRoutes = new Hono<AuthEnv>()
       })
       .parse(c.req.query());
     return c.json(await listTariffs(await dbOf(c), query));
+  })
+  // #11
+  .get('/tariffs/rate-board', async (c) => {
+    const { lang } = z.object({ lang: z.enum(['en', 'hi', 'both']).default('both') }).parse(c.req.query());
+    const db = await dbOf(c);
+    return c.json({ hospital: await getHospital(db), rows: await rateBoardRows(db, lang) });
   });

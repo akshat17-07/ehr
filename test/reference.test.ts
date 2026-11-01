@@ -93,3 +93,24 @@ describe('GET /staff/tariffs', () => {
     expect((await get('/tariffs?on=31-03-2026')).status).toBe(422);
   });
 });
+
+describe('GET /staff/tariffs/rate-board', () => {
+  type Board = { hospital: { name: string }; rows: { nameEn?: string; nameHi?: string; pricePaise: number }[] };
+
+  it("gives today's prices with the hospital, in both languages by default", async () => {
+    const { status, body } = (await get('/tariffs/rate-board')) as { status: number; body: Board };
+    expect(status).toBe(200);
+    expect(body.hospital.name).toBe('Shanti Multispeciality Hospital');
+    expect(body.rows.find((r) => r.nameEn === 'OPD consultation')).toEqual({ nameEn: 'OPD consultation', nameHi: 'ओपीडी परामर्श', pricePaise: 30000 });
+  });
+
+  it('gives one language when asked, using English where there is no Hindi name', async () => {
+    const en = ((await get('/tariffs/rate-board?lang=en')).body as Board).rows;
+    expect(en.every((r) => r.nameEn && !('nameHi' in r))).toBe(true);
+    const hi = ((await get('/tariffs/rate-board?lang=hi')).body as Board).rows;
+    expect(hi.every((r) => r.nameHi && !('nameEn' in r))).toBe(true);
+    // The LAB-RBS row added in the test above has no Hindi name.
+    expect(hi).toContainEqual({ nameHi: 'Random blood sugar', pricePaise: 12000 });
+    expect((await get('/tariffs/rate-board?lang=fr')).status).toBe(422);
+  });
+});

@@ -75,3 +75,22 @@ export async function listTariffs(db: Queryable, filter: TariffFilter = {}): Pro
   const { rows } = await db.query(`${SELECT} WHERE ${where.join(' AND ')} ORDER BY name_en, id`, params);
   return rows.map(toTariff);
 }
+
+export interface RateBoardRow {
+  nameEn?: string;
+  nameHi?: string;
+  pricePaise: number;
+}
+
+/**
+ * #11: today's prices for the price board shown at the hospital,
+ * in Hindi and English. A row with no Hindi name shows the English one in Hindi.
+ */
+export async function rateBoardRows(db: Queryable, lang: 'en' | 'hi' | 'both'): Promise<RateBoardRow[]> {
+  const tariffs = await listTariffs(db);
+  return tariffs.map((t) => ({
+    ...(lang !== 'hi' && { nameEn: t.nameEn }),
+    ...(lang !== 'en' && { nameHi: t.nameHi ?? t.nameEn }),
+    pricePaise: t.pricePaise,
+  }));
+}
