@@ -13,4 +13,12 @@ export interface Migration {
   statements: (ctx: MigrationContext) => string[];
 }
 
-export const migrations: Migration[] = [];
+export const migrations: Migration[] = [
+  {
+    id: '0001_app_role',
+    statements: ({ apiRoleArn }) => [
+      'CREATE ROLE ehr_app WITH LOGIN',
+      `AWS IAM GRANT ehr_app TO '${apiRoleArn}'`,
+    ],
+  },
+];
