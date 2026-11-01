@@ -1,5 +1,5 @@
-import { indiaDate } from '../time/india.js';
 import { HOSPITAL_ID } from '../modules/reference/hospital.js';
+import { indiaDate } from '../time/india.js';
 import type { Queryable } from './migrate.js';
 import { seedId, seedInsert } from './table.js';
 

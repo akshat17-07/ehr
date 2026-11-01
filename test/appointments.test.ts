@@ -25,6 +25,11 @@ const list = async (query: string, who = reception) => {
   return { status: res.status, body: (await res.json()) as Appointment[] };
 };
 const uhids = async (query: string) => (await list(query)).body.map((a) => a.patient.uhid);
+const post = (path: string, body: unknown, who = reception) =>
+  app.request(`/staff/appointments${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+/** A time in India `days` from today. */
+const slot = (days: number, time: string) => new Date(new Date(`${today}T${time}:00+05:30`).getTime() + days * 86_400_000).toISOString();
+const kavita = seedId('9a710000', 4);
 
 describe('GET /staff/appointments', () => {
   it("lists a day's appointments in time order, with the patient", async () => {
@@ -59,5 +64,37 @@ describe('GET /staff/appointments', () => {
     expect((await list('')).status).toBe(422);
     expect((await list(`date=${today}&status=late`)).status).toBe(422);
     expect((await list(`date=${today}`, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
+
+describe('POST /staff/appointments', () => {
+  const book = (body: Record<string, unknown>) => post('', { patientId: kavita, doctorId, departmentId: med, ...body });
+
+  it('books a slot (10 minutes unless told), with the patient', async () => {
+    const res = await book({ at: slot(1, '09:30'), note: 'BP review' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'booked', patientId: kavita, doctorId, departmentId: med, at: slot(1, '09:30'),
+      durationMin: 10, note: 'BP review', createdBy: 'dev-reception', patient: { uhid: 'U25000004' } });
+    expect((await book({ at: slot(1, '09:40'), durationMin: 20 })).status).toBe(201);
+  });
+
+  it('409 when the slot overlaps a booked one; free again for another doctor', async () => {
+    expect((await book({ at: slot(1, '09:35') })).status).toBe(409);
+    expect((await book({ at: slot(1, '09:20'), durationMin: 15 })).status).toBe(409);
+    expect((await book({ at: slot(1, '09:20') })).status).toBe(201);
+    const sur = seedId('de000000', 2);
+    expect((await post('', { patientId: kavita, doctorId: surgeonId, departmentId: sur, at: slot(1, '09:35') })).status).toBe(201);
+  });
+
+  it('422 for a past time, a doctor outside the department, a non-doctor or an unknown patient', async () => {
+    for (const body of [
+      { at: slot(-1, '09:00') },
+      { at: slot(2, '09:00'), departmentId: seedId('de000000', 2) },
+      { at: slot(2, '09:00'), doctorId: seedId('a0000000', 5) },
+      { at: slot(2, '09:00'), patientId: seedId('9a710000', 999) },
+      { at: slot(2, '09:00'), durationMin: 1 },
+      { at: '2030-01-01 10:00' },
+    ]) expect((await book(body)).status, JSON.stringify(body)).toBe(422);
+    expect((await post('', { patientId: kavita, doctorId, departmentId: med, at: slot(2, '09:00') }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
