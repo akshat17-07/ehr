@@ -166,3 +166,25 @@ describe('POST /staff/appointments/{id}/check-in', () => {
     expect((await db.query('SELECT count(*)::int AS n FROM encounters')).rows[0]).toEqual({ n: 1 });
   });
 });
+
+describe('POST /staff/appointments/{id}/cancel', () => {
+  it('cancels a booked appointment with a reason and frees its slot', async () => {
+    const id = await bookOne(slot(8, '10:00'));
+    const res = await post(`/${id}/cancel`, { reason: 'patient called, travelling' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'cancelled', version: 2, voidedBy: 'dev-reception', voidReason: 'patient called, travelling' });
+    expect(await bookOne(slot(8, '10:00'))).toBeTruthy();
+    const versions = await db.query('SELECT reason FROM appointments_versions WHERE record_id = $1', [id]);
+    expect(versions.rows).toEqual([{ reason: 'patient called, travelling' }]);
+  });
+
+  it('409 once cancelled or checked in; 422 without a reason; 403 for a nurse', async () => {
+    const id = await bookOne(slot(9, '10:00'));
+    expect((await post(`/${id}/cancel`, {})).status).toBe(422);
+    expect((await post(`/${id}/cancel`, { reason: 'no' })).status).toBe(422);
+    expect((await post(`/${id}/cancel`, { reason: 'duplicate booking' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await post(`/${id}/cancel`, { reason: 'duplicate booking' })).status).toBe(200);
+    expect(await (await post(`/${id}/cancel`, { reason: 'duplicate booking' })).json()).toMatchObject({ error: 'not_booked' });
+    expect((await post(`/${seedId('a9900000', 1)}/cancel`, { reason: 'duplicate booking' })).status).toBe(409);
+  });
+});

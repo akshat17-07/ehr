@@ -202,3 +202,17 @@ export async function checkIn(db: Queryable, id: string, by: string, now = new D
     return { appointment: await getAppointment(tx, id, now), encounter };
   });
 }
+
+/** #35: cancels a booked appointment (its slot is free again). The reason is kept on the record and in its history. */
+export async function cancelAppointment(db: Queryable, id: string, reason: string, by: string, now = new Date()): Promise<Appointment> {
+  const current = await getAppointment(db, id, now);
+  assertBooked(current);
+  await updateRecord(db, 'appointments', {
+    id,
+    version: current.version,
+    by,
+    reason,
+    set: { status: 'cancelled', voided_at: now, voided_by: by, void_reason: reason },
+  });
+  return getAppointment(db, id, now);
+}

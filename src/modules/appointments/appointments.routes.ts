@@ -4,7 +4,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { APPOINTMENT_STATUSES, bookAppointment, checkIn, listAppointments, updateAppointment } from './appointments.js';
+import { APPOINTMENT_STATUSES, bookAppointment, cancelAppointment, checkIn, listAppointments, updateAppointment } from './appointments.js';
 
 // /staff/appointments (api-list.md 6.4).
 
@@ -39,6 +39,8 @@ const appointmentChange = z
   })
   .strict();
 
+const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -64,4 +66,11 @@ export const appointmentsRoutes = new Hono<AuthEnv>()
     const result = await checkIn(await dbOf(c), c.req.param('id'), userOf(c).sub);
     auditDetails(c, { patientId: result.encounter.patientId, recordType: 'encounter', recordId: result.encounter.id });
     return c.json(result);
+  })
+  // #35
+  .post('/:id/cancel', requirePermission('appointment.update'), async (c) => {
+    const { reason } = reasonBody.parse(await bodyOf(c));
+    const appointment = await cancelAppointment(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
+    auditDetails(c, { patientId: appointment.patientId, recordType: 'appointment', recordId: appointment.id, reason });
+    return c.json(appointment);
   });
