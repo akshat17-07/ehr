@@ -17,6 +17,8 @@ export interface ApiProps {
   database: Database;
   files: Files;
   auth: Auth;
+  /** Website addresses allowed to call the API from a browser. */
+  allowedOrigins: string[];
 }
 
 /**
@@ -64,12 +66,25 @@ export class Api extends Construct {
     props.database.grantConnect(this.role);
     props.files.grantPutAndRead(this.role);
 
-    this.httpApi = new apigw.HttpApi(this, 'HttpApi');
+    this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
+      corsPreflight: {
+        allowOrigins: props.allowedOrigins,
+        allowMethods: [
+          apigw.CorsHttpMethod.GET,
+          apigw.CorsHttpMethod.POST,
+          apigw.CorsHttpMethod.PATCH,
+          apigw.CorsHttpMethod.PUT,
+        ],
+        allowHeaders: ['authorization', 'content-type'],
+        maxAge: Duration.hours(1),
+      },
+    });
     this.configureStage();
 
     const integration = new HttpLambdaIntegration('Lambda', this.function);
     const staffAuthorizer = jwtAuthorizer('StaffAuthorizer', props.auth.staff);
     const patientAuthorizer = jwtAuthorizer('PatientAuthorizer', props.auth.patient);
+    // OPTIONS is answered by API Gateway (CORS preflight), so routes list real methods only.
     const methods = [
       apigw.HttpMethod.GET,
       apigw.HttpMethod.POST,
