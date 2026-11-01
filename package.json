@@ -8,9 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "synth": "cdk synth",
-    "deploy": "cdk deploy --require-approval never"
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/dsql-signer": "^3.1161.0",
@@ -23,10 +21,6 @@
     "@types/aws-lambda": "^8.10.155",
     "@types/node": "^22.18.0",
     "@types/pg": "^8.15.5",
-    "aws-cdk": "^2.1147.0",
-    "aws-cdk-lib": "^2.275.0",
-    "constructs": "^10.4.2",
-    "esbuild": "^0.25.11",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

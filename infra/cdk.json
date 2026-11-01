@@ -1,0 +1,11 @@
+{
+  "app": "npx tsx app.ts",
+  "watch": {
+    "include": ["**/*.ts", "../src/**"],
+    "exclude": ["node_modules", "cdk.out", "test"]
+  },
+  "context": {
+    "stage": "dev",
+    "frontendRepo": "akshat17-07/ehr-frontend"
+  }
+}

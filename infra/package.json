@@ -1,0 +1,24 @@
+{
+  "name": "ehr-infra",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy ehr-dev --require-approval never"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "aws-cdk": "^2.1147.0",
+    "aws-cdk-lib": "^2.275.0",
+    "constructs": "^10.8.1",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
