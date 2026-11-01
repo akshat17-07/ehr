@@ -313,3 +313,16 @@ export async function listUserVersions(db: Queryable, id: string): Promise<Versi
     return user;
   });
 }
+
+/** 422 unless `doctorId` is an active doctor (or Head Doctor) of `departmentId`. */
+export async function checkDoctor(db: Queryable, doctorId: string, departmentId: string): Promise<void> {
+  const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+  const { rows } = await db.query(
+    "SELECT department_ids FROM users WHERE id = $1 AND active AND type IN ('doctor', 'head_doctor')",
+    [doctorId],
+  );
+  if (!rows[0]) throw invalid('doctorId: no such active doctor');
+  if (!(JSON.parse(String(rows[0].department_ids)) as string[]).includes(departmentId)) {
+    throw invalid('departmentId: the doctor is not in this department');
+  }
+}

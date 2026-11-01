@@ -4,9 +4,10 @@ import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
-import { openEncounter, type Encounter } from '../encounters/encounters.js';
+import { openEncounter, type Encounter, type NewEncounter } from '../encounters/encounters.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
+import { checkDoctor } from '../users/users.js';
 
 // OPD appointments (api-list.md Appointment): a patient booked with a doctor of a department, for a time slot.
 // Stored status: booked, arrived (checked in, #34) or cancelled (#35). A booked appointment from an earlier day
@@ -100,18 +101,6 @@ export interface NewAppointment {
   note?: string;
 }
 
-/** 422 unless `doctorId` is an active doctor (or Head Doctor) of `departmentId`. */
-export async function checkDoctor(db: Queryable, doctorId: string, departmentId: string): Promise<void> {
-  const { rows } = await db.query(
-    "SELECT department_ids FROM users WHERE id = $1 AND active AND type IN ('doctor', 'head_doctor')",
-    [doctorId],
-  );
-  if (!rows[0]) throw invalid('doctorId: no such active doctor');
-  if (!(JSON.parse(String(rows[0].department_ids)) as string[]).includes(departmentId)) {
-    throw invalid('departmentId: the doctor is not in this department');
-  }
-}
-
 /**
  * 409 slot_taken if the doctor has a booked or arrived appointment overlapping [at, endsAt). `except` leaves out the
  * appointment being moved. Two bookings at the very same moment could both pass; the desk sees both on the list.
@@ -183,20 +172,32 @@ export async function updateAppointment(db: Queryable, id: string, change: Appoi
 /**
  * #34: the patient has arrived. Marks today's booked appointment arrived and opens its OPD encounter, together.
  * 409 for an appointment not booked (already in, cancelled, no-show) or not for today.
+ * `visit` (from POST /staff/encounters, #37) sets the encounter's type, doctor or department instead of the booking's;
+ * its patient must be the appointment's.
  */
-export async function checkIn(db: Queryable, id: string, by: string, now = new Date()): Promise<{ appointment: Appointment; encounter: Encounter }> {
+export async function checkIn(
+  db: Queryable,
+  id: string,
+  by: string,
+  now = new Date(),
+  visit?: Omit<NewEncounter, 'appointmentId'>,
+): Promise<{ appointment: Appointment; encounter: Encounter }> {
   const current = await getAppointment(db, id, now);
+  if (visit && visit.patientId !== current.patientId) throw invalid('appointmentId: this appointment is for another patient');
   assertBooked(current);
   if (indiaDate(new Date(current.at)) !== indiaDate(now)) throw new AppError(409, 'not_today', 'this appointment is for another day');
+  const encounter: NewEncounter = {
+    patientId: current.patientId,
+    type: visit?.type ?? 'OPD',
+    departmentId: visit?.departmentId ?? current.departmentId,
+    doctorId: visit?.doctorId ?? current.doctorId,
+    appointmentId: id,
+  };
+  if (visit) await checkDoctor(db, encounter.doctorId, encounter.departmentId);
   return withTransaction(db, async (tx) => {
     await updateRecord(tx, 'appointments', { id, version: current.version, by, set: { status: 'arrived' } });
-    const encounter = await openEncounter(
-      tx,
-      { patientId: current.patientId, type: 'OPD', departmentId: current.departmentId, doctorId: current.doctorId, appointmentId: id },
-      by,
-      now,
-    );
-    return { appointment: await getAppointment(tx, id, now), encounter };
+    const opened = await openEncounter(tx, encounter, by, now);
+    return { appointment: await getAppointment(tx, id, now), encounter: opened };
   });
 }
 

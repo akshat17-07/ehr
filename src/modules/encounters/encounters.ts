@@ -6,6 +6,7 @@ import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
+import { checkDoctor } from '../users/users.js';
 
 // Encounters (api-list.md Encounter): one visit, OPD, IPD or ER, with a doctor of a department. status: open until
 // closed (#40). Opening one is activity, so the patient's last_activity_at moves to now.
@@ -101,4 +102,14 @@ export async function listEncounters(db: Queryable, query: EncounterQuery, now =
   );
   const byId = await patientSummaries(db, page.items.map((e) => e.patientId), now);
   return { ...page, items: page.items.map((e) => ({ ...e, patient: byId.get(e.patientId) })) };
+}
+
+/** #37 without an appointment (walk-in, emergency, admission): checks the patient and the doctor, then opens it. */
+export async function createEncounter(db: Queryable, input: Omit<NewEncounter, 'appointmentId'>, by: string, now = new Date()): Promise<Encounter> {
+  const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+  const patient = await db.query('SELECT merged_into FROM patients WHERE id = $1', [input.patientId]);
+  if (!patient.rows[0]) throw invalid('patientId: no such patient');
+  if (patient.rows[0].merged_into != null) throw invalid('patientId: this patient was merged into another');
+  await checkDoctor(db, input.doctorId, input.departmentId);
+  return openEncounter(db, input, by, now);
 }

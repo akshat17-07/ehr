@@ -22,6 +22,8 @@ const list = async (query = '', who = doctor) => {
   const res = await app.request(`/staff/encounters${query}`, {}, who);
   return { status: res.status, body: (await res.json()) as { items: Item[]; nextCursor?: string } };
 };
+const post = (body: unknown, who = doctor) =>
+  app.request('/staff/encounters', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
 const checkIn = (n: number) => app.request(`/staff/appointments/${seedId('a9900000', n)}/check-in`, { method: 'POST' }, reception);
 
 // Ramesh (dev-doctor, MED) then Rahul (dev-surgeon, SUR) arrive.
@@ -53,5 +55,35 @@ describe('GET /staff/encounters', () => {
     expect((await list('?type=XYZ')).status).toBe(422);
     expect((await list('?date=01-11-2026')).status).toBe(422);
     expect((await list('', reception)).status).toBe(403);
+  });
+});
+
+describe('POST /staff/encounters', () => {
+  const kavita = seedId('9a710000', 4);
+  const irfan = seedId('9a710000', 3);
+
+  it('opens a walk-in or emergency encounter and counts it as activity', async () => {
+    const res = await post({ patientId: kavita, type: 'ER', departmentId: med, doctorId });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: kavita, type: 'ER', status: 'open', createdBy: 'dev-doctor' });
+    expect((await db.query('SELECT last_activity_at FROM patients WHERE id = $1', [kavita])).rows[0]?.last_activity_at).toBeInstanceOf(Date);
+  });
+
+  it("with an appointment, checks it in: arrived, and the encounter takes the visit's type", async () => {
+    const appointmentId = seedId('a9900000', 2);
+    const res = await post({ patientId: irfan, type: 'ER', departmentId: med, doctorId, appointmentId });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: irfan, type: 'ER', appointmentId });
+    expect((await db.query('SELECT status FROM appointments WHERE id = $1', [appointmentId])).rows[0]).toEqual({ status: 'arrived' });
+    expect((await post({ patientId: irfan, type: 'OPD', departmentId: med, doctorId, appointmentId })).status).toBe(409);
+  });
+
+  it("422 for another patient's appointment, a doctor outside the department or an unknown patient; 403 for reception", async () => {
+    const appointmentId = seedId('a9900000', 3);
+    expect((await post({ patientId: kavita, type: 'OPD', departmentId: med, doctorId, appointmentId })).status).toBe(422);
+    expect((await post({ patientId: kavita, type: 'OPD', departmentId: seedId('de000000', 2), doctorId })).status).toBe(422);
+    expect((await post({ patientId: seedId('9a710000', 999), type: 'OPD', departmentId: med, doctorId })).status).toBe(422);
+    expect((await post({ patientId: kavita, type: 'XYZ', departmentId: med, doctorId })).status).toBe(422);
+    expect((await post({ patientId: kavita, type: 'OPD', departmentId: med, doctorId }, reception)).status).toBe(403);
   });
 });
