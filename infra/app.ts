@@ -1,13 +1,24 @@
 import { App } from 'aws-cdk-lib';
+import { BackupStack } from './backup-stack.js';
+import { REGION, readConfig } from './config.js';
 import { EhrStack } from './ehr-stack.js';
 
 const app = new App();
-const stage: string = app.node.tryGetContext('stage') ?? 'dev';
-const alertEmail: string | undefined = app.node.tryGetContext('alertEmail') || undefined;
+const config = readConfig(app);
 
-new EhrStack(app, `ehr-${stage}`, {
-  stage,
-  alertEmail,
-  // Mumbai only. The account is the one whose credentials run the deploy.
-  env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'ap-south-1' },
+// Stack 1, in the app account: `cdk deploy ehr-<stage>`.
+new EhrStack(app, `ehr-${config.stage}`, {
+  config,
+  env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: REGION },
 });
+
+// Stack 2, in the backup account (deployed with that account's credentials): `cdk deploy ehr-backup-<stage>`.
+// Needs both account IDs: -c backupAccountId=<account 2> -c appAccountId=<account 1>.
+const appAccountId: unknown = app.node.tryGetContext('appAccountId');
+if (config.backupAccountId && typeof appAccountId === 'string' && appAccountId !== '') {
+  new BackupStack(app, `ehr-backup-${config.stage}`, {
+    config,
+    appAccountId,
+    env: { account: config.backupAccountId, region: REGION },
+  });
+}
