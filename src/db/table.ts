@@ -70,6 +70,23 @@ export function grantApp(name: string): string {
   return `GRANT SELECT, INSERT, UPDATE ON ${name} TO ehr_app`;
 }
 
+/** A SQL text literal: single quotes doubled. Only for seed rows written into migrations. */
+const literal = (value: string | boolean) => (typeof value === 'boolean' ? String(value) : `'${value.replaceAll("'", "''")}'`);
+
+/**
+ * An INSERT for a built-in row a migration adds (created by 'system', status active).
+ * The fixed id and ON CONFLICT DO NOTHING let the migration run twice safely.
+ */
+export function seedInsert(table: string, id: string, values: Record<string, string | boolean>): string {
+  const columns = Object.keys(values);
+  if (![table, ...columns].every((n) => /^[a-z][a-z0-9_]*$/.test(n))) throw new Error(`Bad name in seed for ${table}`);
+  const all = { id, status: 'active', created_by: 'system', updated_by: 'system', ...values };
+  return `INSERT INTO ${table} (${Object.keys(all).join(', ')}) VALUES (${Object.values(all).map(literal).join(', ')}) ON CONFLICT (id) DO NOTHING`;
+}
+
+/** Fixed ids for seed rows: `prefix` is 8 hex digits per table, `n` counts from 1. */
+export const seedId = (prefix: string, n: number) => `${prefix}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
 export interface BaseRow {
   id: string;
   version: number;

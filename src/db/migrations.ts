@@ -3,6 +3,7 @@
 // no foreign keys or triggers, and indexes are created with `CREATE INDEX ASYNC`.
 // Make record tables with createTable() (db/table.ts): base columns + `GRANT SELECT, INSERT, UPDATE` (never DELETE).
 // Log tables use appendOnlyTable() instead (read + add only). test/table.test.ts checks every migration follows these rules.
+import { seedBundles } from '../permissions/bundles.js';
 import { seedTypePermissions } from '../permissions/type-permissions.js';
 import { appendOnlyTable, createTable } from './table.js';
 
@@ -68,6 +69,15 @@ export const migrations: Migration[] = [
       ...createTable('type_permissions', ['type text NOT NULL', 'permissions text NOT NULL']),
       'CREATE UNIQUE INDEX ASYNC type_permissions_type ON type_permissions (type)',
       ...seedTypePermissions(),
+    ],
+  },
+  {
+    // Permission bundles (api-list.md Bundle), with the built-in ones. permissions is a JSON array.
+    id: '0004_bundles',
+    statements: () => [
+      ...createTable('bundles', ['name text NOT NULL', 'permissions text NOT NULL', 'built_in boolean NOT NULL DEFAULT false']),
+      'CREATE UNIQUE INDEX ASYNC bundles_name ON bundles (name)',
+      ...seedBundles(),
     ],
   },
 ];

@@ -1,19 +1,14 @@
 import type { Queryable } from '../db/migrate.js';
+import { seedId, seedInsert } from '../db/table.js';
 import type { Permission } from './catalog.js';
 import { DEFAULT_TYPE_PERMISSIONS, STAFF_TYPES, type StaffType } from './defaults.js';
 
 // type_permissions: one row per staff type with its current permission list (api-list.md TypePermissions).
 
-/** Fixed ids for the rows the first migration adds, so the seed can safely run twice. */
-export const TYPE_ROW_IDS: Record<StaffType, string> = Object.fromEntries(
-  STAFF_TYPES.map((type, i) => [type, `7e000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`]),
-) as Record<StaffType, string>;
-
 /** The INSERTs that put the built-in lists in a new database. */
 export function seedTypePermissions(): string[] {
-  return STAFF_TYPES.map(
-    (type) =>
-      `INSERT INTO type_permissions (id, status, created_by, updated_by, type, permissions) VALUES ('${TYPE_ROW_IDS[type]}', 'active', 'system', 'system', '${type}', '${JSON.stringify(DEFAULT_TYPE_PERMISSIONS[type])}') ON CONFLICT (id) DO NOTHING`,
+  return STAFF_TYPES.map((type, i) =>
+    seedInsert('type_permissions', seedId('7e000000', i + 1), { type, permissions: JSON.stringify(DEFAULT_TYPE_PERMISSIONS[type]) }),
   );
 }
 
