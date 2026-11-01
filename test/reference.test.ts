@@ -225,3 +225,16 @@ describe('GET /staff/codes/icd10', () => {
     expect(await codes('?q=heart')).toEqual([]);
   });
 });
+
+describe('GET /staff/codes/loinc', () => {
+  it('finds the built-in vital signs by code or name, in a new database too', async () => {
+    const empty = await openLocalDb();
+    const res = await createApp({ db: async () => empty }).request('/staff/codes/loinc?q=blood%20pressure', {}, nurse);
+    expect(await res.json()).toEqual([
+      { code: '8462-4', text: 'Diastolic blood pressure' },
+      { code: '8480-6', text: 'Systolic blood pressure' },
+    ]);
+    expect(((await get('/codes/loinc?q=8867')).body as { code: string }[]).map((c) => c.code)).toEqual(['8867-4']);
+    expect((await get('/codes/loinc?q=x')).status).toBe(422);
+  });
+});

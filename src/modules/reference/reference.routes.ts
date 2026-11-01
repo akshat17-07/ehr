@@ -72,4 +72,6 @@ export const referenceRoutes = new Hono<AuthEnv>()
   // #16
   .get('/tpas', async (c) => c.json(await listTpas(await dbOf(c))))
   // #17
-  .get('/codes/icd10', async (c) => c.json(await searchCodes(await dbOf(c), 'icd10', codeQuery.parse(c.req.query()))));
+  .get('/codes/icd10', async (c) => c.json(await searchCodes(await dbOf(c), 'icd10', codeQuery.parse(c.req.query()))))
+  // #18
+  .get('/codes/loinc', async (c) => c.json(await searchCodes(await dbOf(c), 'loinc', codeQuery.parse(c.req.query()))));
