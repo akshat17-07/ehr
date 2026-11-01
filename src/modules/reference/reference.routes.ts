@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
 import { listDepartments } from './departments.js';
+import { DRUG_SCHEDULES, searchDrugs } from './drugs.js';
 import { getHospital } from './hospital.js';
 import { listTariffs, rateBoardRows } from './tariffs.js';
 
@@ -38,4 +39,15 @@ export const referenceRoutes = new Hono<AuthEnv>()
     const { lang } = z.object({ lang: z.enum(['en', 'hi', 'both']).default('both') }).parse(c.req.query());
     const db = await dbOf(c);
     return c.json({ hospital: await getHospital(db), rows: await rateBoardRows(db, lang) });
+  })
+  // #12
+  .get('/drugs', async (c) => {
+    const query = z
+      .object({
+        q: z.string().trim().min(2).max(100),
+        schedule: z.enum(DRUG_SCHEDULES).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+      })
+      .parse(c.req.query());
+    return c.json(await searchDrugs(await dbOf(c), query));
   });

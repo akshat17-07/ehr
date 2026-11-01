@@ -114,3 +114,26 @@ describe('GET /staff/tariffs/rate-board', () => {
     expect((await get('/tariffs/rate-board?lang=fr')).status).toBe(422);
   });
 });
+
+describe('GET /staff/drugs', () => {
+  type D = { name: string; strength?: string; schedule: string; mrpPaise?: number; active: boolean };
+  const names = async (query: string) => ((await get(`/drugs${query}`)).body as D[]).map((d) => d.name);
+
+  it('finds active drugs by part of the name, names starting with it first', async () => {
+    const found = (await get('/drugs?q=para')).body as D[];
+    expect(found[0]).toMatchObject({ name: 'Paracetamol', schedule: expect.any(String), active: true });
+    expect((await names('?q=ce')).slice(0, 2)).toEqual(['Cefixime', 'Ceftriaxone']);
+    expect(await names('?q=TAM')).toContain('Paracetamol');
+    await db.query("UPDATE drugs SET active = false WHERE name = 'Cefixime'");
+    expect(await names('?q=cef')).toEqual(['Ceftriaxone']);
+  });
+
+  it('filters by schedule and limits the count', async () => {
+    expect(await names('?q=or&schedule=NDPS')).toEqual(['Morphine']);
+    expect(await names('?q=in&limit=2')).toHaveLength(2);
+  });
+
+  it('422 without a 2-character q or with a bad schedule or limit', async () => {
+    for (const q of ['', '?q=a', '?q=para&schedule=G', '?q=para&limit=0', '?q=para&limit=51']) expect((await get(`/drugs${q}`)).status).toBe(422);
+  });
+});
