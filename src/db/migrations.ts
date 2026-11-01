@@ -1,7 +1,8 @@
 // Database changes, in order. Never edit or remove one that has run; add a new one instead.
 // Aurora DSQL rules: one DDL statement per transaction (each string below runs on its own),
 // no foreign keys or triggers, and indexes are created with `CREATE INDEX ASYNC`.
-// Every new table must `GRANT SELECT, INSERT, UPDATE ON <table> TO ehr_app` (never DELETE).
+// Make record tables with createTable() (db/table.ts): base columns + `GRANT SELECT, INSERT, UPDATE` (never DELETE).
+// test/table.test.ts checks every migration follows these rules.
 
 export interface MigrationContext {
   /** IAM role of the API Lambda; it logs in as ehr_app. */
