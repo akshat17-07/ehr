@@ -30,3 +30,8 @@ const toPayer = (r: Record<string, unknown>): Payer => ({
 export async function listPartnerHospitals(db: Queryable): Promise<PartnerHospital[]> {
   return (await db.query('SELECT * FROM partner_hospitals ORDER BY name, id')).rows.map(base);
 }
+
+/** #15 */
+export async function listInsurers(db: Queryable): Promise<Payer[]> {
+  return (await db.query('SELECT * FROM insurers ORDER BY name, id')).rows.map(toPayer);
+}

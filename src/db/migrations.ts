@@ -311,4 +311,12 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC partner_hospitals_name ON partner_hospitals (name)',
     ],
   },
+  {
+    // Insurance companies (api-list.md Insurer).
+    id: '0020_insurers',
+    statements: () => [
+      ...createTable('insurers', ['name text NOT NULL', 'code text', 'active boolean NOT NULL DEFAULT true']),
+      'CREATE UNIQUE INDEX ASYNC insurers_name ON insurers (name)',
+    ],
+  },
 ];

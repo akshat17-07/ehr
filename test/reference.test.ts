@@ -180,3 +180,15 @@ describe('GET /staff/partner-hospitals', () => {
     expect(Object.keys(list[0] ?? {}).sort()).toEqual(['id', 'name', 'version']);
   });
 });
+
+describe('GET /staff/insurers', () => {
+  it('lists insurers A to Z with code and active, inactive ones too', async () => {
+    await db.query("UPDATE insurers SET active = false WHERE name = 'Care Health Insurance'");
+    const { status, body } = await get('/insurers');
+    expect(status).toBe(200);
+    const list = body as { name: string; code?: string; active: boolean }[];
+    expect(list).toHaveLength(4);
+    expect(list.map((p) => p.name)).toEqual([...list.map((p) => p.name)].sort());
+    expect(list.find((p) => p.name === 'Care Health Insurance')).toMatchObject({ code: expect.any(String), active: false });
+  });
+});
