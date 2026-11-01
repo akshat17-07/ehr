@@ -21,6 +21,18 @@ export function createTable(name: string, columns: string[]): string[] {
   return [`CREATE TABLE ${name} (${[...BASE_COLUMNS, ...columns].join(', ')})`, grantApp(name)];
 }
 
+/**
+ * A log table (no base columns, rows never change): CREATE TABLE, then a grant of read + add only.
+ * Only for tables listed in APPEND_ONLY_TABLES.
+ */
+export function appendOnlyTable(name: string, columns: string[]): string[] {
+  if (!APPEND_ONLY_TABLES.includes(name)) throw new Error(`${name} is not in APPEND_ONLY_TABLES`);
+  return [`CREATE TABLE ${name} (${columns.join(', ')})`, `GRANT SELECT, INSERT ON ${name} TO ehr_app`];
+}
+
+/** Tables whose rows can only be added: the API can't change or delete them. */
+export const APPEND_ONLY_TABLES = ['audit_events'];
+
 /** The API's rights on a table: read, add, change. Never DELETE. */
 export function grantApp(name: string): string {
   return `GRANT SELECT, INSERT, UPDATE ON ${name} TO ehr_app`;

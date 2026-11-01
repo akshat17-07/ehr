@@ -2,7 +2,8 @@
 // Aurora DSQL rules: one DDL statement per transaction (each string below runs on its own),
 // no foreign keys or triggers, and indexes are created with `CREATE INDEX ASYNC`.
 // Make record tables with createTable() (db/table.ts): base columns + `GRANT SELECT, INSERT, UPDATE` (never DELETE).
-// test/table.test.ts checks every migration follows these rules.
+// Log tables use appendOnlyTable() instead (read + add only). test/table.test.ts checks every migration follows these rules.
+import { appendOnlyTable } from './table.js';
 
 export interface MigrationContext {
   /** IAM role of the API Lambda; it logs in as ehr_app. */
@@ -31,6 +32,32 @@ export const migrations: Migration[] = [
     statements: ({ apiRoleArn }) => [
       'CREATE ROLE ehr_app WITH LOGIN',
       `AWS IAM GRANT ehr_app TO '${apiRoleArn}'`,
+    ],
+  },
+  {
+    // Hash-chained audit log (src/audit/log.ts). changes is JSON text: DSQL has no json columns.
+    id: '0002_audit_events',
+    statements: () => [
+      ...appendOnlyTable('audit_events', [
+        'seq bigint PRIMARY KEY',
+        'id uuid NOT NULL',
+        'at timestamptz NOT NULL',
+        'user_id text NOT NULL',
+        'role text NOT NULL',
+        'action text NOT NULL',
+        'patient_id uuid',
+        'record_type text',
+        'record_id text',
+        'changes text',
+        'reason text',
+        'ip text NOT NULL',
+        'device text NOT NULL',
+        'prev_hash text NOT NULL',
+        'hash text NOT NULL',
+      ]),
+      // "Who viewed this patient" and "what did this user do".
+      'CREATE INDEX ASYNC audit_events_patient ON audit_events (patient_id, at)',
+      'CREATE INDEX ASYNC audit_events_user ON audit_events (user_id, at)',
     ],
   },
 ];
