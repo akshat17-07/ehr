@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
@@ -143,5 +144,39 @@ export async function bookAppointment(db: Queryable, input: NewAppointment, by: 
      VALUES ($1, 'booked', $2, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [id, by, input.patientId, input.doctorId, input.departmentId, at, endsAt, durationMin, input.note ?? null],
   );
+  return getAppointment(db, id, now);
+}
+
+export interface AppointmentChange {
+  version: number;
+  doctorId?: string;
+  at?: string;
+  durationMin?: number;
+  /** null clears it. */
+  note?: string | null;
+}
+
+/** 409 unless the appointment is still booked for today or later. */
+function assertBooked(appointment: Appointment): void {
+  if (appointment.status !== 'booked') throw new AppError(409, 'not_booked', `this appointment is ${appointment.status.replace('_', '-')}`);
+}
+
+/** #33: moves the appointment (time, doctor of the same department, length) or changes its note. */
+export async function updateAppointment(db: Queryable, id: string, change: AppointmentChange, by: string, now = new Date()): Promise<Appointment> {
+  const current = await getAppointment(db, id, now);
+  assertBooked(current);
+  const doctorId = change.doctorId ?? current.doctorId;
+  if (change.doctorId !== undefined) await checkDoctor(db, doctorId, current.departmentId);
+  const at = new Date(change.at ?? current.at);
+  if (change.at !== undefined && at < now) throw invalid('at: this time has passed');
+  const durationMin = change.durationMin ?? current.durationMin;
+  const endsAt = new Date(at.getTime() + durationMin * 60_000);
+  if (change.doctorId !== undefined || change.at !== undefined || change.durationMin !== undefined) {
+    await checkSlot(db, doctorId, at, endsAt, id);
+  }
+
+  const set: Record<string, unknown> = { doctor_id: doctorId, at, ends_at: endsAt, duration_min: durationMin };
+  if (change.note !== undefined) set.note = change.note;
+  await updateRecord(db, 'appointments', { id, version: change.version, by, set });
   return getAppointment(db, id, now);
 }

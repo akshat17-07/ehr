@@ -30,6 +30,10 @@ const post = (path: string, body: unknown, who = reception) =>
 /** A time in India `days` from today. */
 const slot = (days: number, time: string) => new Date(new Date(`${today}T${time}:00+05:30`).getTime() + days * 86_400_000).toISOString();
 const kavita = seedId('9a710000', 4);
+const patch = (id: string, body: unknown, who = reception) =>
+  app.request(`/staff/appointments/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const bookOne = async (at: string, doctor = doctorId) =>
+  ((await (await post('', { patientId: kavita, doctorId: doctor, departmentId: med, at })).json()) as { id: string }).id;
 
 describe('GET /staff/appointments', () => {
   it("lists a day's appointments in time order, with the patient", async () => {
@@ -96,5 +100,39 @@ describe('POST /staff/appointments', () => {
       { at: '2030-01-01 10:00' },
     ]) expect((await book(body)).status, JSON.stringify(body)).toBe(422);
     expect((await post('', { patientId: kavita, doctorId, departmentId: med, at: slot(2, '09:00') }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
+
+describe('PATCH /staff/appointments/{id}', () => {
+  it('moves an appointment to a free slot, changes its length and note, keeping the old version', async () => {
+    const id = await bookOne(slot(3, '10:00'));
+    const res = await patch(id, { version: 1, at: slot(3, '12:00'), durationMin: 15, note: 'fasting sample' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ version: 2, at: slot(3, '12:00'), durationMin: 15, note: 'fasting sample' });
+    // The old slot is free again; the moved one is not.
+    expect(await bookOne(slot(3, '10:00'))).toBeTruthy();
+    expect((await post('', { patientId: kavita, doctorId, departmentId: med, at: slot(3, '12:10') })).status).toBe(409);
+    expect((await patch(id, { version: 2, note: null })).status).toBe(200);
+    expect((await db.query('SELECT version FROM appointments_versions WHERE record_id = $1 ORDER BY version', [id])).rows).toEqual([{ version: 1 }, { version: 2 }]);
+  });
+
+  it('409 for a taken slot, a stale version or an appointment no longer booked', async () => {
+    const a = await bookOne(slot(4, '10:00'));
+    const b = await bookOne(slot(4, '10:30'));
+    expect((await patch(b, { version: 1, at: slot(4, '10:05') })).status).toBe(409);
+    expect((await patch(b, { version: 1, durationMin: 10 })).status).toBe(200);
+    expect((await patch(b, { version: 1, durationMin: 10 })).status).toBe(409);
+    await db.query("UPDATE appointments SET status = 'cancelled' WHERE id = $1", [a]);
+    const res = await patch(a, { version: 1, note: 'x' });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'not_booked' });
+  });
+
+  it('422 for a doctor outside the department or a past time; 404 for no such appointment', async () => {
+    const id = await bookOne(slot(5, '10:00'));
+    expect((await patch(id, { version: 1, doctorId: surgeonId })).status).toBe(422);
+    expect((await patch(id, { version: 1, at: slot(-1, '10:00') })).status).toBe(422);
+    expect((await patch(id, { at: slot(6, '10:00') })).status).toBe(422);
+    expect((await patch(seedId('a9900000', 999), { version: 1, note: 'x' })).status).toBe(404);
   });
 });
