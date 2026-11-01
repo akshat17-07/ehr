@@ -11,6 +11,7 @@ import {
   demoteHeadDoctor,
   getUser,
   listUsers,
+  listUserVersions,
   promoteHeadDoctor,
   reactivateUser,
   resetUserMfa,
@@ -91,6 +92,7 @@ export const usersRoutes = new Hono<AuthEnv>()
     return c.json(await createUser(await dbOf(c), accountsOf(c), input, userOf(c).sub), 201);
   })
   .get('/:id', requirePermission('user.view'), async (c) => c.json(await getUser(await dbOf(c), c.req.param('id'))))
+  .get('/:id/versions', requirePermission('audit.read'), async (c) => c.json(await listUserVersions(await dbOf(c), c.req.param('id'))))
   .patch('/:id', requirePermission('user.update'), async (c) => {
     const change = userChange.parse(await c.req.json().catch(() => undefined));
     return c.json(await updateUser(await dbOf(c), c.req.param('id'), change, userOf(c).sub));

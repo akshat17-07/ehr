@@ -312,3 +312,30 @@ describe('POST /admin/users/{id}/demote-head-doctor', () => {
     expect((await post(await idOf('dev-surgeon'), {})).status).toBe(422);
   });
 });
+
+describe('GET /admin/users/{id}/versions', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+
+  it('lists every version, oldest first, with who, when and why', async () => {
+    const res = await app.request(`/admin/users/${await idOf('dev-nurse')}/versions`, {}, asStaff('dev-admin', ['admin']));
+    expect(res.status).toBe(200);
+    const versions = (await res.json()) as { version: number; by: string; reason?: string; data: User }[];
+    expect(versions.map((v) => v.version)).toEqual([1, 2]);
+    expect(versions[1]).toMatchObject({ by: 'dev-admin', reason: 'moved to paediatrics', data: { mobile: '9000000001', active: true } });
+    expect(versions[0]?.data).not.toHaveProperty('bundles');
+  });
+
+  it('keeps dates as YYYY-MM-DD in old and current versions', async () => {
+    const res = await app.request(`/admin/users/${await idOf('dev-doctor')}/versions`, {}, asStaff('dev-admin', ['admin']));
+    const versions = (await res.json()) as { data: User }[];
+    expect(versions.at(-1)?.data.regValidTill).toBe('2032-12-31');
+    for (const v of versions) expect(v.data.regValidTill).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('404 for an unknown id; 403 without audit.read', async () => {
+    expect((await app.request('/admin/users/nope/versions', {}, asStaff('dev-admin', ['admin']))).status).toBe(404);
+    expect((await app.request('/admin/users/00000000-0000-4000-8000-000000000000/versions', {}, asStaff('dev-admin', ['admin']))).status).toBe(404);
+    const nurse = await idOf('dev-nurse');
+    expect((await app.request(`/admin/users/${nurse}/versions`, {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});
