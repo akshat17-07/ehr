@@ -2,7 +2,7 @@ import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
-import type { StageConfig } from '../config.js';
+import { names, type StageConfig } from '../config.js';
 
 export interface FilesProps {
   config: StageConfig;
@@ -17,6 +17,7 @@ export interface FilesProps {
  *            dev:  governance mode, 1 day    (test files can be cleaned up)
  *            prod: compliance mode, 10 years (nobody, including the root user, can delete)
  *          Moves to Glacier Instant Retrieval after 90 days (same speed to open, ~80% cheaper).
+ *          Copied to the backup account when `backupAccountId` is set (Backup 1).
  *
  * exports: short-lived copies only (record-copy PDFs, FHIR exports). Deleted after 7 days.
  */
@@ -58,6 +59,7 @@ export class Files extends Construct {
         },
         { id: 'abort-unfinished-uploads', abortIncompleteMultipartUploadAfter: Duration.days(1) },
       ],
+      ...(config.backupAccountId ? this.replication(config, config.backupAccountId) : {}),
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
@@ -79,4 +81,27 @@ export class Files extends Construct {
     this.exportsBucket.grantRead(grantee);
   }
 
+  // Copies every new file to the locked bucket in the backup account. Deletes are never copied.
+  private replication(config: StageConfig, backupAccountId: string): Partial<s3.BucketProps> {
+    const role = new iam.Role(this, 'ReplicationRole', {
+      roleName: names.replicationRole(config.stage),
+      assumedBy: new iam.ServicePrincipal('s3.amazonaws.com'),
+    });
+    const destination = s3.Bucket.fromBucketAttributes(this, 'BackupBucket', {
+      bucketName: names.backupBucket(config.stage, backupAccountId),
+      account: backupAccountId,
+    });
+    return {
+      replicationRole: role,
+      replicationRules: [
+        {
+          destination,
+          priority: 1,
+          accessControlTransition: true, // the copy is owned by the backup account
+          storageClass: s3.StorageClass.GLACIER_INSTANT_RETRIEVAL,
+          deleteMarkerReplication: false,
+        },
+      ],
+    };
+  }
 }
