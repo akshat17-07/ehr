@@ -2,6 +2,7 @@ import { Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 
 /**
@@ -79,4 +80,18 @@ export class Website extends Construct {
     return `https://${this.distribution.distributionDomainName}`;
   }
 
+  /**
+   * Writes config.json (API URL, Cognito IDs). The rest of the site is uploaded by the frontend repo's CI,
+   * which never touches config.json, so the same build works in every stage.
+   */
+  writeConfig(runtimeConfig: Record<string, string>): void {
+    new s3deploy.BucketDeployment(this, 'Config', {
+      destinationBucket: this.bucket,
+      sources: [s3deploy.Source.jsonData('config.json', runtimeConfig)],
+      cacheControl: [s3deploy.CacheControl.fromString('no-cache')],
+      prune: false,
+      distribution: this.distribution,
+      distributionPaths: ['/config.json'],
+    });
+  }
 }
