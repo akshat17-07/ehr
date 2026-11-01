@@ -1,19 +1,23 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { nextCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
 import type { Address } from '../reference/hospital.js';
 
 // Patients (api-list.md Patient). Every patient has a UHID, e.g. U26000123: "U", the 2-digit year of registration
-// and a 6-digit number, so it can't be taken for a 10-digit mobile number. A patient merged into another (#181)
-// keeps their row, with merged_into set, and is left out of searches.
+// and a 6-digit number counted per year, so it can't be taken for a 10-digit mobile number. A patient merged into
+// another (#181) keeps their row, with merged_into set, and is left out of searches.
 
 export const SEXES = ['M', 'F', 'O'] as const;
 export type Sex = (typeof SEXES)[number];
 export const SENSITIVE_LABELS = ['mtp', 'pcpndt', 'hiv', 'mental_health'] as const;
 export type SensitiveLabel = (typeof SENSITIVE_LABELS)[number];
 
-export const UHID = /^U\d{8}$/i;
+export const UHID = /^U\d{8,}$/i;
 
 /** Days without activity after which a patient is inactive. Per role or user once #185/#186 are built. */
 export const INACTIVE_AFTER_DAYS = 10;
@@ -118,4 +122,75 @@ export async function searchPatients(db: Queryable, search: { q: string } & Page
     (r) => toSummary(toPatient(r, now)),
   );
   return page;
+}
+
+const notFound = () => new AppError(404, 'not_found', 'no such patient');
+
+export async function getPatient(db: Queryable, id: string, now = new Date()): Promise<Patient> {
+  if (!z.uuid().safeParse(id).success) throw notFound();
+  const { rows } = await db.query(`${PATIENT_SELECT} WHERE id = $1`, [id]);
+  if (!rows[0]) throw notFound();
+  return toPatient(rows[0], now);
+}
+
+export interface NewGuardian {
+  name: string;
+  relation: string;
+  mobile?: string;
+}
+
+/** #20. Either dob or ageYears. */
+export interface NewPatient {
+  name: string;
+  sex: Sex;
+  dob?: string;
+  ageYears?: number;
+  mobile?: string;
+  email?: string;
+  address?: Address;
+  guardian?: NewGuardian;
+}
+
+const MAX_UHID_TRIES = 5;
+
+/** The next free UHID of this year. Skips a number already used (e.g. by patients loaded from an old system). */
+async function insertWithUhid(db: Queryable, now: Date, insert: (uhid: string) => Promise<void>): Promise<void> {
+  const year = indiaDate(now).slice(2, 4);
+  for (let attempt = 1; ; attempt++) {
+    const uhid = `U${year}${String(await nextCount(db, `uhid-${year}`)).padStart(6, '0')}`;
+    try {
+      return await insert(uhid);
+    } catch (error) {
+      const taken = (error as { code?: string; constraint?: string }).code === '23505';
+      if (!taken || attempt >= MAX_UHID_TRIES) throw error;
+    }
+  }
+}
+
+/** #20: a new patient with a new UHID. Registering counts as activity, so the patient starts active. */
+export async function registerPatient(db: Queryable, input: NewPatient, by: string, now = new Date()): Promise<Patient> {
+  const id = randomUUID();
+  await insertWithUhid(db, now, (uhid) =>
+    withTransaction(db, async (tx) => {
+      await tx.query(
+        `INSERT INTO patients (id, status, created_by, updated_by, uhid, name, name_search, sex, dob, age_years, age_recorded_on,
+           mobile, email, address, labels, allergies, last_activity_at)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '[]', '[]', $13)`,
+        [
+          id, by, uhid, input.name, input.name.toLowerCase(), input.sex, input.dob ?? null, input.ageYears ?? null,
+          input.ageYears === undefined ? null : indiaDate(now), input.mobile ?? null, input.email ?? null,
+          input.address ? JSON.stringify(input.address) : null, now,
+        ],
+      );
+      if (input.guardian) {
+        const g = input.guardian;
+        await tx.query(
+          `INSERT INTO guardians (id, status, created_by, updated_by, patient_id, name, relation, mobile)
+           VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
+          [randomUUID(), by, id, g.name, g.relation, g.mobile ?? null],
+        );
+      }
+    }),
+  );
+  return getPatient(db, id, now);
 }

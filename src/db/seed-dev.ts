@@ -142,6 +142,11 @@ export function devSeedStatements(): string[] {
         ...(daysAgo !== null && { last_activity_at: new Date(Date.now() - daysAgo * 86_400_000).toISOString() }),
       }),
     ),
+    // The UHID counters, so new patients don't take the seed patients' numbers.
+    ...[...new Set(DEV_PATIENTS.map(([uhid]) => uhid.slice(1, 3)))].map((year) => {
+      const last = Math.max(...DEV_PATIENTS.filter(([uhid]) => uhid.slice(1, 3) === year).map(([uhid]) => Number(uhid.slice(3))));
+      return seedInsert('counters', seedId('c0c00000', Number(year)), { name: `uhid-${year}`, value: String(last) });
+    }),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

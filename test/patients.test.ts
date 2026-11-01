@@ -20,6 +20,8 @@ const search = async (q: string, who = reception) => {
   return { status: res.status, body: (await res.json()) as { items: Summary[]; nextCursor?: string } };
 };
 const uhids = async (q: string) => (await search(q)).body.items.map((p) => p.uhid);
+const register = (body: unknown, who = reception) =>
+  app.request('/staff/patients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
 
 describe('GET /staff/patients', () => {
   it('finds by UHID, by mobile (a family shares one) and by the start of the name', async () => {
@@ -53,5 +55,46 @@ describe('GET /staff/patients', () => {
   it('422 for a 1-letter name; 403 without patient.search', async () => {
     expect((await search('r')).status).toBe(422);
     expect((await search('ra', asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});
+
+describe('POST /staff/patients', () => {
+  const year = indiaDate().slice(2, 4);
+  const address = { line1: '4 Lalghati', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462030' };
+
+  it('registers a patient with the next UHID of the year, active, with a guardian', async () => {
+    const res = await register({ name: ' Meena Kushwaha ', sex: 'F', dob: '2019-03-04', mobile: '+91 7000011111', address,
+      guardian: { name: 'Ramlal Kushwaha', relation: 'father', mobile: '7000011111' } });
+    expect(res.status).toBe(201);
+    const p = (await res.json()) as Record<string, unknown> & { id: string; uhid: string };
+    expect(p.uhid).toMatch(new RegExp(`^U${year}\\d{6}$`));
+    expect(p).toMatchObject({ name: 'Meena Kushwaha', sex: 'F', dob: '2019-03-04', mobile: '7000011111', address, unknown: false,
+      inactive: false, labels: [], allergies: [], version: 1 });
+    const guardians = await db.query('SELECT name, relation, mobile FROM guardians WHERE patient_id = $1', [p.id]);
+    expect(guardians.rows).toEqual([{ name: 'Ramlal Kushwaha', relation: 'father', mobile: '7000011111' }]);
+    expect(await uhids('meena')).toEqual([p.uhid]);
+    const audit = await db.query("SELECT action, record_type FROM audit_events WHERE patient_id = $1", [p.id]);
+    expect(audit.rows).toEqual([{ action: 'create', record_type: 'patient' }]);
+  });
+
+  it('gives the next numbers in turn and skips one already used', async () => {
+    const a = (await (await register({ name: 'Test One', sex: 'M', ageYears: 30 })).json()) as { uhid: string; ageYears: number };
+    expect(a.ageYears).toBe(30);
+    await db.query(`UPDATE counters SET value = value - 1 WHERE name = 'uhid-${year}'`);
+    const b = (await (await register({ name: 'Test Two', sex: 'O', ageYears: 1 })).json()) as { uhid: string };
+    expect(Number(b.uhid.slice(3))).toBe(Number(a.uhid.slice(3)) + 1);
+  });
+
+  it('422 for bad input; 403 without patient.register', async () => {
+    for (const body of [
+      { name: 'No Age', sex: 'M' },
+      { name: 'Both', sex: 'M', dob: '2000-01-01', ageYears: 26 },
+      { name: 'Future', sex: 'M', dob: '2999-01-01' },
+      { name: 'Bad Sex', sex: 'X', ageYears: 3 },
+      { name: 'Bad Mobile', sex: 'F', ageYears: 3, mobile: '12345' },
+      { name: 'Bad Pin', sex: 'F', ageYears: 3, address: { ...address, pincode: '46203' } },
+      { name: 'Extra', sex: 'F', ageYears: 3, uhid: 'U26999999' },
+    ]) expect((await register(body)).status, JSON.stringify(body)).toBe(422);
+    expect((await register({ name: 'Nurse Try', sex: 'M', ageYears: 5 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });

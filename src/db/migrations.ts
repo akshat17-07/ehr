@@ -368,4 +368,27 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC patients_name_search ON patients (name_search, id)',
     ],
   },
+  {
+    // Running numbers (db/counters.ts): DSQL has no sequences. A count is not kept in counters_versions.
+    id: '0024_counters',
+    statements: () => [
+      ...createTable('counters', ['name text NOT NULL', 'value bigint NOT NULL']),
+      'CREATE UNIQUE INDEX ASYNC counters_name ON counters (name)',
+    ],
+  },
+  {
+    // A patient's guardians (api-list.md Guardian); guardian_patient_id when the guardian is a patient too.
+    id: '0025_guardians',
+    statements: () => [
+      ...createTable('guardians', [
+        'patient_id uuid NOT NULL',
+        'guardian_patient_id uuid',
+        'name text NOT NULL',
+        'relation text NOT NULL',
+        'mobile text',
+        'portal_access boolean NOT NULL DEFAULT false',
+      ]),
+      'CREATE INDEX ASYNC guardians_patient ON guardians (patient_id)',
+    ],
+  },
 ];
