@@ -27,6 +27,7 @@ export interface ApiProps {
  *   ANY /staff/{proxy+}        staff pool token   (workforce groups, checked in the Lambda)
  *   ANY /admin/{proxy+}        staff pool token   (admin, head_doctor)
  *   ANY /other/{proxy+}        staff pool token   (insurance, gp)
+ *   ANY /other/share/{proxy+}  no login           (record-copy links: token + OTP, checked in the Lambda)
  *   ANY /patient/{proxy+}      patient pool token
  * The same Lambda also runs the scheduled jobs (constructs/jobs.ts).
  */
@@ -96,6 +97,7 @@ export class Api extends Construct {
     for (const prefix of ['staff', 'admin', 'other']) {
       this.httpApi.addRoutes({ path: `/${prefix}/{proxy+}`, methods, integration, authorizer: staffAuthorizer });
     }
+    this.httpApi.addRoutes({ path: '/other/share/{proxy+}', methods: [apigw.HttpMethod.POST], integration });
     this.httpApi.addRoutes({ path: '/patient/{proxy+}', methods, integration, authorizer: patientAuthorizer });
   }
 
