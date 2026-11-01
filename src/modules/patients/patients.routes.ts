@@ -15,6 +15,7 @@ import {
   SEXES,
   updatePatient,
 } from './patients.js';
+import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -73,6 +74,12 @@ const patientChange = z
   .strict()
   .refine((p) => p.dob === undefined || p.ageYears === undefined, { message: 'give dob or ageYears, not both', path: ['dob'] });
 
+const timelineQuery = pageQuery.extend({
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+  kind: z.enum(TIMELINE_KINDS).optional(),
+});
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -124,4 +131,12 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const versions = await listPatientVersions(await dbOf(c), id);
     auditDetails(c, { patientId: id, recordType: 'patient', recordId: id });
     return c.json(versions);
+  })
+  // #25
+  .get('/:id/timeline', requirePermission('patient.view'), async (c) => {
+    const query = timelineQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json(await patientTimeline(db, patient.id, query));
   });

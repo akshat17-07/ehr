@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { yearsBetween } from '../src/modules/patients/patients.js';
+import { TIMELINE_SOURCES } from '../src/modules/patients/timeline.js';
 import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
@@ -205,5 +206,51 @@ describe('GET /staff/patients/{id}/versions', () => {
     for (const id of ['9a710000-0000-4000-8000-000000000999', 'x']) {
       expect((await app.request(`/staff/patients/${id}/versions`, {}, reception)).status).toBe(404);
     }
+  });
+});
+
+describe('GET /staff/patients/{id}/timeline', () => {
+  const ramesh = '9a710000-0000-4000-8000-000000000001';
+  const timeline = async (query = '') => {
+    const res = await app.request(`/staff/patients/${ramesh}/timeline${query}`, {}, asStaff('dev-doctor', ['doctor']));
+    return { status: res.status, body: (await res.json()) as { items: { kind: string; title: string; at: string }[]; nextCursor?: string } };
+  };
+
+  it('is empty until a module adds its records', async () => {
+    expect((await timeline()).body).toEqual({ items: [] });
+  });
+
+  it('merges every source newest first, with paging and date and kind filters', async () => {
+    // Stand-ins for tables later modules add.
+    for (const table of ['t_visits', 't_bills']) {
+      await db.query(`CREATE TABLE ${table} (id uuid PRIMARY KEY, patient_id uuid, at timestamptz, label text, voided_at timestamptz)`);
+    }
+    await db.query(`INSERT INTO t_visits VALUES
+      ('00000000-0000-4000-8000-000000000001', '${ramesh}', '2026-03-01T04:00:00Z', 'Medicine', null),
+      ('00000000-0000-4000-8000-000000000002', '${ramesh}', '2026-03-10T20:00:00Z', 'Surgery', null),
+      ('00000000-0000-4000-8000-000000000003', '${ramesh}', '2026-03-05T04:00:00Z', 'Voided', now()),
+      ('00000000-0000-4000-8000-000000000004', '9a710000-0000-4000-8000-000000000003', '2026-03-05T04:00:00Z', 'Other patient', null)`);
+    await db.query(`INSERT INTO t_bills VALUES ('00000000-0000-4000-8000-000000000005', '${ramesh}', '2026-03-05T04:00:00Z', 'INV-1', null)`);
+    TIMELINE_SOURCES.push(
+      { kind: 'encounter', table: 't_visits', at: 'at', title: "'OPD: ' || label" },
+      { kind: 'bill', table: 't_bills', at: 'at', title: "'Bill ' || label" },
+    );
+    try {
+      expect((await timeline()).body.items.map((i) => i.title)).toEqual(['OPD: Surgery', 'Bill INV-1', 'OPD: Medicine']);
+      const first = (await timeline('?limit=2')).body;
+      expect(first.items).toHaveLength(2);
+      expect((await timeline(`?limit=2&cursor=${first.nextCursor}`)).body.items.map((i) => i.title)).toEqual(['OPD: Medicine']);
+      expect((await timeline('?kind=bill')).body.items.map((i) => i.title)).toEqual(['Bill INV-1']);
+      // 2026-03-10T20:00Z is 11 March in India.
+      expect((await timeline('?from=2026-03-05&to=2026-03-10')).body.items.map((i) => i.title)).toEqual(['Bill INV-1']);
+      expect((await timeline('?from=2026-03-11')).body.items.map((i) => i.title)).toEqual(['OPD: Surgery']);
+    } finally {
+      TIMELINE_SOURCES.length = 0;
+    }
+  });
+
+  it('422 for a bad kind; 404 for no such patient', async () => {
+    expect((await timeline('?kind=lab')).status).toBe(422);
+    expect((await app.request('/staff/patients/9a710000-0000-4000-8000-000000000999/timeline', {}, reception)).status).toBe(404);
   });
 });
