@@ -88,4 +88,22 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC user_permissions_user ON user_permissions (user_id)',
     ],
   },
+  {
+    // Time-limited grants (api-list.md Grant). status: active or revoked; "expired" is worked out from ends_at.
+    id: '0006_grants',
+    statements: () => [
+      ...createTable('grants', [
+        'user_id text NOT NULL',
+        'permission text NOT NULL',
+        'scope text NOT NULL',
+        'scope_id text',
+        'starts_at timestamptz NOT NULL',
+        'ends_at timestamptz NOT NULL',
+        'grantor_id text NOT NULL',
+        'reason text NOT NULL',
+      ]),
+      // "This user's grants now" on every permission check.
+      'CREATE INDEX ASYNC grants_user ON grants (user_id, ends_at)',
+    ],
+  },
 ];
