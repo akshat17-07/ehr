@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createUser, listUsers } from './users.js';
+import { createUser, getUser, listUsers } from './users.js';
 
 // /admin/users: staff accounts (api-list.md 7.2).
 
@@ -59,4 +59,5 @@ export const usersRoutes = new Hono<AuthEnv>()
   .post('/', requirePermission('user.create'), async (c) => {
     const input = newUser.parse(await c.req.json().catch(() => undefined));
     return c.json(await createUser(await dbOf(c), accountsOf(c), input, userOf(c).sub), 201);
-  });
+  })
+  .get('/:id', requirePermission('user.view'), async (c) => c.json(await getUser(await dbOf(c), c.req.param('id'))));

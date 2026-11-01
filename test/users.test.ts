@@ -131,3 +131,21 @@ describe('POST /admin/users', () => {
     expect((await post({ ...nurse, email: 'b1@x.in' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
   });
 });
+
+describe('GET /admin/users/{id}', () => {
+  const get = (id: string, who = asStaff('dev-admin', ['admin'])) => app.request(`/admin/users/${id}`, {}, who);
+
+  it('gives one user with bundles', async () => {
+    const id = String((await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-billing'")).rows[0]?.id);
+    const res = await get(id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, name: 'Amit Jain', type: 'staff', bundles: ['billing'], version: 1 });
+  });
+
+  it('404 for an unknown or bad id; 403 without user.view', async () => {
+    expect((await get('00000000-0000-4000-8000-000000000000')).status).toBe(404);
+    expect((await get('dev-billing')).status).toBe(404);
+    const id = String((await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-billing'")).rows[0]?.id);
+    expect((await get(id, asStaff('head-x', ['head_doctor']))).status).toBe(403);
+  });
+});
