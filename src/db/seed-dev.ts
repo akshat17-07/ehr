@@ -91,6 +91,15 @@ const DEV_ICD10 = [
   ['S72.0', 'Fracture of neck of femur'],
 ] as const;
 
+/** uhid, name, sex, dob or age, mobile, days since last visit (null: never). Two share a mobile, as families do. */
+export const DEV_PATIENTS = [
+  ['U24000001', 'Ramesh Kumar Sharma', 'M', '1968-05-14', '9826000001', 2],
+  ['U24000002', 'Sita Sharma', 'F', '1972-11-02', '9826000001', 40],
+  ['U25000003', 'Mohd. Irfan Khan', 'M', 45, '9893000003', 1],
+  ['U25000004', 'Kavita Patel', 'F', '1995-01-20', '7000000004', null],
+  ['U26000005', 'Rahul Verma', 'M', '2016-08-09', '8800000005', 5],
+] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -126,6 +135,13 @@ export function devSeedStatements(): string[] {
     ...DEV_INSURERS.map(([name, code], i) => seedInsert('insurers', seedId('1a000000', i + 1), { name, code, active: true })),
     ...DEV_TPAS.map(([name, code], i) => seedInsert('tpas', seedId('1b000000', i + 1), { name, code, active: true })),
     ...DEV_ICD10.map(([code, text], i) => seedInsert('codes', seedId('c0de1000', i + 1), { system: 'icd10', code, text })),
+    ...DEV_PATIENTS.map(([uhid, name, sex, born, mobile, daysAgo], i) =>
+      seedInsert('patients', seedId('9a710000', i + 1), {
+        uhid, name, name_search: name.toLowerCase(), sex, mobile, labels: '[]', allergies: i === 0 ? '["Penicillin"]' : '[]',
+        ...(typeof born === 'string' ? { dob: born } : { age_years: String(born), age_recorded_on: '2025-06-01' }),
+        ...(daysAgo !== null && { last_activity_at: new Date(Date.now() - daysAgo * 86_400_000).toISOString() }),
+      }),
+    ),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

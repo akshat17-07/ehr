@@ -337,4 +337,35 @@ export const migrations: Migration[] = [
       ...seedVitalSigns(),
     ],
   },
+  {
+    // Patients (api-list.md Patient). name_search is the name in lower case, for searching by its start.
+    // age_years is the age given at registration (no date of birth), on age_recorded_on. address, labels and
+    // allergies are JSON. merged_into is set when the patient is merged into another (#181).
+    id: '0023_patients',
+    statements: () => [
+      ...createTable('patients', [
+        'uhid text NOT NULL',
+        'name text NOT NULL',
+        'name_search text NOT NULL',
+        'sex text NOT NULL',
+        'dob date',
+        'age_years integer',
+        'age_recorded_on date',
+        'mobile text',
+        'email text',
+        'address text',
+        'unknown boolean NOT NULL DEFAULT false',
+        'emergency_note text',
+        'labels text NOT NULL',
+        'last_activity_at timestamptz',
+        'allergies text NOT NULL',
+        'active_policy_id uuid',
+        'referrer_id uuid',
+        'merged_into uuid',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC patients_uhid ON patients (uhid)',
+      'CREATE INDEX ASYNC patients_mobile ON patients (mobile)',
+      'CREATE INDEX ASYNC patients_name_search ON patients (name_search, id)',
+    ],
+  },
 ];
