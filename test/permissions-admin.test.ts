@@ -92,3 +92,14 @@ describe('PUT /admin/users/{id}/permissions', () => {
     expect((await put('dev-admin', { version: 0, allow: [], deny: ['user.create'], reason: 'two admins now' }, second)).status).toBe(200);
   });
 });
+
+describe('GET /admin/type-permissions', () => {
+  it('lists every staff type with its permissions and built-in list', async () => {
+    const res = await app.request('/admin/type-permissions', {}, head);
+    expect(res.status).toBe(200);
+    const list = (await res.json()) as { type: string; version: number; permissions: string[]; defaults: string[] }[];
+    expect(list.map((t) => t.type)).toEqual(['admin', 'head_doctor', 'doctor', 'nurse', 'staff', 'medical', 'insurance', 'gp']);
+    expect(list.find((t) => t.type === 'nurse')).toMatchObject({ version: 1, permissions: expect.arrayContaining(['vitals.record']) });
+    expect((await app.request('/admin/type-permissions', {}, as('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

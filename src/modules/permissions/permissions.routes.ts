@@ -5,6 +5,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { PERMISSIONS } from '../../permissions/catalog.js';
 import { loadPermissions, requirePermission } from '../../permissions/check.js';
 import { checkCustomLists, getCustomPermissions, saveCustomPermissions } from '../../permissions/custom.js';
+import { listTypePermissions } from '../../permissions/type-permissions.js';
 import { getUser } from '../users/users.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive } from './admin-rules.js';
 
@@ -24,6 +25,9 @@ const customChange = z
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.
   .get('/permissions', requirePermission('user.permissions'), (c) => c.json(PERMISSIONS))
+
+  // #308: each staff type's permissions, with the built-in list for "reset".
+  .get('/type-permissions', requirePermission('user.permissions'), async (c) => c.json(await listTypePermissions(await dbOf(c))))
 
   // #306: a user's permissions and where each comes from.
   .get('/users/:id/permissions', requirePermission('user.permissions'), async (c) => {
