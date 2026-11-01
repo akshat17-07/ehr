@@ -160,4 +160,19 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC users_email ON users (email)',
     ],
   },
+  {
+    // In-app alerts for one staff member (api-list.md Alert). read_at is set when they open it (#4).
+    id: '0011_alerts',
+    statements: () => [
+      ...createTable('alerts', [
+        'user_id text NOT NULL',
+        'kind text NOT NULL',
+        'title text NOT NULL',
+        'body text NOT NULL',
+        'link text',
+        'read_at timestamptz',
+      ]),
+      'CREATE INDEX ASYNC alerts_user ON alerts (user_id, created_at)',
+    ],
+  },
 ];

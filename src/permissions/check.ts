@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import type { Queryable } from '../db/migrate.js';
 import type { AuthEnv } from '../middleware/auth.js';
+import { dbOf, userOf } from '../middleware/context.js';
 import { AppError } from '../middleware/errors.js';
 import { bundlesNamed } from './bundles.js';
 import type { Permission } from './catalog.js';
@@ -61,11 +62,8 @@ export async function loadPermissions(db: Queryable, userId: string, groups: rea
 export async function permissionsOf(c: Context<AuthEnv>): Promise<UserPermissions> {
   const cached = c.get('permissions');
   if (cached) return cached;
-  const user = c.get('user');
-  if (!user) throw new AppError(401, 'unauthenticated');
-  const db = c.get('db');
-  if (!db) throw new Error('No database on the request (createApp sets it)');
-  const loaded = await loadPermissions(await db(), user.sub, user.pool === 'staff' ? user.groups : []);
+  const user = userOf(c);
+  const loaded = await loadPermissions(await dbOf(c), user.sub, user.pool === 'staff' ? user.groups : []);
   c.set('permissions', loaded);
   return loaded;
 }
