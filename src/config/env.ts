@@ -13,6 +13,8 @@ const schema = z.object({
   FILES_BUCKET: z.string().optional(),
   EXPORTS_BUCKET: z.string().optional(),
   BACKUP_BUCKET: z.string().optional(),
+  // Migration Lambda only.
+  API_ROLE_ARN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;
