@@ -137,3 +137,36 @@ describe('GET /staff/drugs', () => {
     for (const q of ['', '?q=a', '?q=para&schedule=G', '?q=para&limit=0', '?q=para&limit=51']) expect((await get(`/drugs${q}`)).status).toBe(422);
   });
 });
+
+describe('GET /staff/drugs/{id}/batches', () => {
+  type B = { batchNo: string; expiry: string; qtyOnHand: number; qtyQuarantined: number; qtyUsable: number; recalled: boolean };
+  const drugId = async (name: string) => String((await db.query('SELECT id FROM drugs WHERE name = $1', [name])).rows[0]?.id);
+  const medical = asStaff('dev-medical', ['medical']);
+
+  it('lists batches first to expire first, with usable stock worked out', async () => {
+    const { status, body } = await get(`/drugs/${await drugId('Paracetamol')}/batches`, medical);
+    expect(status).toBe(200);
+    expect((body as B[]).map((b) => [b.batchNo, b.qtyUsable])).toEqual([
+      ['PCM2401', 0], // expired
+      ['PCM2502', 280], // 300 on hand, 20 quarantined
+      ['PCM2503', 500],
+    ]);
+    expect((body as B[])[0]).toMatchObject({ expiry: '2025-12-31', costPaise: 1200, mrpPaise: 2000, qtyOnHand: 40 });
+  });
+
+  it('gives 0 usable for a recalled batch, and filters by stock', async () => {
+    const amx = await drugId('Amoxicillin');
+    const all = (await get(`/drugs/${amx}/batches`, medical)).body as B[];
+    expect(all.find((b) => b.batchNo === 'AMX2499')).toMatchObject({ recalled: true, qtyUsable: 0 });
+    const inStock = (await get(`/drugs/${amx}/batches?inStock=true`, medical)).body as B[];
+    expect(inStock.map((b) => b.batchNo)).toEqual(['AMX2501']);
+    const out = (await get(`/drugs/${await drugId('Paracetamol')}/batches?inStock=false`, medical)).body as B[];
+    expect(out.map((b) => b.batchNo)).toEqual(['PCM2401']);
+  });
+
+  it('404 for an unknown drug; 403 without stock.view', async () => {
+    expect((await get('/drugs/00000000-0000-4000-8000-000000000000/batches', medical)).status).toBe(404);
+    expect((await get('/drugs/nope/batches', medical)).status).toBe(404);
+    expect((await get(`/drugs/${await drugId('Paracetamol')}/batches`, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});

@@ -62,6 +62,15 @@ export const DEV_TARIFFS = [
   ['IPD-NUR', 'Nursing charges (per day)', 'नर्सिंग शुल्क (प्रति दिन)', null, 500, 'ipd'],
 ] as const;
 
+/** drug name, batch no, expiry, cost and MRP in rupees, on hand, quarantined, recalled. */
+const DEV_BATCHES = [
+  ['Paracetamol', 'PCM2401', '2025-12-31', 12, 20, 40, 0, false],
+  ['Paracetamol', 'PCM2502', '2030-06-30', 13, 20, 300, 20, false],
+  ['Paracetamol', 'PCM2503', '2031-01-31', 13, 21, 500, 0, false],
+  ['Amoxicillin', 'AMX2501', '2030-03-31', 60, 95, 120, 0, false],
+  ['Amoxicillin', 'AMX2499', '2029-12-31', 58, 95, 60, 60, true],
+] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -84,6 +93,13 @@ export function devSeedStatements(): string[] {
       seedInsert('tariffs', seedId('7a000000', i + 1), {
         list_version: '1', code, name_en: nameEn, name_hi: nameHi, ...(dept && { department_id: departmentId(dept) }),
         price_paise: String(rupees * 100), gst_rate: '0', sac_code: '999311', setting, valid_from: '2024-04-01',
+      }),
+    ),
+    ...DEV_BATCHES.map(([drug, batchNo, expiry, cost, mrp, onHand, quarantined, recalled], i) =>
+      seedInsert('batches', seedId('ba000000', i + 1), {
+        item_id: seedId('d0000000', DEV_DRUGS.findIndex(([name]) => name === drug) + 1),
+        batch_no: batchNo, expiry, cost_paise: String(cost * 100), mrp_paise: String(mrp * 100),
+        qty_on_hand: String(onHand), qty_quarantined: String(quarantined), recalled,
       }),
     ),
     ...DEV_USERS.flatMap((u, i) => {

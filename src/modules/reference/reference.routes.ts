@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
+import { requirePermission } from '../../permissions/check.js';
+import { listDrugBatches } from '../inventory/batches.js';
 import { listDepartments } from './departments.js';
 import { DRUG_SCHEDULES, searchDrugs } from './drugs.js';
 import { getHospital } from './hospital.js';
@@ -50,4 +52,9 @@ export const referenceRoutes = new Hono<AuthEnv>()
       })
       .parse(c.req.query());
     return c.json(await searchDrugs(await dbOf(c), query));
+  })
+  // #13
+  .get('/drugs/:id/batches', requirePermission('stock.view'), async (c) => {
+    const query = z.object({ inStock: boolText }).parse(c.req.query());
+    return c.json(await listDrugBatches(await dbOf(c), c.req.param('id'), query));
   });

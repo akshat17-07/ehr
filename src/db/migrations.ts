@@ -282,4 +282,25 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC tariffs_valid_from ON tariffs (valid_from)',
     ],
   },
+  {
+    // Stock batches (api-list.md Batch). item_id is the drug's or item's id. Money in paise.
+    // The quantities change only with stock movements; quarantined stock is still on hand.
+    id: '0018_batches',
+    statements: () => [
+      ...createTable('batches', [
+        'item_id uuid NOT NULL',
+        'batch_no text NOT NULL',
+        'expiry date NOT NULL',
+        'supplier_id uuid',
+        'cost_paise bigint NOT NULL',
+        'mrp_paise bigint NOT NULL',
+        'qty_on_hand integer NOT NULL DEFAULT 0',
+        'qty_quarantined integer NOT NULL DEFAULT 0',
+        'recalled boolean NOT NULL DEFAULT false',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC batches_item_batch_no ON batches (item_id, batch_no)',
+      // FEFO: an item's batches by expiry.
+      'CREATE INDEX ASYNC batches_item_expiry ON batches (item_id, expiry)',
+    ],
+  },
 ];
