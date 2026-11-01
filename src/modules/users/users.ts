@@ -272,3 +272,28 @@ export async function resetUserMfa(db: Queryable, accounts: StaffAccounts, id: s
   await accounts.resetMfa(user.email);
   return user;
 }
+
+/**
+ * #161/#162: moves a user from one staff type to another: the Cognito group first (both calls can be repeated),
+ * then the users row, which is what requests go by. 409 wrong_type if the user is not of type `from`.
+ */
+async function changeType(
+  db: Queryable,
+  accounts: StaffAccounts,
+  id: string,
+  change: { from: StaffType; to: StaffType; activeOnly: boolean; by: string; reason: string },
+): Promise<User> {
+  const user = await getUser(db, id);
+  assertNotSelf(user, change.by, 'change the type of');
+  if (user.type !== change.from || (change.activeOnly && !user.active)) {
+    throw new AppError(409, 'wrong_type', `the user must be ${change.activeOnly ? 'an active ' : 'a '}${change.from}`);
+  }
+  await accounts.addToGroup(user.email, change.to);
+  await accounts.removeFromGroup(user.email, change.from);
+  await updateRecord(db, 'users', { id, version: user.version, by: change.by, set: { type: change.to }, reason: change.reason });
+  return getUser(db, id);
+}
+
+/** #161: an active doctor becomes a Head Doctor. */
+export const promoteHeadDoctor = (db: Queryable, accounts: StaffAccounts, id: string, by: string, reason: string) =>
+  changeType(db, accounts, id, { from: 'doctor', to: 'head_doctor', activeOnly: true, by, reason });

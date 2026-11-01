@@ -71,6 +71,7 @@ export class Api extends Construct {
       this.role,
       'cognito-idp:AdminCreateUser',
       'cognito-idp:AdminAddUserToGroup',
+      'cognito-idp:AdminRemoveUserFromGroup',
       'cognito-idp:AdminDisableUser',
       'cognito-idp:AdminEnableUser',
       'cognito-idp:AdminSetUserMFAPreference',

@@ -5,7 +5,16 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createUser, deactivateUser, getUser, listUsers, reactivateUser, resetUserMfa, updateUser } from './users.js';
+import {
+  createUser,
+  deactivateUser,
+  getUser,
+  listUsers,
+  promoteHeadDoctor,
+  reactivateUser,
+  resetUserMfa,
+  updateUser,
+} from './users.js';
 
 // /admin/users: staff accounts (api-list.md 7.2).
 
@@ -97,4 +106,8 @@ export const usersRoutes = new Hono<AuthEnv>()
   .post('/:id/mfa-reset', requirePermission('user.mfa_reset'), async (c) => {
     await reasonOf(c);
     return c.json(await resetUserMfa(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub));
+  })
+  .post('/:id/promote-head-doctor', requirePermission('role.promote_head_doctor'), async (c) => {
+    const reason = await reasonOf(c);
+    return c.json(await promoteHeadDoctor(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
   });

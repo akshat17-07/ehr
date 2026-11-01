@@ -270,3 +270,25 @@ describe('POST /admin/users/{id}/mfa-reset', () => {
     expect(await post(await idOf('dev-insurance'), { reason: 'lost phone' })).toMatchObject({ status: 409, body: { error: 'inactive' } });
   });
 });
+
+describe('POST /admin/users/{id}/promote-head-doctor', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+  const post = async (id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}/promote-head-doctor`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string } };
+  };
+
+  it('moves an active doctor to Head Doctor, in Cognito and at once on their next request', async () => {
+    accounts.accounts.set('surgeon@dev.local', { sub: 'dev-surgeon', name: 'x', groups: ['doctor'], enabled: true });
+    expect(await post(await idOf('dev-surgeon'), { reason: 'new head of surgery' })).toMatchObject({ status: 200, body: { type: 'head_doctor' } });
+    expect(accounts.accounts.get('surgeon@dev.local')?.groups).toEqual(['head_doctor']);
+    // Their token still says doctor, but the users row decides.
+    expect((await app.request('/admin/me', {}, asStaff('dev-surgeon', ['doctor']))).status).toBe(200);
+  });
+
+  it('409 unless an active doctor; 403 for Head Doctors', async () => {
+    expect(await post(await idOf('dev-nurse'), { reason: 'not a doctor' })).toMatchObject({ status: 409, body: { error: 'wrong_type' } });
+    expect((await post(await idOf('dev-surgeon'), { reason: 'already head' })).status).toBe(409);
+    expect((await post(await idOf('dev-doctor'), { reason: 'not allowed' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+  });
+});

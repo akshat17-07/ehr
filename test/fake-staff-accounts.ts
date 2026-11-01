@@ -17,6 +17,10 @@ export function fakeStaffAccounts() {
       if (fake.failAddToGroup) throw new Error('Cognito is down');
       accounts.get(email)?.groups.push(group);
     },
+    async removeFromGroup(email, group) {
+      const account = accounts.get(email);
+      if (account) account.groups = account.groups.filter((g) => g !== group);
+    },
     async disable(email) {
       const account = accounts.get(email);
       if (account) account.enabled = false;

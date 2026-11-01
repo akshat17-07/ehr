@@ -7,6 +7,7 @@ export interface StaffAccounts {
   /** Creates the account; Cognito emails a temporary password. Returns the new user's sub. 409 if the email is taken. */
   invite(user: { email: string; name: string }): Promise<string>;
   addToGroup(email: string, group: string): Promise<void>;
+  removeFromGroup(email: string, group: string): Promise<void>;
   disable(email: string): Promise<void>;
   enable(email: string): Promise<void>;
   /** Turns off the user's authenticator app and signs them out everywhere; the pool requires MFA, so they set it up again. */
@@ -40,6 +41,10 @@ export const cognitoStaffAccounts: StaffAccounts = {
   async addToGroup(email, group) {
     const { sdk, cognito, UserPoolId } = await client();
     await cognito.send(new sdk.AdminAddUserToGroupCommand({ UserPoolId, Username: email, GroupName: group }));
+  },
+  async removeFromGroup(email, group) {
+    const { sdk, cognito, UserPoolId } = await client();
+    await cognito.send(new sdk.AdminRemoveUserFromGroupCommand({ UserPoolId, Username: email, GroupName: group }));
   },
   async disable(email) {
     const { sdk, cognito, UserPoolId } = await client();
