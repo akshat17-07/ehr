@@ -28,6 +28,20 @@ export interface UserPermissions {
   effective: Permission[];
 }
 
+/** type + bundles + custom allow + grants for "all" − custom deny. */
+export function effectiveOf(
+  parts: Pick<UserPermissions, 'fromBundles' | 'custom' | 'grants'> & { fromType: Iterable<Permission> },
+): Set<Permission> {
+  const effective = new Set<Permission>([
+    ...parts.fromType,
+    ...parts.fromBundles.flatMap((b) => b.permissions),
+    ...parts.custom.allow,
+    ...parts.grants.filter((g) => g.scope === 'all').map((g) => g.permission),
+  ]);
+  for (const p of parts.custom.deny) effective.delete(p);
+  return effective;
+}
+
 /** Works out where each of a user's permissions comes from (#306), and the result. */
 export async function loadPermissions(db: Queryable, userId: string, groups: readonly string[], now = new Date()): Promise<UserPermissions> {
   const types = STAFF_TYPES.filter((t) => groups.includes(t));
@@ -37,21 +51,15 @@ export async function loadPermissions(db: Queryable, userId: string, groups: rea
     activeGrants(db, userId, now),
   ]);
   const bundles = await bundlesNamed(db, custom.bundles);
-
-  const effective = new Set<Permission>([
-    ...fromType,
-    ...bundles.flatMap((b) => b.permissions),
-    ...custom.allow,
-    ...grants.filter((g) => g.scope === 'all').map((g) => g.permission),
-  ]);
-  for (const p of custom.deny) effective.delete(p);
+  const fromBundles = bundles.map((b) => ({ bundle: b.name, permissions: b.permissions }));
+  const effective = effectiveOf({ fromType, fromBundles, custom, grants });
 
   return {
     userId,
     version: custom.version,
     ...(types[0] && { type: types[0] }),
     fromType: [...fromType].sort(),
-    fromBundles: bundles.map((b) => ({ bundle: b.name, permissions: b.permissions })),
+    fromBundles,
     custom: { allow: custom.allow, deny: custom.deny },
     grants,
     effective: [...effective].sort(),

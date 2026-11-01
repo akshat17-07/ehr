@@ -29,3 +29,14 @@ describe('GET /admin/permissions', () => {
     expect((await app.request('/admin/permissions', {}, as('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+
+describe('GET /admin/users/{id}/permissions', () => {
+  it('shows where each permission comes from', async () => {
+    const res = await app.request(`/admin/users/${await idOf('dev-reception')}/permissions`, {}, head);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ userId: 'dev-reception', type: 'staff', fromBundles: [{ bundle: 'reception' }] });
+    expect((await app.request('/admin/users/00000000-0000-4000-8000-000000000000/permissions', {}, admin)).status).toBe(404);
+  });
+});
