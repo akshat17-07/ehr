@@ -13,7 +13,7 @@ Design documents (next to this repo, in `docs/india/`): `api-list.md` (every end
 
 | Part | AWS service | Notes |
 |---|---|---|
-| API | API Gateway HTTP API → Lambda (Node 22, ARM) | [Hono](https://hono.dev) app in `src/` |
+| API | API Gateway HTTP API → Lambda (Node 24, ARM) | [Hono](https://hono.dev) app in `src/` |
 | Login | Cognito (Essentials): a **staff** pool and a **patient** pool | No self sign-up; **TOTP 2FA required**; no SMS |
 | Database | Aurora DSQL | Serverless SQL, encrypted, deletion protection on; IAM-token login, no passwords |
 | Migrations | Lambda run by a CDK Trigger on deploy | Only this function logs in as the DSQL admin; the API uses `ehr_app` (no DELETE) |
@@ -111,7 +111,7 @@ The frontend repo's name is set in `infra/cdk.json` (`frontendRepo`, default `ak
 
 ## Running locally
 
-Requires Node 22+.
+Requires Node 24+ (the Lambda runtime; CI uses the same).
 
 ```
 npm install

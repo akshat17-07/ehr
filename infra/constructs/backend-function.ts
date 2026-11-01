@@ -21,14 +21,14 @@ export interface BackendFunctionProps {
   memorySize?: number;
 }
 
-/** A Lambda built from backend/src: Node 22 on ARM, one minified ESM file, logs kept a year. */
+/** A Lambda built from backend/src: Node 24 on ARM, one minified ESM file, logs kept a year. */
 export function backendFunction(scope: Construct, id: string, props: BackendFunctionProps): NodejsFunction {
   return new NodejsFunction(scope, id, {
     entry: backend(`src/${props.entry}`),
     handler: 'handler',
     projectRoot: backend(''),
     depsLockFilePath: backend('package-lock.json'),
-    runtime: lambda.Runtime.NODEJS_22_X,
+    runtime: lambda.Runtime.NODEJS_24_X,
     architecture: lambda.Architecture.ARM_64,
     memorySize: props.memorySize ?? 512,
     timeout: props.timeout,
