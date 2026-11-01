@@ -170,3 +170,13 @@ describe('GET /staff/drugs/{id}/batches', () => {
     expect((await get(`/drugs/${await drugId('Paracetamol')}/batches`, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/partner-hospitals', () => {
+  it('lists partner hospitals A to Z, name only', async () => {
+    const { status, body } = await get('/partner-hospitals');
+    expect(status).toBe(200);
+    const list = body as { id: string; version: number; name: string }[];
+    expect(list.map((h) => h.name)).toEqual(['AIIMS Bhopal', 'Bansal Hospital, Bhopal', 'Hamidia Hospital, Bhopal']);
+    expect(Object.keys(list[0] ?? {}).sort()).toEqual(['id', 'name', 'version']);
+  });
+});

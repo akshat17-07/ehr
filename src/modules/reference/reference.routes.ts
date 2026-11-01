@@ -7,6 +7,7 @@ import { listDrugBatches } from '../inventory/batches.js';
 import { listDepartments } from './departments.js';
 import { DRUG_SCHEDULES, searchDrugs } from './drugs.js';
 import { getHospital } from './hospital.js';
+import { listPartnerHospitals } from './payers.js';
 import { listTariffs, rateBoardRows } from './tariffs.js';
 
 // Reference data every staff member reads (api-list.md 7.1 "Reference data").
@@ -57,4 +58,6 @@ export const referenceRoutes = new Hono<AuthEnv>()
   .get('/drugs/:id/batches', requirePermission('stock.view'), async (c) => {
     const query = z.object({ inStock: boolText }).parse(c.req.query());
     return c.json(await listDrugBatches(await dbOf(c), c.req.param('id'), query));
-  });
+  })
+  // #14
+  .get('/partner-hospitals', async (c) => c.json(await listPartnerHospitals(await dbOf(c))));

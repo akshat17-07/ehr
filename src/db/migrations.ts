@@ -303,4 +303,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC batches_item_expiry ON batches (item_id, expiry)',
     ],
   },
+  {
+    // Hospitals patients are referred to or from (api-list.md PartnerHospital): only the name is kept.
+    id: '0019_partner_hospitals',
+    statements: () => [
+      ...createTable('partner_hospitals', ['name text NOT NULL']),
+      'CREATE UNIQUE INDEX ASYNC partner_hospitals_name ON partner_hospitals (name)',
+    ],
+  },
 ];

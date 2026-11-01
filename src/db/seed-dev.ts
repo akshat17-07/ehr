@@ -71,6 +71,8 @@ const DEV_BATCHES = [
   ['Amoxicillin', 'AMX2499', '2029-12-31', 58, 95, 60, 60, true],
 ] as const;
 
+const DEV_PARTNER_HOSPITALS = ['AIIMS Bhopal', 'Hamidia Hospital, Bhopal', 'Bansal Hospital, Bhopal'];
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -102,6 +104,7 @@ export function devSeedStatements(): string[] {
         qty_on_hand: String(onHand), qty_quarantined: String(quarantined), recalled,
       }),
     ),
+    ...DEV_PARTNER_HOSPITALS.map((name, i) => seedInsert('partner_hospitals', seedId('9a000000', i + 1), { name })),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,
