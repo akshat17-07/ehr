@@ -1,8 +1,8 @@
 name: deploy
 
+# Every push to any branch reruns every check; only main deploys (and only after they pass).
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -21,12 +21,12 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             infra/package-lock.json
-      - name: API
-        run: npm ci && npm run typecheck && npm test
-      # Infra tests bundle the API, so the API's packages must be installed first.
-      - name: Infra
+      # Infra tests bundle the API, so the API's packages are installed first.
+      - run: npm ci
+      - run: npm ci
         working-directory: infra
-        run: npm ci && npm run typecheck && npm test
+      # Same command as the pre-commit hook: API typecheck + tests, then infra typecheck + tests + synth.
+      - run: npm run check
 
   deploy:
     needs: test

@@ -43,7 +43,8 @@ API Gateway checks the token (staff or patient pool). Then `requireUser(pool, gr
 ## Project layout
 
 ```
-.github/workflows/deploy.yml   test on every push/PR; deploy on main (GitHub OIDC, no stored AWS keys)
+.githooks/pre-commit           runs `npm run check` before every commit
+.github/workflows/deploy.yml   `npm run check` on every push (any branch) and PR; deploy on main (GitHub OIDC, no stored AWS keys)
 infra/                         AWS infrastructure (CDK, TypeScript; its own package.json)
   app.ts                       entry: app stack per stage, plus the backup-account stack
   config.ts                    stage settings (cdk.json context) and fixed resource names
@@ -90,7 +91,7 @@ Rules for new code:
 
 Deploys run **from GitHub Actions only**. Nobody needs AWS keys on a laptop.
 
-1. A push or pull request runs typecheck + tests (API and infra).
+1. Every push to any branch, and every pull request, runs `npm run check`: all typechecks, all tests, and `cdk synth`. Nothing deploys unless it passes.
 2. A merge to `main` also deploys the **dev** stack (`ehr-dev`) in ap-south-1. Migrations run during the deploy.
 3. The run summary (Actions tab) shows every output: website URL, API URL, Cognito IDs, bucket names, role ARNs.
 4. Copy `WebsiteBucket`, `WebsiteDistributionId` and `FrontendDeployRoleArn` into the frontend repo's secrets (once).
@@ -123,6 +124,16 @@ npm install
 npm test          # infrastructure tests
 npm run synth     # CloudFormation templates, no AWS access needed
 ```
+
+### Tests before every commit
+
+`npm install` turns on the git hook in `.githooks/` (the `prepare` script sets `core.hooksPath`). Before each commit it runs `npm run check`:
+
+1. API typecheck + tests
+2. infra typecheck + tests (they synth the real templates and check the safety rules)
+3. `cdk synth`, which also bundles both Lambdas
+
+If any step fails, the commit is refused. Install both folders first (`npm install` here and in `infra/`). CI runs the same command on every push.
 
 Locally there is no API Gateway, so a test user is passed in a header (development only):
 

@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "synth": "cdk synth",
-    "deploy": "cdk deploy ehr-dev --require-approval never"
+    "deploy": "cdk deploy ehr-dev --require-approval never",
+    "check": "npm run typecheck && npm test && npm run synth -- --quiet"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

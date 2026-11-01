@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs before every commit: a failing typecheck, test or synth stops the commit.
+# Turned on by `npm install` (the prepare script sets core.hooksPath).
+set -e
+cd "$(git rev-parse --show-toplevel)"
+npm run check
