@@ -1,0 +1,2 @@
+# Hooks run in sh: keep LF line endings on Windows checkouts too.
+.githooks/* text eol=lf
