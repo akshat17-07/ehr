@@ -8,6 +8,7 @@ export interface StaffAccounts {
   invite(user: { email: string; name: string }): Promise<string>;
   addToGroup(email: string, group: string): Promise<void>;
   disable(email: string): Promise<void>;
+  enable(email: string): Promise<void>;
 }
 
 async function client() {
@@ -41,6 +42,10 @@ export const cognitoStaffAccounts: StaffAccounts = {
   async disable(email) {
     const { sdk, cognito, UserPoolId } = await client();
     await cognito.send(new sdk.AdminDisableUserCommand({ UserPoolId, Username: email }));
+  },
+  async enable(email) {
+    const { sdk, cognito, UserPoolId } = await client();
+    await cognito.send(new sdk.AdminEnableUserCommand({ UserPoolId, Username: email }));
   },
 };
 

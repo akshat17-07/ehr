@@ -220,3 +220,32 @@ describe('POST /admin/users/{id}/deactivate', () => {
     });
   });
 });
+
+describe('POST /admin/users/{id}/reactivate', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+  const post = async (action: string, id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}/${action}`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string } };
+  };
+
+  it('enables the Cognito account and lets the user back in', async () => {
+    accounts.accounts.set('medical@dev.local', { sub: 'dev-medical', name: 'x', groups: ['medical'], enabled: true });
+    const id = await idOf('dev-medical');
+    expect((await post('deactivate', id, { reason: 'contract paused' })).body).toMatchObject({ active: false });
+    expect((await app.request('/staff/me', {}, asStaff('dev-medical', ['medical']))).status).toBe(401);
+
+    expect(await post('reactivate', id, { reason: 'contract renewed' })).toMatchObject({ status: 200, body: { active: true } });
+    expect(accounts.accounts.get('medical@dev.local')?.enabled).toBe(true);
+    expect((await app.request('/staff/me', {}, asStaff('dev-medical', ['medical']))).status).toBe(200);
+
+    const { rows } = await db.query('SELECT version, reason FROM users_versions WHERE record_id = $1 ORDER BY version', [id]);
+    expect(rows.map((r) => r.reason).slice(-2)).toEqual(['contract paused', 'contract renewed']);
+    expect((await post('reactivate', id, { reason: 'already active' })).body).toMatchObject({ active: true });
+  });
+
+  it('403 for Head Doctors and for own account', async () => {
+    const nurse = await idOf('dev-nurse');
+    expect((await post('reactivate', nurse, { reason: 'not allowed' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+    expect((await post('reactivate', await idOf('dev-admin'), { reason: 'my own' })).status).toBe(403);
+  });
+});

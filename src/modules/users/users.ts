@@ -252,3 +252,14 @@ export async function deactivateUser(db: Queryable, accounts: StaffAccounts, id:
   await updateRecord(db, 'users', { id, version: user.version, by, set: { active: false }, reason });
   return getUser(db, id);
 }
+
+/** #159: enables the Cognito account again, then marks the user active. Reactivating an active user changes nothing. */
+export async function reactivateUser(db: Queryable, accounts: StaffAccounts, id: string, by: string, reason: string): Promise<User> {
+  const user = await getUser(db, id);
+  assertNotSelf(user, by, 'reactivate');
+  if (user.active) return user;
+
+  await accounts.enable(user.email);
+  await updateRecord(db, 'users', { id, version: user.version, by, set: { active: true }, reason });
+  return getUser(db, id);
+}

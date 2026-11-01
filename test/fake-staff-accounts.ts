@@ -21,6 +21,10 @@ export function fakeStaffAccounts() {
       const account = accounts.get(email);
       if (account) account.enabled = false;
     },
+    async enable(email) {
+      const account = accounts.get(email);
+      if (account) account.enabled = true;
+    },
   };
   return fake;
 }

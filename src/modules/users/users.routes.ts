@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createUser, deactivateUser, getUser, listUsers, updateUser } from './users.js';
+import { createUser, deactivateUser, getUser, listUsers, reactivateUser, updateUser } from './users.js';
 
 // /admin/users: staff accounts (api-list.md 7.2).
 
@@ -88,4 +88,8 @@ export const usersRoutes = new Hono<AuthEnv>()
   .post('/:id/deactivate', requirePermission('user.deactivate'), async (c) => {
     const reason = await reasonOf(c);
     return c.json(await deactivateUser(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
+  })
+  .post('/:id/reactivate', requirePermission('user.deactivate'), async (c) => {
+    const reason = await reasonOf(c);
+    return c.json(await reactivateUser(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
   });
