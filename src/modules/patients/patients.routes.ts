@@ -2,6 +2,8 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
+import { breakGlass } from '../access/break-glass.js';
+import { assertPatientAccess } from '../access/patient-access.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
@@ -96,6 +98,8 @@ const newConsent = z
   })
   .strict();
 
+const reasonBody = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
+
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
@@ -160,6 +164,7 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const db = await dbOf(c);
     const patient = await getPatient(db, c.req.param('id'));
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    await assertPatientAccess(db, userOf(c), patient);
     return c.json(await patientTimeline(db, patient.id, query));
   })
   // #26
@@ -176,4 +181,11 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const consent = await recordConsent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: consent.patientId, recordType: 'consent', recordId: consent.id });
     return c.json(consent, 201);
+  })
+  // #30
+  .post('/:id/break-glass', requirePermission('breakglass.invoke'), async (c) => {
+    const { reason } = reasonBody.parse(await bodyOf(c));
+    const event = await breakGlass(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
+    auditDetails(c, { patientId: event.patientId, recordType: 'break_glass_event', recordId: event.id, reason });
+    return c.json(event, 201);
   });

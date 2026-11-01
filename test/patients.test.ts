@@ -333,3 +333,58 @@ describe('POST /staff/patient-merges', () => {
     expect((await propose({ keepPatientId: rahul, mergePatientId: irfan, reason: 'dup' }, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+describe('the inactive-patient rule and POST /staff/patients/{id}/break-glass', () => {
+  const kavita = '9a710000-0000-4000-8000-000000000004'; // never visited, so inactive
+  const doctor = asStaff('dev-doctor', ['doctor']);
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const timeline = async (who: never) => (await app.request(`/staff/patients/${kavita}/timeline`, {}, who)).status;
+  const breakGlass = (body: unknown, who: never = doctor) =>
+    app.request(`/staff/patients/${kavita}/break-glass`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('keeps an inactive patient\'s record closed, except to Head Doctors and Admins; details stay open', async () => {
+    const res = await app.request(`/staff/patients/${kavita}/timeline`, {}, doctor);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: 'inactive_patient' });
+    expect(await timeline(asStaff('dev-head-doctor', ['head_doctor']))).toBe(200);
+    expect(await timeline(asStaff('dev-admin', ['admin']))).toBe(200);
+    expect((await app.request(`/staff/patients/${kavita}`, {}, doctor)).status).toBe(200);
+  });
+
+  it('opens it with an approved access request until it runs out', async () => {
+    await db.query(
+      `INSERT INTO access_requests (id, status, created_by, updated_by, patient_id, requested_by, reason, valid_until)
+       VALUES (gen_random_uuid(), 'approved', 'dev-nurse', 'dev-nurse', $1, 'dev-nurse', 'review', now() + interval '1 hour')`,
+      [kavita],
+    );
+    expect(await timeline(nurse)).toBe(200);
+    await db.query("UPDATE access_requests SET valid_until = now() - interval '1 minute' WHERE requested_by = 'dev-nurse' AND patient_id = $1", [kavita]);
+    expect(await timeline(nurse)).toBe(403);
+  });
+
+  it('break-glass opens it at once for an hour and alerts every Head Doctor and Admin', async () => {
+    const res = await breakGlass({ reason: 'unconscious in casualty' });
+    expect(res.status).toBe(201);
+    const event = (await res.json()) as { userId: string; at: string; validUntil: string };
+    expect(event).toMatchObject({ patientId: kavita, userId: 'dev-doctor', reason: 'unconscious in casualty' });
+    expect(Date.parse(event.validUntil) - Date.parse(event.at)).toBe(3_600_000);
+    expect(await timeline(doctor)).toBe(200);
+    expect(await timeline(nurse)).toBe(403);
+
+    const alerts = await db.query("SELECT user_id, title, body FROM alerts WHERE kind = 'breakglass' ORDER BY user_id");
+    expect(alerts.rows).toEqual([
+      { user_id: 'dev-admin', title: 'Break-glass: U25000004', body: 'Dr Neha Gupta used emergency access to U25000004: unconscious in casualty' },
+      { user_id: 'dev-head-doctor', title: 'Break-glass: U25000004', body: 'Dr Neha Gupta used emergency access to U25000004: unconscious in casualty' },
+    ]);
+
+    await db.query("UPDATE break_glass_events SET valid_until = now() - interval '1 minute' WHERE user_id = 'dev-doctor'");
+    expect(await timeline(doctor)).toBe(403);
+  });
+
+  it('422 without a reason; 404 for no such patient; 403 without breakglass.invoke', async () => {
+    expect((await breakGlass({})).status).toBe(422);
+    expect((await app.request('/staff/patients/9a710000-0000-4000-8000-000000000999/break-glass',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'emergency' }) }, doctor)).status).toBe(404);
+    expect((await breakGlass({ reason: 'emergency' }, reception)).status).toBe(403);
+  });
+});

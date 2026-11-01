@@ -427,4 +427,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC patient_merges_status ON patient_merges (status)',
     ],
   },
+  {
+    // Break-glass (api-list.md BreakGlassEvent); review_outcome is justified / not_justified (#184).
+    id: '0029_break_glass_events',
+    statements: () => [
+      ...createTable('break_glass_events', [
+        'patient_id uuid NOT NULL',
+        'user_id text NOT NULL',
+        'reason text NOT NULL',
+        'at timestamptz NOT NULL',
+        'valid_until timestamptz NOT NULL',
+        'reviewed_by text',
+        'review_outcome text',
+        'review_note text',
+      ]),
+      'CREATE INDEX ASYNC break_glass_events_user ON break_glass_events (user_id, patient_id)',
+      'CREATE INDEX ASYNC break_glass_events_at ON break_glass_events (at)',
+    ],
+  },
 ];
