@@ -29,6 +29,12 @@ describe('audit log', () => {
     expect(await verifyAuditChain(db)).toEqual({ ok: true, checked: 2 });
   });
 
+  it('keeps counting past 10 (seq is ordered as a number)', async () => {
+    for (let i = 0; i < 12; i++) await appendAudit(db, view);
+    expect((await appendAudit(db, view)).seq).toBe(13);
+    expect(await verifyAuditChain(db)).toEqual({ ok: true, checked: 13 });
+  });
+
   it('an empty log is a valid chain', async () => {
     expect(await verifyAuditChain(db)).toEqual({ ok: true, checked: 0 });
   });

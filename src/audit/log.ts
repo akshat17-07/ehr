@@ -49,11 +49,12 @@ const MAX_TRIES = 10;
 /** Adds one event at the end of the chain and returns it. */
 export async function appendAudit(db: Queryable, input: AuditInput): Promise<AuditEvent> {
   for (let attempt = 1; ; attempt++) {
-    const { rows } = await db.query('SELECT seq::text AS seq, hash FROM audit_events ORDER BY seq DESC LIMIT 1');
+    // ORDER BY the bigint column, not the text copy (as text, '9' sorts after '10').
+    const { rows } = await db.query('SELECT seq::text AS seq_text, hash FROM audit_events ORDER BY audit_events.seq DESC LIMIT 1');
     const last = rows[0];
     const unhashed = {
       ...input,
-      seq: last ? Number(last.seq) + 1 : 1,
+      seq: last ? Number(last.seq_text) + 1 : 1,
       id: randomUUID(),
       at: new Date().toISOString(),
       prevHash: last ? String(last.hash) : GENESIS_HASH,
@@ -80,7 +81,7 @@ export async function appendAudit(db: Queryable, input: AuditInput): Promise<Aud
 function fromRow(r: Record<string, unknown>): AuditEvent {
   const opt = (v: unknown) => (v === null || v === undefined ? undefined : String(v));
   return {
-    seq: Number(r.seq),
+    seq: Number(r.seq_text),
     id: String(r.id),
     at: (r.at as Date).toISOString(),
     userId: String(r.user_id),
@@ -103,7 +104,7 @@ export type ChainCheck = { ok: true; checked: number } | { ok: false; checked: n
 /** Recomputes every hash in order. Reports the first row that was changed, removed or put out of order. */
 export async function verifyAuditChain(db: Queryable): Promise<ChainCheck> {
   const { rows } = await db.query(
-    'SELECT seq::text AS seq, id::text AS id, at, user_id, role, action, patient_id::text AS patient_id, record_type, record_id, changes, reason, ip, device, prev_hash, hash FROM audit_events ORDER BY seq',
+    'SELECT seq::text AS seq_text, id::text AS id, at, user_id, role, action, patient_id::text AS patient_id, record_type, record_id, changes, reason, ip, device, prev_hash, hash FROM audit_events ORDER BY audit_events.seq',
   );
   let prev = GENESIS_HASH;
   let expectedSeq = 1;

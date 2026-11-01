@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { openLocalDb } from '../src/db/local.js';
 import { createApp } from '../src/app.js';
 import { parseGroups } from '../src/middleware/auth.js';
 
-const app = createApp();
+const db = await openLocalDb();
+const app = createApp({ db: async () => db });
 
 // Simulates what API Gateway's JWT authorizer passes to the Lambda.
 function asUser(groups: string[]) {

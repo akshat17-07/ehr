@@ -1,6 +1,7 @@
 import type { LambdaEvent } from 'hono/aws-lambda';
 import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
+import type { AuditDetails } from './audit.js';
 import { AppError } from './errors.js';
 
 export type Pool = 'staff' | 'patient';
@@ -20,7 +21,7 @@ export interface CurrentUser {
 
 export type AuthEnv = {
   Bindings: { event?: LambdaEvent };
-  Variables: { user: CurrentUser };
+  Variables: { user?: CurrentUser; audit?: AuditDetails };
 };
 
 type Claims = Record<string, unknown>;
@@ -37,19 +38,20 @@ export const requireUser = (pool: Pool, groups?: readonly string[]) =>
     const claims = claimsFromEvent(c.env?.event) ?? devClaims(c.req.header('x-dev-user'));
     if (!claims || typeof claims.sub !== 'string') throw new AppError(401, 'unauthenticated');
 
-    const expectedPoolId = pool === 'staff' ? env.STAFF_POOL_ID : env.PATIENT_POOL_ID;
-    const issuer = typeof claims.iss === 'string' ? claims.iss : '';
-    if (expectedPoolId && !issuer.endsWith(`/${expectedPoolId}`)) throw new AppError(403, 'wrong_pool');
-
     const userGroups = parseGroups(claims['cognito:groups']);
-    if (groups && !userGroups.some((g) => groups.includes(g))) throw new AppError(403, 'wrong_group');
-
+    // Set before the checks below, so a refused request is still audited under the real user.
     c.set('user', {
       sub: claims.sub,
       email: typeof claims.email === 'string' ? claims.email : '',
       pool,
       groups: userGroups,
     });
+
+    const expectedPoolId = pool === 'staff' ? env.STAFF_POOL_ID : env.PATIENT_POOL_ID;
+    const issuer = typeof claims.iss === 'string' ? claims.iss : '';
+    if (expectedPoolId && !issuer.endsWith(`/${expectedPoolId}`)) throw new AppError(403, 'wrong_pool');
+
+    if (groups && !userGroups.some((g) => groups.includes(g))) throw new AppError(403, 'wrong_group');
     await next();
   });
 

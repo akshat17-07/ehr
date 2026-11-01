@@ -12,7 +12,7 @@ let client: Queryable | undefined;
 export async function getDb(): Promise<Queryable> {
   if (client) return client;
   if (!env.DSQL_ENDPOINT && env.NODE_ENV !== 'production') {
-    client = await openLocalDb(env.LOCAL_DB_DIR);
+    client = await openLocalDb(env.NODE_ENV === 'test' ? undefined : env.LOCAL_DB_DIR); // tests: in memory
     return client;
   }
 
