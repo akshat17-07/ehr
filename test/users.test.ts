@@ -249,3 +249,24 @@ describe('POST /admin/users/{id}/reactivate', () => {
     expect((await post('reactivate', await idOf('dev-admin'), { reason: 'my own' })).status).toBe(403);
   });
 });
+
+describe('POST /admin/users/{id}/mfa-reset', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+  const post = async (id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}/mfa-reset`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string } };
+  };
+
+  it('resets the authenticator app of an active user', async () => {
+    accounts.accounts.set('reception@dev.local', { sub: 'dev-reception', name: 'x', groups: ['staff'], enabled: true });
+    expect(await post(await idOf('dev-reception'), { reason: 'lost their phone' })).toMatchObject({ status: 200, body: { cognitoSub: 'dev-reception' } });
+    expect(accounts.accounts.get('reception@dev.local')?.mfaResets).toBe(1);
+  });
+
+  it('needs a reason; 403 own account and Head Doctors; 409 for an inactive user', async () => {
+    expect((await post(await idOf('dev-reception'), {})).status).toBe(422);
+    expect((await post(await idOf('dev-admin'), { reason: 'my own phone' })).status).toBe(403);
+    expect((await post(await idOf('dev-nurse'), { reason: 'lost phone' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+    expect(await post(await idOf('dev-insurance'), { reason: 'lost phone' })).toMatchObject({ status: 409, body: { error: 'inactive' } });
+  });
+});

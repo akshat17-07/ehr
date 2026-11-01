@@ -2,7 +2,7 @@ import type { StaffAccounts } from '../src/identity/staff-accounts.js';
 
 /** Stands in for Cognito in tests: remembers accounts, groups and disabled users. */
 export function fakeStaffAccounts() {
-  const accounts = new Map<string, { sub: string; name: string; groups: string[]; enabled: boolean }>();
+  const accounts = new Map<string, { sub: string; name: string; groups: string[]; enabled: boolean; mfaResets?: number }>();
   let next = 1;
   const fake: StaffAccounts & { accounts: typeof accounts; failAddToGroup: boolean } = {
     accounts,
@@ -24,6 +24,10 @@ export function fakeStaffAccounts() {
     async enable(email) {
       const account = accounts.get(email);
       if (account) account.enabled = true;
+    },
+    async resetMfa(email) {
+      const account = accounts.get(email);
+      if (account) account.mfaResets = (account.mfaResets ?? 0) + 1;
     },
   };
   return fake;

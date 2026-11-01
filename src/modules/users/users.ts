@@ -263,3 +263,12 @@ export async function reactivateUser(db: Queryable, accounts: StaffAccounts, id:
   await updateRecord(db, 'users', { id, version: user.version, by, set: { active: true }, reason });
   return getUser(db, id);
 }
+
+/** #160: the user sets up their authenticator app again at next sign-in. Only for active users. */
+export async function resetUserMfa(db: Queryable, accounts: StaffAccounts, id: string, by: string): Promise<User> {
+  const user = await getUser(db, id);
+  assertNotSelf(user, by, 'reset MFA on');
+  if (!user.active) throw new AppError(409, 'inactive', 'reactivate the user first');
+  await accounts.resetMfa(user.email);
+  return user;
+}

@@ -9,6 +9,8 @@ export interface StaffAccounts {
   addToGroup(email: string, group: string): Promise<void>;
   disable(email: string): Promise<void>;
   enable(email: string): Promise<void>;
+  /** Turns off the user's authenticator app and signs them out everywhere; the pool requires MFA, so they set it up again. */
+  resetMfa(email: string): Promise<void>;
 }
 
 async function client() {
@@ -46,6 +48,17 @@ export const cognitoStaffAccounts: StaffAccounts = {
   async enable(email) {
     const { sdk, cognito, UserPoolId } = await client();
     await cognito.send(new sdk.AdminEnableUserCommand({ UserPoolId, Username: email }));
+  },
+  async resetMfa(email) {
+    const { sdk, cognito, UserPoolId } = await client();
+    await cognito.send(
+      new sdk.AdminSetUserMFAPreferenceCommand({
+        UserPoolId,
+        Username: email,
+        SoftwareTokenMfaSettings: { Enabled: false, PreferredMfa: false },
+      }),
+    );
+    await cognito.send(new sdk.AdminUserGlobalSignOutCommand({ UserPoolId, Username: email }));
   },
 };
 

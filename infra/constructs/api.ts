@@ -73,6 +73,8 @@ export class Api extends Construct {
       'cognito-idp:AdminAddUserToGroup',
       'cognito-idp:AdminDisableUser',
       'cognito-idp:AdminEnableUser',
+      'cognito-idp:AdminSetUserMFAPreference',
+      'cognito-idp:AdminUserGlobalSignOut',
     );
 
     this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
