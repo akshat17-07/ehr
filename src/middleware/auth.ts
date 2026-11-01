@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import type { LambdaEvent } from 'hono/aws-lambda';
 import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
@@ -6,6 +7,8 @@ import type { SignGetUrl } from '../files/signed-url.js';
 import type { StaffAccounts } from '../identity/staff-accounts.js';
 import type { UserPermissions } from '../permissions/check.js';
 import type { AuditDetails } from './audit.js';
+import { STAFF_TYPES } from '../permissions/defaults.js';
+import { dbOf, userOf } from './context.js';
 import { AppError } from './errors.js';
 
 export type Pool = 'staff' | 'patient';
@@ -66,9 +69,27 @@ export const requireUser = (pool: Pool, groups?: readonly string[]) =>
     const issuer = typeof claims.iss === 'string' ? claims.iss : '';
     if (expectedPoolId && !issuer.endsWith(`/${expectedPoolId}`)) throw new AppError(403, 'wrong_pool');
 
-    if (groups && !userGroups.some((g) => groups.includes(g))) throw new AppError(403, 'wrong_group');
+    if (pool === 'staff') await checkStaffRecord(c);
+    const current = c.get('user')?.groups ?? userGroups;
+    if (groups && !current.some((g) => groups.includes(g))) throw new AppError(403, 'wrong_group');
     await next();
   });
+
+/**
+ * A staff member with a users row is refused once deactivated (401 account_disabled), and their type is the row's,
+ * not the token's: the ID token lives up to an hour, so a deactivation or a promotion must not wait for it.
+ * Without a row (the first Admin, made in the console) the token's groups are used.
+ */
+async function checkStaffRecord(c: Context<AuthEnv>): Promise<void> {
+  const user = userOf(c);
+  const db = await dbOf(c);
+  const { rows } = await db.query('SELECT type, active FROM users WHERE cognito_sub = $1', [user.sub]);
+  const row = rows[0];
+  if (!row) return;
+  if (row.active !== true) throw new AppError(401, 'account_disabled', 'this account has been deactivated');
+  const types: readonly string[] = STAFF_TYPES;
+  c.set('user', { ...user, groups: [...user.groups.filter((g) => !types.includes(g)), String(row.type)] });
+}
 
 function claimsFromEvent(event: LambdaEvent | undefined): Claims | undefined {
   const ctx = event?.requestContext as { authorizer?: { jwt?: { claims?: Claims } } } | undefined;

@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createUser, getUser, listUsers, updateUser } from './users.js';
+import { createUser, deactivateUser, getUser, listUsers, updateUser } from './users.js';
 
 // /admin/users: staff accounts (api-list.md 7.2).
 
@@ -68,6 +68,9 @@ const userChange = z
   .strict()
   .refine((c) => Object.keys(c).some((k) => !['version', 'reason'].includes(k)), 'nothing to change');
 
+const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
+const reasonOf = async (c: { req: { json: () => Promise<unknown> } }) => reasonBody.parse(await c.req.json().catch(() => undefined)).reason;
+
 export const usersRoutes = new Hono<AuthEnv>()
   .get('/', requirePermission('user.view'), async (c) => {
     const query = listQuery.parse(c.req.query());
@@ -81,4 +84,8 @@ export const usersRoutes = new Hono<AuthEnv>()
   .patch('/:id', requirePermission('user.update'), async (c) => {
     const change = userChange.parse(await c.req.json().catch(() => undefined));
     return c.json(await updateUser(await dbOf(c), c.req.param('id'), change, userOf(c).sub));
+  })
+  .post('/:id/deactivate', requirePermission('user.deactivate'), async (c) => {
+    const reason = await reasonOf(c);
+    return c.json(await deactivateUser(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
   });

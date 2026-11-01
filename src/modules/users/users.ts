@@ -3,6 +3,7 @@ import type { Queryable } from '../../db/migrate.js';
 import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { isUsernameTaken, type StaffAccounts } from '../../identity/staff-accounts.js';
+import { assertAdminRemains } from '../permissions/admin-rules.js';
 import { bundlesNamed } from '../../permissions/bundles.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { AppError } from '../../middleware/errors.js';
@@ -229,5 +230,25 @@ export async function updateUser(db: Queryable, id: string, change: UserChange, 
     if (missing.length > 0) throw invalid(`doctors must keep: ${missing.join(', ')}`);
   }
   await updateRecord(db, 'users', { id, version: change.version, by, set, reason: change.reason });
+  return getUser(db, id);
+}
+
+/** For #158-#162: nobody does these to their own account. */
+export function assertNotSelf(user: User, by: string, what: string): void {
+  if (user.cognitoSub === by) throw new AppError(403, 'forbidden', `nobody can ${what} their own account`);
+}
+
+/**
+ * #158: disables the Cognito account (which also ends its sessions), then marks the user inactive.
+ * 409 last_admin for the last active Admin. Deactivating an inactive user changes nothing.
+ */
+export async function deactivateUser(db: Queryable, accounts: StaffAccounts, id: string, by: string, reason: string): Promise<User> {
+  const user = await getUser(db, id);
+  assertNotSelf(user, by, 'deactivate');
+  if (!user.active) return user;
+  if (user.type === 'admin') await assertAdminRemains(db, { deactivate: user.cognitoSub });
+
+  await accounts.disable(user.email);
+  await updateRecord(db, 'users', { id, version: user.version, by, set: { active: false }, reason });
   return getUser(db, id);
 }

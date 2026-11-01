@@ -185,3 +185,38 @@ describe('PATCH /admin/users/{id}', () => {
     expect((await patch(id, { version: 1, name: 'Dr A Dubey' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
   });
 });
+
+describe('POST /admin/users/{id}/deactivate', () => {
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+  const post = async (id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}/deactivate`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string; message?: string } };
+  };
+
+  it('disables the Cognito account, marks the user inactive, and refuses their token at once', async () => {
+    accounts.accounts.set('insurance@dev.local', { sub: 'dev-insurance', name: 'x', groups: ['insurance'], enabled: true });
+    const id = await idOf('dev-insurance');
+    expect(await post(id, { reason: 'left the hospital' })).toMatchObject({ status: 200, body: { active: false } });
+    expect(accounts.accounts.get('insurance@dev.local')?.enabled).toBe(false);
+    // The ID token is still unexpired, but the users row says inactive.
+    const me = await app.request('/other/insurance/me', {}, asStaff('dev-insurance', ['insurance']));
+    expect(me.status).toBe(401);
+    expect(await me.json()).toMatchObject({ error: 'account_disabled' });
+    expect((await post(id, { reason: 'again, no change' })).body).toMatchObject({ active: false, version: 2 });
+  });
+
+  it('needs a reason; 403 for own account and for Head Doctors; 409 for the last Admin', async () => {
+    const nurse = await idOf('dev-nurse');
+    expect((await post(nurse, {})).status).toBe(422);
+    expect((await post(nurse, { reason: 'not allowed' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+    expect(await post(await idOf('dev-admin'), { reason: 'leaving soon' })).toMatchObject({
+      status: 403,
+      body: { message: 'nobody can deactivate their own account' },
+    });
+    // Another Admin, with no users row, tries to deactivate the only active Admin.
+    expect(await post(await idOf('dev-admin'), { reason: 'last admin' }, asStaff('console-admin', ['admin']))).toMatchObject({
+      status: 409,
+      body: { error: 'last_admin' },
+    });
+  });
+});
