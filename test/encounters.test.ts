@@ -141,3 +141,23 @@ describe('PATCH /staff/encounters/{id}', () => {
     expect((await patch(seedId('e0c00000', 999), { version: 1, type: 'IPD' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/encounters/{id}/close', () => {
+  const close = (id: string, who = doctor) => app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, who);
+
+  it('closes an open encounter once; then it lists as closed', async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await close(id);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; closedAt: string; version: number };
+    expect(body).toMatchObject({ status: 'closed', version: 2 });
+    expect(Date.parse(body.closedAt)).toBeGreaterThan(Date.now() - 60_000);
+    expect(await (await close(id)).json()).toMatchObject({ error: 'closed' });
+    expect((await list('?status=closed')).body.items.map((e) => e.patientId)).toContain(seedId('9a710000', 2));
+  });
+
+  it('404 for none; 403 without encounter.update', async () => {
+    expect((await close(seedId('e0c00000', 999))).status).toBe(404);
+    expect((await close(await open(seedId('9a710000', 2)), reception)).status).toBe(403);
+  });
+});

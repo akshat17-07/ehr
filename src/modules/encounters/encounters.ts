@@ -167,3 +167,11 @@ export async function updateEncounter(db: Queryable, id: string, change: Encount
   });
   return getEncounter(db, id);
 }
+
+/** #40: closes an open encounter. (Once notes exist, #161, a draft note will keep it open.) */
+export async function closeEncounter(db: Queryable, id: string, by: string, now = new Date()): Promise<Encounter> {
+  const current = await getEncounter(db, id);
+  assertOpen(current);
+  await updateRecord(db, 'encounters', { id, version: current.version, by, set: { status: 'closed', closed_at: now } });
+  return getEncounter(db, id);
+}

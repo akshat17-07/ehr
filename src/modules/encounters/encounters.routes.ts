@@ -8,7 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
-import { createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
+import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
 
 // Encounters (api-list.md #36-#40), mounted at /staff/encounters.
 
@@ -70,5 +70,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const change = encounterChange.parse(await bodyOf(c));
     const encounter = await updateEncounter(await dbOf(c), c.req.param('id'), change, userOf(c).sub);
     auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id, reason: change.reason });
+    return c.json(encounter);
+  })
+  // #40
+  .post('/:id/close', requirePermission('encounter.update'), async (c) => {
+    const encounter = await closeEncounter(await dbOf(c), c.req.param('id'), userOf(c).sub);
+    auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
     return c.json(encounter);
   });
