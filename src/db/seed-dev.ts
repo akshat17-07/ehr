@@ -75,6 +75,8 @@ const DEV_PARTNER_HOSPITALS = ['AIIMS Bhopal', 'Hamidia Hospital, Bhopal', 'Bans
 
 const DEV_INSURERS = [['Star Health and Allied Insurance', 'STAR'], ['ICICI Lombard General Insurance', 'ICICI'], ['The New India Assurance', 'NIA'], ['Care Health Insurance', 'CARE']] as const;
 
+const DEV_TPAS = [['Medi Assist', 'MEDI'], ['MD India Health Insurance TPA', 'MDI'], ['Paramount Health Services', 'PHS'], ['Vidal Health TPA', 'VIDAL']] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -108,6 +110,7 @@ export function devSeedStatements(): string[] {
     ),
     ...DEV_PARTNER_HOSPITALS.map((name, i) => seedInsert('partner_hospitals', seedId('9a000000', i + 1), { name })),
     ...DEV_INSURERS.map(([name, code], i) => seedInsert('insurers', seedId('1a000000', i + 1), { name, code, active: true })),
+    ...DEV_TPAS.map(([name, code], i) => seedInsert('tpas', seedId('1b000000', i + 1), { name, code, active: true })),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

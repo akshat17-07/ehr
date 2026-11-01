@@ -192,3 +192,15 @@ describe('GET /staff/insurers', () => {
     expect(list.find((p) => p.name === 'Care Health Insurance')).toMatchObject({ code: expect.any(String), active: false });
   });
 });
+
+describe('GET /staff/tpas', () => {
+  it('lists TPAs A to Z with code and active, inactive ones too', async () => {
+    await db.query("UPDATE tpas SET active = false WHERE name = 'MD India Health Insurance TPA'");
+    const { status, body } = await get('/tpas');
+    expect(status).toBe(200);
+    const list = body as { name: string; code?: string; active: boolean }[];
+    expect(list).toHaveLength(4);
+    expect(list.map((p) => p.name)).toEqual([...list.map((p) => p.name)].sort());
+    expect(list.find((p) => p.name === 'MD India Health Insurance TPA')).toMatchObject({ code: expect.any(String), active: false });
+  });
+});

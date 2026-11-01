@@ -319,4 +319,12 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC insurers_name ON insurers (name)',
     ],
   },
+  {
+    // Third-party administrators who settle cashless claims for insurers (api-list.md Tpa).
+    id: '0021_tpas',
+    statements: () => [
+      ...createTable('tpas', ['name text NOT NULL', 'code text', 'active boolean NOT NULL DEFAULT true']),
+      'CREATE UNIQUE INDEX ASYNC tpas_name ON tpas (name)',
+    ],
+  },
 ];

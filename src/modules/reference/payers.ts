@@ -35,3 +35,8 @@ export async function listPartnerHospitals(db: Queryable): Promise<PartnerHospit
 export async function listInsurers(db: Queryable): Promise<Payer[]> {
   return (await db.query('SELECT * FROM insurers ORDER BY name, id')).rows.map(toPayer);
 }
+
+/** #16 */
+export async function listTpas(db: Queryable): Promise<Payer[]> {
+  return (await db.query('SELECT * FROM tpas ORDER BY name, id')).rows.map(toPayer);
+}
