@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openLocalDb, type LocalDb } from '../src/db/local.js';
 import { migrations } from '../src/db/migrations.js';
-import { APPEND_ONLY_TABLES, appendOnlyTable, BASE_COLUMNS, baseFields, createTable, grantApp, type BaseRow } from '../src/db/table.js';
+import { appendOnlyTable, BASE_COLUMNS, baseFields, createTable, grantApp, grantReadAdd, isAppendOnly, type BaseRow } from '../src/db/table.js';
 
 const ctx = { apiRoleArn: 'arn:aws:iam::1:role/api' };
 const allStatements = migrations.flatMap((m) => m.statements(ctx).map((sql) => ({ id: m.id, sql })));
@@ -49,6 +49,14 @@ describe('createTable', () => {
     expect(() => appendOnlyTable('patients', [])).toThrow('not in APPEND_ONLY_TABLES');
   });
 
+  it('gives every record table a history table the API can only read and add to', async () => {
+    const { rows } = await db.query(
+      "SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'sample_versions' AND grantee = 'ehr_app' ORDER BY 1",
+    );
+    expect(rows.map((r) => r.privilege_type)).toEqual(['INSERT', 'SELECT']);
+    expect(() => createTable('sample_versions', [])).toThrow('Bad table name');
+  });
+
   it('refuses odd table names', () => {
     expect(() => createTable('x; DROP TABLE y', [])).toThrow('Bad table name');
   });
@@ -66,8 +74,8 @@ describe('migration rules', () => {
     for (const { id, sql } of allStatements) {
       const table = /^CREATE TABLE (?:IF NOT EXISTS )?([a-z0-9_]+)/i.exec(sql)?.[1];
       if (!table || table === 'schema_migrations') continue;
-      if (APPEND_ONLY_TABLES.includes(table)) {
-        expect(allStatements.map((s) => s.sql), `${id}: ${table} grant`).toContain(appendOnlyTable(table, [])[1]);
+      if (isAppendOnly(table)) {
+        expect(allStatements.map((s) => s.sql), `${id}: ${table} grant`).toContain(grantReadAdd(table));
         continue;
       }
       expect(sql, `${id}: ${table} base columns`).toContain(`(${BASE_COLUMNS.join(', ')}`);

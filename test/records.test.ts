@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openLocalDb, type LocalDb } from '../src/db/local.js';
 import type { Queryable } from '../src/db/migrate.js';
-import { updateRecord } from '../src/db/records.js';
-import { createTable } from '../src/db/table.js';
+import { listVersions, updateRecord } from '../src/db/records.js';
+import { baseFields, createTable, type BaseRow } from '../src/db/table.js';
 import { withTransaction } from '../src/db/transaction.js';
 
 let n = 0;
@@ -72,6 +72,63 @@ describe('edits with a version check', () => {
     await expect(updateRecord(db, 'wards; --', { id, version: 1, by: 'u', set: {} })).rejects.toThrow('Bad name');
     await expect(updateRecord(db, 'wards', { id, version: 1, by: 'u', set: { 'beds = 0, name': 1 } })).rejects.toThrow('Bad name');
     await expect(updateRecord(db, 'wards', { id, version: 1, by: 'u', set: { version: 9 } })).rejects.toThrow('Base fields');
+  });
+});
+
+describe('history', () => {
+  let db: LocalDb;
+  beforeAll(async () => {
+    db = await openLocalDb();
+    for (const sql of createTable('wards', ['name text NOT NULL', 'beds integer NOT NULL'])) await db.query(sql);
+  });
+  afterAll(() => db.close());
+
+  const toWard = (r: Record<string, unknown>) => ({ ...baseFields(r as unknown as BaseRow), name: r.name, beds: r.beds });
+  async function addWard(name: string) {
+    const id = newId();
+    await db.query("INSERT INTO wards (id, status, created_by, updated_by, name, beds) VALUES ($1, 'active', 'u0', 'u0', $2, 10)", [id, name]);
+    return id;
+  }
+
+  it('keeps every old row, with who changed it and why', async () => {
+    const id = await addWard('A');
+    await updateRecord(db, 'wards', { id, version: 1, by: 'u1', set: { beds: 12 }, reason: 'new beds' });
+    await updateRecord(db, 'wards', { id, version: 2, by: 'u2', set: { name: 'A1' } });
+
+    const versions = await listVersions(db, 'wards', id, toWard);
+    expect(versions.map(({ version, by, reason, data }) => ({ version, by, reason, name: data.name, beds: data.beds }))).toEqual([
+      { version: 1, by: 'u0', reason: undefined, name: 'A', beds: 10 },
+      { version: 2, by: 'u1', reason: 'new beds', name: 'A', beds: 12 },
+      { version: 3, by: 'u2', reason: undefined, name: 'A1', beds: 12 },
+    ]);
+    // Old rows come back in the same shape as the live one (timestamps as dates).
+    expect(versions[0]?.data.createdAt).toBe(versions[2]?.data.createdAt);
+    expect(versions[0]?.at).toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+
+  it('keeps nothing when the edit is refused', async () => {
+    const id = await addWard('B');
+    await expect(updateRecord(db, 'wards', { id, version: 7, by: 'u1', set: { beds: 6 } })).rejects.toMatchObject({ status: 409 });
+    expect((await listVersions(db, 'wards', id, toWard)).map((v) => v.version)).toEqual([1]);
+  });
+
+  it('409 when another save already kept this version', async () => {
+    const id = await addWard('C');
+    await db.query("INSERT INTO wards_versions (record_id, version, data, replaced_by) VALUES ($1, 1, '{}', 'other')", [id]);
+    await expect(updateRecord(db, 'wards', { id, version: 1, by: 'u1', set: { beds: 6 } })).rejects.toMatchObject({ status: 409 });
+    expect((await db.query('SELECT version FROM wards WHERE id = $1', [id])).rows[0]).toEqual({ version: 1 });
+  });
+
+  it('a broken unique rule in the edit itself is not reported as a stale version', async () => {
+    await db.query('CREATE UNIQUE INDEX wards_name ON wards (name)');
+    await addWard('D');
+    const id = await addWard('E');
+    await expect(updateRecord(db, 'wards', { id, version: 1, by: 'u1', set: { name: 'D' } })).rejects.toMatchObject({ code: '23505' });
+    expect((await listVersions(db, 'wards', id, toWard)).map((v) => v.version)).toEqual([1]);
+  });
+
+  it('404 for versions of a record that does not exist', async () => {
+    await expect(listVersions(db, 'wards', newId(), toWard)).rejects.toMatchObject({ status: 404 });
   });
 });
 

@@ -1,5 +1,6 @@
 // Every record table is made with createTable(): the same base columns everywhere, and the API may
 // read, add and change rows but never delete them (api-list.md "base fields"; corrections are new versions).
+// Each one also gets a history table, <name>_versions, that keeps the old row on every edit (db/records.ts).
 
 /** Base columns of every record table. IDs are UUIDs made by the API (crypto.randomUUID()). */
 export const BASE_COLUMNS = [
@@ -15,10 +16,34 @@ export const BASE_COLUMNS = [
   'void_reason text',
 ];
 
-/** The two statements for a new record table: CREATE TABLE with the base columns first, then the grant (no DELETE). */
+/** Columns of every history table: the old row as JSON, and who replaced it, when and why. */
+export const HISTORY_COLUMNS = [
+  'record_id uuid NOT NULL',
+  'version integer NOT NULL',
+  'data text NOT NULL',
+  'replaced_at timestamptz NOT NULL DEFAULT now()',
+  'replaced_by text NOT NULL',
+  'reason text',
+  // One row per (record, version): two saves of the same version can't both be kept.
+  'PRIMARY KEY (record_id, version)',
+];
+
+/** The history table of a record table. */
+export const historyTable = (name: string) => `${name}_versions`;
+
+/**
+ * The statements for a new record table: CREATE TABLE with the base columns first and its grant (no DELETE),
+ * then its history table (read + add only).
+ */
 export function createTable(name: string, columns: string[]): string[] {
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Bad table name: ${name}`);
-  return [`CREATE TABLE ${name} (${[...BASE_COLUMNS, ...columns].join(', ')})`, grantApp(name)];
+  if (!/^[a-z][a-z0-9_]*$/.test(name) || name.endsWith('_versions')) throw new Error(`Bad table name: ${name}`);
+  const history = historyTable(name);
+  return [
+    `CREATE TABLE ${name} (${[...BASE_COLUMNS, ...columns].join(', ')})`,
+    grantApp(name),
+    `CREATE TABLE ${history} (${HISTORY_COLUMNS.join(', ')})`,
+    grantReadAdd(history),
+  ];
 }
 
 /**
@@ -27,11 +52,18 @@ export function createTable(name: string, columns: string[]): string[] {
  */
 export function appendOnlyTable(name: string, columns: string[]): string[] {
   if (!APPEND_ONLY_TABLES.includes(name)) throw new Error(`${name} is not in APPEND_ONLY_TABLES`);
-  return [`CREATE TABLE ${name} (${columns.join(', ')})`, `GRANT SELECT, INSERT ON ${name} TO ehr_app`];
+  return [`CREATE TABLE ${name} (${columns.join(', ')})`, grantReadAdd(name)];
 }
 
-/** Tables whose rows can only be added: the API can't change or delete them. */
+/** Log tables whose rows can only be added: the API can't change or delete them. History tables are the same. */
 export const APPEND_ONLY_TABLES = ['audit_events'];
+
+export const isAppendOnly = (name: string) => APPEND_ONLY_TABLES.includes(name) || name.endsWith('_versions');
+
+/** The API's rights on a log or history table: read and add. */
+export function grantReadAdd(name: string): string {
+  return `GRANT SELECT, INSERT ON ${name} TO ehr_app`;
+}
 
 /** The API's rights on a table: read, add, change. Never DELETE. */
 export function grantApp(name: string): string {
