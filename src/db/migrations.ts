@@ -5,6 +5,7 @@
 // Log tables use appendOnlyTable() instead (read + add only). test/table.test.ts checks every migration follows these rules.
 import { seedBundles } from '../permissions/bundles.js';
 import { seedTypePermissions } from '../permissions/type-permissions.js';
+import { seedHospital } from '../modules/reference/hospital.js';
 import { appendOnlyTable, createTable } from './table.js';
 
 export interface MigrationContext {
@@ -236,6 +237,26 @@ export const migrations: Migration[] = [
       ]),
       'CREATE UNIQUE INDEX ASYNC payslips_run_employee ON payslips (run_id, employee_id)',
       'CREATE INDEX ASYNC payslips_employee ON payslips (employee_id, month)',
+    ],
+  },
+  {
+    // The hospital's own details (api-list.md Hospital): one row, blank until the Admin fills it in (#189).
+    id: '0016_hospital',
+    statements: () => [
+      ...createTable('hospital', [
+        'name text NOT NULL',
+        'address text NOT NULL',
+        'phone text NOT NULL',
+        'email text NOT NULL',
+        'mp_licence_no text NOT NULL',
+        'licence_valid_till date',
+        'gstin text',
+        'pcpndt_reg_no text',
+        'mtp_reg_no text',
+        'invoice_prefix text NOT NULL',
+        'bill_of_supply_prefix text NOT NULL',
+      ]),
+      seedHospital(),
     ],
   },
 ];

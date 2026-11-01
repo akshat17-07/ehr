@@ -1,3 +1,4 @@
+import { HOSPITAL_ID } from '../modules/reference/hospital.js';
 import type { Queryable } from './migrate.js';
 import { seedId, seedInsert } from './table.js';
 
@@ -47,6 +48,8 @@ export const DEV_DRUGS = [
   ['Morphine', '10 mg/ml', 'injection', 'NDPS', 3500],
 ] as const;
 
+const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
+
 export function devSeedStatements(): string[] {
   const departmentId = (code: string) => seedId('de000000', DEV_DEPARTMENTS.findIndex(([c]) => c === code) + 1);
   return [
@@ -58,6 +61,11 @@ export function devSeedStatements(): string[] {
         name, strength, form, schedule, hsn: '3004', gst_rate: '5', mrp_paise: String(mrp), active: true,
       }),
     ),
+    // The blank hospital row from migration 0016, filled in (only while still blank).
+    `UPDATE hospital SET name = 'Shanti Multispeciality Hospital', phone = '07554000000', email = 'desk@shanti.dev.local',
+       address = '${JSON.stringify(DEV_HOSPITAL_ADDRESS)}', mp_licence_no = 'MP/BPL/2024/0101', licence_valid_till = '2029-03-31',
+       gstin = '23AAAAA0000A1Z5', pcpndt_reg_no = 'PCPNDT/BPL/0042', mtp_reg_no = 'MTP/BPL/0017'
+     WHERE id = '${HOSPITAL_ID}' AND name = ''`,
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

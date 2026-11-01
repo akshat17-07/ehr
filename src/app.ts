@@ -1,3 +1,4 @@
+import { referenceRoutes } from './modules/reference/reference.routes.js';
 import { Hono } from 'hono';
 import {
   GP_GROUPS,
@@ -45,7 +46,8 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/me/permissions', myPermissionsRoutes)
     .route('/me/alerts', myAlertsRoutes)
     .route('/me/access-requests', myAccessRequestsRoutes)
-    .route('/me/payslips', myPayslipsRoutes);
+    .route('/me/payslips', myPayslipsRoutes)
+    .route('/', referenceRoutes);
   const admin = new Hono<AuthEnv>()
     .use(requireUser('staff', MANAGEMENT_GROUPS))
     .route('/me', meRoutes)
