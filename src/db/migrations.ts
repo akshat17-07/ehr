@@ -445,4 +445,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC break_glass_events_at ON break_glass_events (at)',
     ],
   },
+  {
+    // OPD appointments (api-list.md Appointment). doctor_id is the doctor's users.id. ends_at = at + duration, for
+    // finding a clash with a taken slot.
+    id: '0030_appointments',
+    statements: () => [
+      ...createTable('appointments', [
+        'patient_id uuid NOT NULL',
+        'doctor_id uuid NOT NULL',
+        'department_id uuid NOT NULL',
+        'at timestamptz NOT NULL',
+        'ends_at timestamptz NOT NULL',
+        'duration_min integer NOT NULL',
+        'note text',
+      ]),
+      'CREATE INDEX ASYNC appointments_at ON appointments (at)',
+      'CREATE INDEX ASYNC appointments_doctor ON appointments (doctor_id, at)',
+    ],
+  },
 ];

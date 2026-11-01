@@ -1,3 +1,4 @@
+import { indiaDate } from '../time/india.js';
 import { HOSPITAL_ID } from '../modules/reference/hospital.js';
 import type { Queryable } from './migrate.js';
 import { seedId, seedInsert } from './table.js';
@@ -100,6 +101,13 @@ export const DEV_PATIENTS = [
   ['U26000005', 'Rahul Verma', 'M', '2016-08-09', '8800000005', 5],
 ] as const;
 
+/** Today's OPD list: patient (DEV_PATIENTS index), doctor (DEV_USERS sub), department, India time, minutes. */
+const DEV_APPOINTMENTS = [
+  [0, 'dev-doctor', 'MED', '10:00', 10],
+  [2, 'dev-doctor', 'MED', '10:10', 10],
+  [4, 'dev-surgeon', 'SUR', '11:00', 15],
+] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -146,6 +154,14 @@ export function devSeedStatements(): string[] {
     ...[...new Set(DEV_PATIENTS.map(([uhid]) => uhid.slice(1, 3)))].map((year) => {
       const last = Math.max(...DEV_PATIENTS.filter(([uhid]) => uhid.slice(1, 3) === year).map(([uhid]) => Number(uhid.slice(3))));
       return seedInsert('counters', seedId('c0c00000', Number(year)), { name: `uhid-${year}`, value: String(last) });
+    }),
+    ...DEV_APPOINTMENTS.map(([patient, doctor, dept, time, minutes], i) => {
+      const at = new Date(`${indiaDate()}T${time}:00+05:30`);
+      return seedInsert('appointments', seedId('a9900000', i + 1), {
+        patient_id: seedId('9a710000', patient + 1), doctor_id: seedId('a0000000', DEV_USERS.findIndex((u) => u.sub === doctor) + 1),
+        department_id: departmentId(dept), at: at.toISOString(), ends_at: new Date(at.getTime() + minutes * 60_000).toISOString(),
+        duration_min: String(minutes), status: 'booked',
+      });
     }),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {

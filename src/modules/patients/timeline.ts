@@ -1,5 +1,6 @@
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { indiaDayStart } from '../../time/india.js';
 
 // A patient's timeline (#25, api-list.md TimelineItem): their encounters, notes, prescriptions, documents, bills,
 // surgeries and admissions, newest first, in one list. Each module adds its table to TIMELINE_SOURCES when it is built.
@@ -36,9 +37,6 @@ export interface TimelineQuery extends PageQuery {
   kind?: TimelineKind;
 }
 
-/** The start of an India day as a time. */
-const dayStart = (date: string) => new Date(`${date}T00:00:00+05:30`);
-
 export async function patientTimeline(db: Queryable, patientId: string, query: TimelineQuery): Promise<Page<TimelineItem>> {
   const sources = TIMELINE_SOURCES.filter((s) => !query.kind || s.kind === query.kind);
   if (sources.length === 0) return { items: [] };
@@ -49,8 +47,8 @@ export async function patientTimeline(db: Queryable, patientId: string, query: T
     .join(' UNION ALL ');
   const where: string[] = [];
   const params: unknown[] = [patientId];
-  if (query.from) where.push(`at >= $${params.push(dayStart(query.from))}`);
-  if (query.to) where.push(`at < $${params.push(new Date(dayStart(query.to).getTime() + 86_400_000))}`);
+  if (query.from) where.push(`at >= $${params.push(indiaDayStart(query.from))}`);
+  if (query.to) where.push(`at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
 
   return pageRows(db, { select: `SELECT * FROM (${union}) AS timeline`, where, params, orderBy: ['at', 'id'] }, query, (r) => ({
     kind: r.kind as TimelineKind,

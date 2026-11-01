@@ -5,3 +5,6 @@ const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', 
 
 /** The date in India, YYYY-MM-DD. */
 export const indiaDate = (at: Date = new Date()): string => dateFormat.format(at);
+
+/** The time an India day (YYYY-MM-DD) starts. */
+export const indiaDayStart = (date: string): Date => new Date(`${date}T00:00:00+05:30`);
