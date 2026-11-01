@@ -7,7 +7,7 @@ import { bundlesNamed } from './bundles.js';
 import type { Permission } from './catalog.js';
 import { getCustomPermissions } from './custom.js';
 import { STAFF_TYPES, type StaffType } from './defaults.js';
-import { activeGrants, type Grant } from './grants.js';
+import { activeGrants, type Grant, type GrantScope } from './grants.js';
 import { permissionsOfTypes } from './type-permissions.js';
 
 // The permission check (api-list.md section 3): type permissions + bundles + custom allow + active grants − custom deny.
@@ -58,7 +58,7 @@ export async function loadPermissions(db: Queryable, userId: string, groups: rea
 }
 
 /** The caller's permissions, loaded once per request. */
-async function permissionsOf(c: Context<AuthEnv>): Promise<UserPermissions> {
+export async function permissionsOf(c: Context<AuthEnv>): Promise<UserPermissions> {
   const cached = c.get('permissions');
   if (cached) return cached;
   const user = c.get('user');
@@ -78,6 +78,40 @@ export const requirePermission = (permission: Permission) =>
     if (!(await permissionsOf(c)).effective.includes(permission)) throw forbidden(permission);
     await next();
   });
+
+/** One line of GET /staff/me/permissions (api-list.md Permissions). */
+export interface PermissionEntry {
+  permission: Permission;
+  scope: GrantScope;
+  scopeId?: string;
+  /** End of a grant. */
+  until?: string;
+  /** built_in = from the staff type or the user's own custom allow list. */
+  source: 'built_in' | 'bundle' | 'grant';
+}
+
+/**
+ * Everything the user may do, as the screen needs it to hide buttons: one "all" line per permission, then one line
+ * per active grant (scoped ones too, with their patient or department). Custom denies are left out everywhere.
+ */
+export function permissionList(perms: UserPermissions): PermissionEntry[] {
+  const deny = new Set(perms.custom.deny);
+  const own = new Set([...perms.fromType, ...perms.custom.allow]);
+  const fromBundles = new Set(perms.fromBundles.flatMap((b) => b.permissions));
+  const always = [...new Set([...own, ...fromBundles])].filter((p) => !deny.has(p)).sort();
+  return [
+    ...always.map((permission): PermissionEntry => ({ permission, scope: 'all', source: own.has(permission) ? 'built_in' : 'bundle' })),
+    ...perms.grants
+      .filter((g) => !deny.has(g.permission))
+      .map((g): PermissionEntry => ({
+        permission: g.permission,
+        scope: g.scope,
+        ...(g.scopeId !== undefined && { scopeId: g.scopeId }),
+        until: g.end,
+        source: 'grant',
+      })),
+  ];
+}
 
 export interface PermissionTarget {
   patientId?: string;

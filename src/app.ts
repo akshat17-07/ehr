@@ -13,6 +13,7 @@ import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { meRoutes } from './modules/me/me.routes.js';
+import { myPermissionsRoutes } from './modules/me/permissions.routes.js';
 
 // Route prefixes match API Gateway (infra/constructs/api.ts). Full endpoint list: docs/india/api-list.md
 //   /health             public
@@ -27,7 +28,10 @@ export interface AppDeps {
 }
 
 export function createApp({ db = getDb }: AppDeps = {}) {
-  const staff = new Hono<AuthEnv>().use(requireUser('staff', WORKFORCE_GROUPS)).route('/me', meRoutes);
+  const staff = new Hono<AuthEnv>()
+    .use(requireUser('staff', WORKFORCE_GROUPS))
+    .route('/me', meRoutes)
+    .route('/me/permissions', myPermissionsRoutes);
   const admin = new Hono<AuthEnv>().use(requireUser('staff', MANAGEMENT_GROUPS)).route('/me', meRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);
