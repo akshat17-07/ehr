@@ -193,4 +193,49 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC access_requests_status ON access_requests (status, created_at)',
     ],
   },
+  {
+    // Employees on the payroll (api-list.md Employee). user_id links a login; contract staff may have none.
+    // *_enc columns hold ciphertext: PAN, UAN, ESIC and bank details are encrypted by the app before saving.
+    id: '0013_employees',
+    statements: () => [
+      ...createTable('employees', [
+        'user_id text',
+        'name text NOT NULL',
+        'designation text NOT NULL',
+        'join_date date NOT NULL',
+        'pan_enc text NOT NULL',
+        'uan_enc text',
+        'esic_enc text',
+        'bank_enc text NOT NULL',
+        'salary_structure_id text NOT NULL',
+        'active boolean NOT NULL DEFAULT true',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC employees_user ON employees (user_id)',
+    ],
+  },
+  {
+    // One payroll run per month (api-list.md PayrollRun). status: draft, approved, paid.
+    id: '0014_payroll_runs',
+    statements: () => [
+      ...createTable('payroll_runs', ['month text NOT NULL', 'total_net_paise bigint NOT NULL', 'run_by text NOT NULL', 'approved_by text']),
+      'CREATE UNIQUE INDEX ASYNC payroll_runs_month ON payroll_runs (month)',
+    ],
+  },
+  {
+    // One payslip per employee per run (api-list.md Payslip). deductions is a JSON array; pdf_key is the S3 object.
+    id: '0015_payslips',
+    statements: () => [
+      ...createTable('payslips', [
+        'run_id uuid NOT NULL',
+        'employee_id uuid NOT NULL',
+        'month text NOT NULL',
+        'gross_paise bigint NOT NULL',
+        'deductions text NOT NULL',
+        'net_paise bigint NOT NULL',
+        'pdf_key text',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC payslips_run_employee ON payslips (run_id, employee_id)',
+      'CREATE INDEX ASYNC payslips_employee ON payslips (employee_id, month)',
+    ],
+  },
 ];
