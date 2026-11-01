@@ -100,6 +100,11 @@ export class BackupStack extends Stack {
       }),
     );
 
+    // Backup 2: the hospital PC downloads with this user (read only). Make its access key in the console.
+    const pcUser = new iam.User(this, 'HospitalPcReader', { userName: `ehr-${config.stage}-hospital-pc` });
+    bucket.grantRead(pcUser, 'exports/*');
+
     new CfnOutput(this, 'BackupBucket', { value: bucket.bucketName });
+    new CfnOutput(this, 'HospitalPcUser', { value: pcUser.userName });
   }
 }
