@@ -36,6 +36,20 @@ describe('paging', () => {
   });
   afterAll(() => db.close());
 
+  it('keeps microseconds in the cursor, so rows saved in the same millisecond are not skipped', async () => {
+    for (const sql of createTable('stamps', [])) await db.query(sql);
+    const rows = [
+      ['00000000-0000-4000-8000-0000000000a1', '2026-02-01 10:00:00.123456+00'],
+      ['00000000-0000-4000-8000-0000000000a9', '2026-02-01 10:00:00.123400+00'],
+      ['00000000-0000-4000-8000-0000000000a5', '2026-02-01 10:00:00.123000+00'],
+    ];
+    for (const [id, at] of rows) {
+      await db.query("INSERT INTO stamps (id, status, created_by, updated_by, created_at) VALUES ($1, 'active', 'u', 'u', $2)", [id, at]);
+    }
+    const stamps: PageSpec = { select: 'SELECT id FROM stamps', orderBy: ['created_at', 'id'] };
+    expect(await all(db, stamps, 1)).toEqual(rows.map(([id]) => id));
+  });
+
   it('walks every row once, newest first, ties broken by id', async () => {
     expect(await all(db, spec, 3)).toEqual([...ids].reverse());
   });

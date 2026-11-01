@@ -47,10 +47,10 @@ export function decodeCursor(cursor: string, size: number): string[] {
 }
 
 /** The value a cursor keeps for a column: dates as ISO text, everything else as text. */
-function keyValue(row: Record<string, unknown>, column: string): string {
-  const value = row[column.split('.').pop() as string];
+function keyValue(row: Record<string, unknown>, column: string, i: number): string {
+  const value = row[`_page_key${i}`];
   if (value === null || value === undefined) throw new Error(`Sort column ${column} is empty; sort columns must be NOT NULL`);
-  return value instanceof Date ? value.toISOString() : String(value);
+  return String(value);
 }
 
 /** Runs one page of a list query. `map` turns a database row into the API shape. */
@@ -77,8 +77,13 @@ export async function pageRows<T>(
     where.push(`(${ors.map((o) => `(${o})`).join(' OR ')})`);
   }
 
+  // The sort values for the cursor are read as text from the database: a timestamp read as a JS Date loses its
+  // microseconds, and the next page would then skip rows saved in the same millisecond.
+  const select = spec.select.replace(/^\s*SELECT\s/i, `SELECT ${orderBy.map((c, i) => `${c}::text AS _page_key${i}`).join(', ')}, `);
+  if (select === spec.select) throw new Error('PageSpec.select must start with SELECT');
+
   const sql = [
-    spec.select,
+    select,
     where.length ? `WHERE ${where.join(' AND ')}` : '',
     `ORDER BY ${orderBy.map((c) => `${c} ${direction.toUpperCase()}`).join(', ')}`,
     `LIMIT ${limit + 1}`, // one extra row says whether there is a next page
@@ -91,6 +96,6 @@ export async function pageRows<T>(
   const last = pageRows[pageRows.length - 1];
   return {
     items: pageRows.map(map),
-    ...(rows.length > limit && last && { nextCursor: encodeCursor(orderBy.map((c) => keyValue(last, c))) }),
+    ...(rows.length > limit && last && { nextCursor: encodeCursor(orderBy.map((c, i) => keyValue(last, c, i))) }),
   };
 }
