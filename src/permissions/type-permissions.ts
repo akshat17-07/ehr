@@ -1,4 +1,5 @@
 import type { Queryable } from '../db/migrate.js';
+import { updateRecord } from '../db/records.js';
 import { seedId, seedInsert } from '../db/table.js';
 import type { Permission } from './catalog.js';
 import { DEFAULT_TYPE_PERMISSIONS, STAFF_TYPES, type StaffType } from './defaults.js';
@@ -44,4 +45,26 @@ export async function permissionsOfTypes(db: Queryable, types: readonly string[]
   const list = types.map((_, i) => `$${i + 1}`).join(', ');
   const { rows } = await db.query(`SELECT permissions FROM type_permissions WHERE type IN (${list})`, [...types]);
   return new Set(rows.flatMap((r) => JSON.parse(String(r.permissions)) as Permission[]));
+}
+
+export interface TypePermissionsChange {
+  type: StaffType;
+  version: number;
+  permissions: Permission[];
+  by: string;
+  reason: string;
+}
+
+/** Saves a staff type's list if `version` is still the latest (409 otherwise). The old list goes to the history table. */
+export async function saveTypePermissions(db: Queryable, change: TypePermissionsChange): Promise<TypePermissions> {
+  const { rows } = await db.query('SELECT id FROM type_permissions WHERE type = $1', [change.type]);
+  const id = String(rows[0]?.id);
+  const row = await updateRecord(db, 'type_permissions', {
+    id,
+    version: change.version,
+    by: change.by,
+    set: { permissions: JSON.stringify(change.permissions) },
+    reason: change.reason,
+  });
+  return fromRow(row);
 }

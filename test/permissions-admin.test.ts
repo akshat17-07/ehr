@@ -103,3 +103,42 @@ describe('GET /admin/type-permissions', () => {
     expect((await app.request('/admin/type-permissions', {}, as('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('PUT /admin/type-permissions/{type}', () => {
+  const putType = async (type: string, body: unknown, who = admin) => {
+    const res = await app.request(
+      `/admin/type-permissions/${type}`,
+      { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } },
+      who,
+    );
+    return { status: res.status, body: (await res.json()) as { version: number; permissions: string[]; error?: string; message?: string } };
+  };
+
+  it('changes the list for every user of the type, with the version check', async () => {
+    const res = await putType('gp', { version: 1, permissions: ['patient.view', 'patient.view'], reason: 'gps see patients' });
+    expect(res).toMatchObject({ status: 200, body: { version: 2, permissions: ['patient.view'] } });
+    const perms = await app.request(`/admin/users/${await idOf('dev-gp')}/permissions`, {}, admin);
+    expect(await perms.json()).toMatchObject({ fromType: ['patient.view'] });
+    expect((await putType('gp', { version: 1, permissions: [], reason: 'stale edit' })).status).toBe(409);
+  });
+
+  it('422 for an unknown type or permission, or a grant-only one', async () => {
+    expect((await putType('janitor', { version: 1, permissions: [], reason: 'no such type' })).status).toBe(422);
+    expect((await putType('nurse', { version: 1, permissions: ['nurse.fly'], reason: 'no such key' })).status).toBe(422);
+    expect((await putType('nurse', { version: 1, permissions: ['mtp.view'], reason: 'grant only' })).status).toBe(422);
+  });
+
+  it('a Head Doctor can not change the Admin type, their own type, or give Admin-only permissions', async () => {
+    expect((await putType('admin', { version: 1, permissions: [], reason: 'head on admin' }, head)).status).toBe(403);
+    expect((await putType('head_doctor', { version: 1, permissions: [], reason: 'own type' }, head)).status).toBe(403);
+    expect(await putType('nurse', { version: 1, permissions: ['user.create'], reason: 'admin-only' }, head)).toMatchObject({
+      status: 403,
+      body: { message: 'only an Admin gives: user.create' },
+    });
+  });
+
+  it('409 last_admin when no active Admin would keep every user.* permission', async () => {
+    const res = await putType('admin', { version: 1, permissions: ['user.view'], reason: 'strip admins' });
+    expect(res).toMatchObject({ status: 409, body: { error: 'last_admin' } });
+  });
+});
