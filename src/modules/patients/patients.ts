@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { nextCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -256,4 +257,42 @@ export async function registerEmergency(db: Queryable, input: EmergencyPatient, 
     by,
     now,
   );
+}
+
+/** #23. null clears mobile, email or address. dob and ageYears replace each other. */
+export interface PatientChange {
+  version: number;
+  name?: string;
+  sex?: Sex;
+  dob?: string;
+  ageYears?: number;
+  mobile?: string | null;
+  email?: string | null;
+  address?: Address | null;
+  /** Only false: an unknown emergency patient has been identified (give their name in the same edit). */
+  unknown?: false;
+  reason?: string;
+}
+
+const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+
+/** #23: edits the patient's details; the old version is kept (#24). A merged patient can't be edited. */
+export async function updatePatient(db: Queryable, id: string, change: PatientChange, by: string, now = new Date()): Promise<Patient> {
+  await getPatient(db, id, now);
+  const { rows } = await db.query('SELECT merged_into FROM patients WHERE id = $1', [id]);
+  if (rows[0]?.merged_into != null) throw new AppError(409, 'merged', 'this patient was merged into another; edit that one');
+  if (change.unknown === false && change.name === undefined) throw invalid('give the name of the identified patient');
+
+  const set: Record<string, unknown> = {};
+  if (change.name !== undefined) Object.assign(set, { name: change.name, name_search: change.name.toLowerCase() });
+  if (change.sex !== undefined) set.sex = change.sex;
+  if (change.dob !== undefined) Object.assign(set, { dob: change.dob, age_years: null, age_recorded_on: null });
+  if (change.ageYears !== undefined) Object.assign(set, { dob: null, age_years: change.ageYears, age_recorded_on: indiaDate(now) });
+  if (change.mobile !== undefined) set.mobile = change.mobile;
+  if (change.email !== undefined) set.email = change.email;
+  if (change.address !== undefined) set.address = change.address === null ? null : JSON.stringify(change.address);
+  if (change.unknown === false) set.unknown = false;
+
+  await updateRecord(db, 'patients', { id, version: change.version, by, set, reason: change.reason });
+  return getPatient(db, id, now);
 }

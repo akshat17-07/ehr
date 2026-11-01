@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
@@ -6,7 +6,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { indiaDate } from '../../time/india.js';
-import { getPatient, registerEmergency, registerPatient, searchPatients, SEXES } from './patients.js';
+import { getPatient, registerEmergency, registerPatient, searchPatients, SEXES, updatePatient } from './patients.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -49,6 +49,25 @@ const newPatient = z
   .strict()
   .refine((p) => (p.dob === undefined) !== (p.ageYears === undefined), { message: 'give dob or ageYears (one of them)', path: ['dob'] });
 
+const patientChange = z
+  .object({
+    version: z.number().int().min(1),
+    name: name.optional(),
+    sex: z.enum(SEXES).optional(),
+    dob: pastDate.optional(),
+    ageYears: z.number().int().min(0).max(130).optional(),
+    mobile: mobile.nullable().optional(),
+    email: z.email().max(254).nullable().optional(),
+    address: address.nullable().optional(),
+    unknown: z.literal(false).optional(),
+    reason: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict()
+  .refine((p) => p.dob === undefined || p.ageYears === undefined, { message: 'give dob or ageYears, not both', path: ['dob'] });
+
+/** A JSON body, or undefined (then the schema answers 422). */
+const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
+
 const emergencyPatient = z
   .object({
     sex: z.enum(SEXES).optional(),
@@ -66,14 +85,14 @@ export const patientsRoutes = new Hono<AuthEnv>()
   })
   // #20
   .post('/', requirePermission('patient.register'), async (c) => {
-    const input = newPatient.parse(await c.req.json());
+    const input = newPatient.parse(await bodyOf(c));
     const patient = await registerPatient(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json(patient, 201);
   })
   // #21
   .post('/emergency', requirePermission('patient.register'), async (c) => {
-    const input = emergencyPatient.parse(await c.req.json());
+    const input = emergencyPatient.parse(await bodyOf(c));
     const patient = await registerEmergency(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json(patient, 201);
@@ -82,5 +101,12 @@ export const patientsRoutes = new Hono<AuthEnv>()
   .get('/:id', requirePermission('patient.view'), async (c) => {
     const patient = await getPatient(await dbOf(c), c.req.param('id'));
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json(patient);
+  })
+  // #23
+  .patch('/:id', requirePermission('patient.update'), async (c) => {
+    const change = patientChange.parse(await bodyOf(c));
+    const patient = await updatePatient(await dbOf(c), c.req.param('id'), change, userOf(c).sub);
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id, reason: change.reason });
     return c.json(patient);
   });

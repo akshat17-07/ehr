@@ -20,6 +20,8 @@ const search = async (q: string, who = reception) => {
   return { status: res.status, body: (await res.json()) as { items: Summary[]; nextCursor?: string } };
 };
 const uhids = async (q: string) => (await search(q)).body.items.map((p) => p.uhid);
+const patch = (id: string, body: unknown, who = reception) =>
+  app.request(`/staff/patients/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
 const register = (body: unknown, who = reception) =>
   app.request('/staff/patients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
 
@@ -142,5 +144,46 @@ describe('GET /staff/patients/{id}', () => {
       expect((await app.request(`/staff/patients/${id}`, {}, reception)).status).toBe(404);
     }
     expect((await app.request(`/staff/patients/${ramesh}`, {}, asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});
+
+describe('PATCH /staff/patients/{id}', () => {
+  const kavita = '9a710000-0000-4000-8000-000000000004';
+
+  it('edits details, keeps the old version, and switches between dob and age', async () => {
+    const res = await patch(kavita, { version: 1, name: 'Kavita Patel Jain', mobile: '9000000044', email: 'kavita@example.in', reason: 'married' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ version: 2, name: 'Kavita Patel Jain', mobile: '9000000044', email: 'kavita@example.in' });
+    expect(await uhids('kavita patel j')).toEqual(['U25000004']);
+
+    const aged = (await (await patch(kavita, { version: 2, ageYears: 31, email: null })).json()) as Record<string, unknown>;
+    expect(aged).toMatchObject({ version: 3, ageYears: 31 });
+    expect(aged.dob).toBeUndefined();
+    expect(aged.email).toBeUndefined();
+    const old = await db.query('SELECT version, reason FROM patients_versions WHERE record_id = $1 ORDER BY version', [kavita]);
+    expect(old.rows).toEqual([{ version: 1, reason: 'married' }, { version: 2, reason: null }]);
+  });
+
+  it('409 for a stale version or a merged patient', async () => {
+    expect((await patch(kavita, { version: 1, sex: 'F' })).status).toBe(409);
+    const sita = '9a710000-0000-4000-8000-000000000002'; // merged in the search tests above
+    expect((await patch(sita, { version: 1, sex: 'F' })).status).toBe(409);
+  });
+
+  it('marks an unknown patient identified, with their name', async () => {
+    const unknown = (await (await register({ name: 'placeholder', sex: 'M', ageYears: 1 })).json()) as { id: string };
+    await db.query("UPDATE patients SET unknown = true WHERE id = $1", [unknown.id]);
+    expect((await patch(unknown.id, { version: 1, unknown: false })).status).toBe(422);
+    const res = await patch(unknown.id, { version: 1, unknown: false, name: 'Suresh Ahirwar', ageYears: 52 });
+    expect(await res.json()).toMatchObject({ unknown: false, name: 'Suresh Ahirwar', ageYears: 52 });
+  });
+
+  it('422 for bad input; 404 for no such patient; 403 without patient.update', async () => {
+    for (const body of [{ name: 'No Version' }, { version: 3, unknown: true }, { version: 3, dob: '2000-01-01', ageYears: 3 }, { version: 3, uhid: 'U1' }]) {
+      expect((await patch(kavita, body)).status, JSON.stringify(body)).toBe(422);
+    }
+    expect((await app.request(`/staff/patients/${kavita}`, { method: 'PATCH', body: 'not json' }, reception)).status).toBe(422);
+    expect((await patch('9a710000-0000-4000-8000-000000000999', { version: 1, sex: 'M' })).status).toBe(404);
+    expect((await patch(kavita, { version: 3, sex: 'F' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
