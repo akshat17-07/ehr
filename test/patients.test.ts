@@ -124,3 +124,23 @@ describe('POST /staff/patients/emergency', () => {
     expect((await emergency({ description: 'Elderly woman' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/patients/{id}', () => {
+  const ramesh = '9a710000-0000-4000-8000-000000000001';
+
+  it('gives the whole patient, allergies included, and logs the view against the patient', async () => {
+    const res = await app.request(`/staff/patients/${ramesh}`, {}, asStaff('dev-nurse', ['nurse']));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: ramesh, uhid: 'U24000001', name: 'Ramesh Kumar Sharma', sex: 'M', dob: '1968-05-14',
+      mobile: '9826000001', allergies: ['Penicillin'], labels: [], unknown: false, inactive: false, version: 1 });
+    const audit = await db.query("SELECT action FROM audit_events WHERE patient_id = $1 AND user_id = 'dev-nurse'", [ramesh]);
+    expect(audit.rows).toEqual([{ action: 'view' }]);
+  });
+
+  it('404 for no such patient; 403 without patient.view', async () => {
+    for (const id of ['9a710000-0000-4000-8000-000000000999', 'not-a-uuid']) {
+      expect((await app.request(`/staff/patients/${id}`, {}, reception)).status).toBe(404);
+    }
+    expect((await app.request(`/staff/patients/${ramesh}`, {}, asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});
