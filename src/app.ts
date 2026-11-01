@@ -20,7 +20,7 @@ import { healthRoutes } from './modules/health/health.routes.js';
 import { meRoutes } from './modules/me/me.routes.js';
 import { myPermissionsRoutes } from './modules/me/permissions.routes.js';
 import { myAlertsRoutes } from './modules/alerts/alerts.routes.js';
-import { myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
+import { accessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
@@ -51,6 +51,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/me/payslips', myPayslipsRoutes)
     .route('/patients', patientsRoutes)
     .route('/patient-merges', patientMergesRoutes)
+    .route('/access-requests', accessRequestsRoutes)
     .route('/', referenceRoutes);
   const admin = new Hono<AuthEnv>()
     .use(requireUser('staff', MANAGEMENT_GROUPS))

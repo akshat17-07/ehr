@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { AppError } from '../../middleware/errors.js';
+import { getPatient } from '../patients/patients.js';
 
 // Access requests (api-list.md AccessRequest): staff ask to open an inactive patient's record (#29), and a
 // Head Doctor or Admin approves for some hours or rejects (#175, #176). The row's status is pending, approved or
@@ -63,4 +66,34 @@ export function listMyAccessRequests(
   }
   const spec = { select: 'SELECT * FROM access_requests', where, params, orderBy: ['created_at', 'id'] };
   return pageRows(db, spec, query, (r) => toAccessRequest(r, now));
+}
+
+/**
+ * #29: asks to open a patient's record. 409 if the caller already has a pending request for this patient, or an
+ * approved one that is still valid.
+ */
+export async function createAccessRequest(
+  db: Queryable,
+  input: { patientId: string; reason: string },
+  by: string,
+  now = new Date(),
+): Promise<AccessRequest> {
+  await getPatient(db, input.patientId).catch(() => {
+    throw new AppError(422, 'invalid_input', 'patientId: no such patient');
+  });
+  const open = await db.query(
+    `SELECT status FROM access_requests WHERE requested_by = $1 AND patient_id = $2
+       AND (status = 'pending' OR (status = 'approved' AND valid_until > $3))`,
+    [by, input.patientId, now],
+  );
+  if (open.rows[0]) {
+    const pending = open.rows[0].status === 'pending';
+    throw new AppError(409, pending ? 'already_pending' : 'already_approved', pending ? 'you already asked; it is waiting for approval' : 'you already have access');
+  }
+  const { rows } = await db.query(
+    `INSERT INTO access_requests (id, status, created_by, updated_by, patient_id, requested_by, reason)
+     VALUES ($1, 'pending', $2, $2, $3, $2, $4) RETURNING *`,
+    [randomUUID(), by, input.patientId, input.reason],
+  );
+  return toAccessRequest(rows[0] as Record<string, unknown>, now);
 }

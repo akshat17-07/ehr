@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
+import { seedDev } from '../src/db/seed-dev.js';
 import type { AccessRequest } from '../src/modules/access/access-requests.js';
 
 const db = await openLocalDb();
+await seedDev(db);
 const app = createApp({ db: async () => db });
 const hours = (n: number) => new Date(Date.now() + n * 60 * 60 * 1000);
 
@@ -54,5 +56,37 @@ describe('GET /staff/me/access-requests', () => {
     const first = await list('?limit=3');
     const second = await list(`?limit=3&cursor=${first.body.nextCursor}`);
     expect([...first.body.items, ...second.body.items].map((r) => r.patientId)).toEqual(['p-4', 'p-3', 'p-2', 'p-1']);
+  });
+});
+
+describe('POST /staff/access-requests', () => {
+  const sita = '9a710000-0000-4000-8000-000000000002';
+  const ask = (body: unknown, sub = 'dev-nurse', group = 'nurse') => {
+    const claims = { sub, email: `${sub}@x.in`, 'cognito:groups': `[${group}]` };
+    const env = { event: { requestContext: { authorizer: { jwt: { claims } } } } } as never;
+    return app.request('/staff/access-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env);
+  };
+
+  it('asks for access, pending, logged against the patient', async () => {
+    const res = await ask({ patientId: sita, reason: 'follow-up after 40 days' });
+    expect(res.status).toBe(201);
+    const request = (await res.json()) as AccessRequest;
+    expect(request).toMatchObject({ patientId: sita, requestedBy: 'dev-nurse', status: 'pending', reason: 'follow-up after 40 days' });
+    const audit = await db.query("SELECT record_type, reason FROM audit_events WHERE patient_id = $1 AND action = 'create'", [sita]);
+    expect(audit.rows).toEqual([{ record_type: 'access_request', reason: 'follow-up after 40 days' }]);
+  });
+
+  it('409 while one is pending or still approved; a new one after it expires', async () => {
+    expect((await ask({ patientId: sita, reason: 'again' })).status).toBe(409);
+    await db.query("UPDATE access_requests SET status = 'approved', valid_until = $1 WHERE requested_by = 'dev-nurse'", [hours(1)]);
+    expect((await ask({ patientId: sita, reason: 'again' })).status).toBe(409);
+    await db.query("UPDATE access_requests SET valid_until = $1 WHERE requested_by = 'dev-nurse'", [hours(-1)]);
+    expect((await ask({ patientId: sita, reason: 'again' })).status).toBe(201);
+  });
+
+  it('422 for no such patient or no reason; 403 without access.request', async () => {
+    expect((await ask({ patientId: '9a710000-0000-4000-8000-000000000999', reason: 'visit' })).status).toBe(422);
+    expect((await ask({ patientId: sita })).status).toBe(422);
+    expect((await ask({ patientId: sita, reason: 'visit' }, 'dev-gp', 'gp')).status).toBe(403);
   });
 });
