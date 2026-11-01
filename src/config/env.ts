@@ -11,6 +11,8 @@ const schema = z.object({
   STAFF_POOL_ID: z.string().optional(),
   PATIENT_POOL_ID: z.string().optional(),
   FILES_BUCKET: z.string().optional(),
+  EXPORTS_BUCKET: z.string().optional(),
+  BACKUP_BUCKET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;
