@@ -6,6 +6,8 @@ import type { StageConfig } from '../config.js';
 
 export interface FilesProps {
   config: StageConfig;
+  /** Website addresses allowed to upload straight to S3 with a signed link. */
+  allowedOrigins: string[];
 }
 
 /**
@@ -23,6 +25,16 @@ export class Files extends Construct {
     super(scope, id);
     const { config } = props;
 
+    const cors: s3.CorsRule[] = [
+      {
+        allowedOrigins: props.allowedOrigins,
+        allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.HEAD],
+        allowedHeaders: ['*'],
+        exposedHeaders: ['ETag'],
+        maxAge: 3600,
+      },
+    ];
+
     this.bucket = new s3.Bucket(this, 'Bucket', {
       versioned: true,
       objectLockEnabled: true,
@@ -32,6 +44,7 @@ export class Files extends Construct {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      cors,
       lifecycleRules: [
         {
           id: 'glacier-instant-retrieval-after-90-days',
