@@ -77,6 +77,20 @@ const DEV_INSURERS = [['Star Health and Allied Insurance', 'STAR'], ['ICICI Lomb
 
 const DEV_TPAS = [['Medi Assist', 'MEDI'], ['MD India Health Insurance TPA', 'MDI'], ['Paramount Health Services', 'PHS'], ['Vidal Health TPA', 'VIDAL']] as const;
 
+/** A few common ICD-10 codes, until the WHO table is loaded. */
+const DEV_ICD10 = [
+  ['A09', 'Infectious gastroenteritis and colitis, unspecified'],
+  ['A90', 'Dengue fever [classical dengue]'],
+  ['B54', 'Unspecified malaria'],
+  ['E11.9', 'Type 2 diabetes mellitus without complications'],
+  ['I10', 'Essential (primary) hypertension'],
+  ['J06.9', 'Acute upper respiratory infection, unspecified'],
+  ['J18.9', 'Pneumonia, unspecified'],
+  ['K35.8', 'Acute appendicitis, other and unspecified'],
+  ['O80', 'Single spontaneous delivery'],
+  ['S72.0', 'Fracture of neck of femur'],
+] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -111,6 +125,7 @@ export function devSeedStatements(): string[] {
     ...DEV_PARTNER_HOSPITALS.map((name, i) => seedInsert('partner_hospitals', seedId('9a000000', i + 1), { name })),
     ...DEV_INSURERS.map(([name, code], i) => seedInsert('insurers', seedId('1a000000', i + 1), { name, code, active: true })),
     ...DEV_TPAS.map(([name, code], i) => seedInsert('tpas', seedId('1b000000', i + 1), { name, code, active: true })),
+    ...DEV_ICD10.map(([code, text], i) => seedInsert('codes', seedId('c0de1000', i + 1), { system: 'icd10', code, text })),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

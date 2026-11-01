@@ -4,6 +4,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { listDrugBatches } from '../inventory/batches.js';
+import { searchCodes } from './codes.js';
 import { listDepartments } from './departments.js';
 import { DRUG_SCHEDULES, searchDrugs } from './drugs.js';
 import { getHospital } from './hospital.js';
@@ -11,6 +12,11 @@ import { listInsurers, listPartnerHospitals, listTpas } from './payers.js';
 import { listTariffs, rateBoardRows } from './tariffs.js';
 
 // Reference data every staff member reads (api-list.md 7.1 "Reference data").
+
+const codeQuery = z.object({
+  q: z.string().trim().min(2).max(100),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+});
 
 const boolText = z
   .enum(['true', 'false'])
@@ -64,4 +70,6 @@ export const referenceRoutes = new Hono<AuthEnv>()
   // #15
   .get('/insurers', async (c) => c.json(await listInsurers(await dbOf(c))))
   // #16
-  .get('/tpas', async (c) => c.json(await listTpas(await dbOf(c))));
+  .get('/tpas', async (c) => c.json(await listTpas(await dbOf(c))))
+  // #17
+  .get('/codes/icd10', async (c) => c.json(await searchCodes(await dbOf(c), 'icd10', codeQuery.parse(c.req.query()))));

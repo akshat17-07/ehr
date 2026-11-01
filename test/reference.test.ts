@@ -204,3 +204,24 @@ describe('GET /staff/tpas', () => {
     expect(list.find((p) => p.name === 'MD India Health Insurance TPA')).toMatchObject({ code: expect.any(String), active: false });
   });
 });
+
+describe('GET /staff/codes/icd10', () => {
+  const codes = async (query: string) => ((await get(`/codes/icd10${query}`)).body as { code: string; text: string }[]).map((c) => c.code);
+
+  it('finds codes by code (dots ignored) first, then by text', async () => {
+    expect(await codes('?q=e11')).toEqual(['E11.9']);
+    expect(await codes('?q=E119')).toEqual(['E11.9']);
+    expect(await codes('?q=j1')).toEqual(['J18.9']);
+    expect(await codes('?q=unspecified')).toEqual(['A09', 'B54', 'J06.9', 'J18.9', 'K35.8']);
+    expect((await get('/codes/icd10?q=I10')).body).toEqual([{ code: 'I10', text: 'Essential (primary) hypertension' }]);
+  });
+
+  it('limits the count; 422 without a 2-character q', async () => {
+    expect(await codes('?q=unspecified&limit=2')).toHaveLength(2);
+    for (const q of ['', '?q=e', '?q=e11&limit=99']) expect((await get(`/codes/icd10${q}`)).status).toBe(422);
+  });
+
+  it('does not mix in LOINC codes', async () => {
+    expect(await codes('?q=heart')).toEqual([]);
+  });
+});

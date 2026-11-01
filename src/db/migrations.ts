@@ -5,6 +5,7 @@
 // Log tables use appendOnlyTable() instead (read + add only). test/table.test.ts checks every migration follows these rules.
 import { seedBundles } from '../permissions/bundles.js';
 import { seedTypePermissions } from '../permissions/type-permissions.js';
+import { seedVitalSigns } from '../modules/reference/codes.js';
 import { seedHospital } from '../modules/reference/hospital.js';
 import { appendOnlyTable, createTable } from './table.js';
 
@@ -325,6 +326,15 @@ export const migrations: Migration[] = [
     statements: () => [
       ...createTable('tpas', ['name text NOT NULL', 'code text', 'active boolean NOT NULL DEFAULT true']),
       'CREATE UNIQUE INDEX ASYNC tpas_name ON tpas (name)',
+    ],
+  },
+  {
+    // Code lists (api-list.md Code): system is icd10 or loinc. The LOINC vital signs are built in.
+    id: '0022_codes',
+    statements: () => [
+      ...createTable('codes', ['system text NOT NULL', 'code text NOT NULL', 'text text NOT NULL']),
+      'CREATE UNIQUE INDEX ASYNC codes_system_code ON codes (system, code)',
+      ...seedVitalSigns(),
     ],
   },
 ];
