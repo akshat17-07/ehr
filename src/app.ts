@@ -9,6 +9,7 @@ import {
 } from './middleware/auth.js';
 import { getDb } from './db/client.js';
 import type { Queryable } from './db/migrate.js';
+import { signGetUrl, type SignGetUrl } from './files/signed-url.js';
 import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
 import { healthRoutes } from './modules/health/health.routes.js';
@@ -28,9 +29,11 @@ import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 export interface AppDeps {
   /** The database (tests pass an in-memory one). */
   db?: () => Promise<Queryable>;
+  /** Signed S3 links (tests pass a fake). */
+  signUrl?: SignGetUrl;
 }
 
-export function createApp({ db = getDb }: AppDeps = {}) {
+export function createApp({ db = getDb, signUrl = signGetUrl }: AppDeps = {}) {
   const staff = new Hono<AuthEnv>()
     .use(requireUser('staff', WORKFORCE_GROUPS))
     .route('/me', meRoutes)
@@ -47,6 +50,7 @@ export function createApp({ db = getDb }: AppDeps = {}) {
   const audited = new Hono<AuthEnv>()
     .use(async (c, next) => {
       c.set('db', db);
+      c.set('signGetUrl', signUrl);
       await next();
     })
     .use(auditRequests(db))

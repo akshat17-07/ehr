@@ -2,8 +2,9 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, userOf } from '../../middleware/context.js';
-import { listMyPayslips } from './payslips.js';
+import { requireEnv } from '../../config/env.js';
+import { dbOf, signerOf, userOf } from '../../middleware/context.js';
+import { listMyPayslips, myPayslipDownload } from './payslips.js';
 
 // /staff/me/payslips: the caller's own payslips only.
 
@@ -12,4 +13,7 @@ const listQuery = pageQuery.extend({ year: z.coerce.number().int().min(2000).max
 export const myPayslipsRoutes = new Hono<AuthEnv>().get('/', async (c) => {
   const query = listQuery.parse(c.req.query());
   return c.json(await listMyPayslips(await dbOf(c), userOf(c).sub, query));
+}).get('/:id/download-url', async (c) => {
+  const db = await dbOf(c);
+  return c.json(await myPayslipDownload(db, signerOf(c), requireEnv('FILES_BUCKET'), userOf(c).sub, c.req.param('id')));
 });

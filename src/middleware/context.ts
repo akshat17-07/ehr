@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { Queryable } from '../db/migrate.js';
+import { signGetUrl, type SignGetUrl } from '../files/signed-url.js';
 import type { AuthEnv, CurrentUser } from './auth.js';
 import { AppError } from './errors.js';
 
@@ -9,6 +10,10 @@ export async function dbOf(c: Context<AuthEnv>): Promise<Queryable> {
   const db = c.get('db');
   if (!db) throw new Error('No database on the request (createApp sets it)');
   return db();
+}
+
+export function signerOf(c: Context<AuthEnv>): SignGetUrl {
+  return c.get('signGetUrl') ?? signGetUrl;
 }
 
 export function userOf(c: Context<AuthEnv>): CurrentUser {

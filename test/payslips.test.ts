@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
+import { env } from '../src/config/env.js';
 import { openLocalDb } from '../src/db/local.js';
 import type { Payslip } from '../src/modules/payroll/payslips.js';
 
 const db = await openLocalDb();
-const app = createApp({ db: async () => db });
+const signUrl = vi.fn(async (bucket: string, key: string, seconds: number) => `https://s3.test/${bucket}/${key}?ttl=${seconds}`);
+const app = createApp({ db: async () => db, signUrl });
+env.FILES_BUCKET = 'files-test';
+
+async function download(id: string, sub = 'nurse-1') {
+  const claims = { sub, email: `${sub}@x.in`, 'cognito:groups': '[nurse]' };
+  const ctx = { event: { requestContext: { authorizer: { jwt: { claims } } } } } as never;
+  const res = await app.request(`/staff/me/payslips/${id}/download-url`, {}, ctx);
+  return { status: res.status, body: (await res.json()) as { url: string; expiresAt: string; error?: string } };
+}
 
 async function list(query = '', sub = 'nurse-1') {
   const claims = { sub, email: `${sub}@x.in`, 'cognito:groups': '[nurse]' };
-  const env = { event: { requestContext: { authorizer: { jwt: { claims } } } } } as never;
-  const res = await app.request(`/staff/me/payslips${query}`, {}, env);
+  const ctx = { event: { requestContext: { authorizer: { jwt: { claims } } } } } as never;
+  const res = await app.request(`/staff/me/payslips${query}`, {}, ctx);
   return { status: res.status, body: (await res.json()) as { items: Payslip[]; nextCursor?: string } };
 }
 
@@ -69,5 +79,28 @@ describe('GET /staff/me/payslips', () => {
 
   it('is empty for staff with no employee record', async () => {
     expect((await list('', 'gp-less')).body.items).toEqual([]);
+  });
+});
+
+describe('GET /staff/me/payslips/{id}/download-url', () => {
+  it('gives a 10-minute link to the own payslip PDF', async () => {
+    const [latest, older] = (await list()).body.items;
+    await db.query("UPDATE payslips SET pdf_key = 'payslips/2026-02/nurse-1.pdf' WHERE id = $1", [latest?.id]);
+
+    const { status, body } = await download(String(latest?.id));
+    expect(status).toBe(200);
+    expect(body.url).toBe('https://s3.test/files-test/payslips/2026-02/nurse-1.pdf?ttl=600');
+    expect(new Date(body.expiresAt).getTime() - Date.now()).toBeGreaterThan(9 * 60 * 1000);
+
+    expect(await download(String(older?.id))).toMatchObject({ status: 409, body: { error: 'not_ready' } });
+  });
+
+  it('404 for someone else\u2019s payslip, a draft run, or a bad id', async () => {
+    const { rows } = await db.query(`SELECT p.id, r.status, e.user_id FROM payslips p
+      JOIN employees e ON e.id = p.employee_id JOIN payroll_runs r ON r.id = p.run_id`);
+    const theirs = rows.find((r) => r.user_id === 'doc-1' && r.status === 'paid');
+    const draft = rows.find((r) => r.user_id === 'nurse-1' && r.status === 'draft');
+    await db.query("UPDATE payslips SET pdf_key = 'x.pdf' WHERE id IN ($1, $2)", [theirs?.id, draft?.id]);
+    for (const id of [theirs?.id, draft?.id, 'nope']) expect((await download(String(id))).status).toBe(404);
   });
 });
