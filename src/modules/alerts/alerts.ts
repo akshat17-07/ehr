@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
+import { AppError } from '../../middleware/errors.js';
 
 // In-app alerts for one staff member (api-list.md Alert): e.g. a break-glass on a patient, an expiring licence.
 // Only in the app: no email or SMS. Low stock is never an alert (reorder is worked out when asked, #287).
@@ -47,6 +49,28 @@ export async function createAlert(db: Queryable, alert: NewAlert): Promise<Alert
     [randomUUID(), alert.by, alert.userId, alert.kind, alert.title, alert.body, alert.link ?? null],
   );
   return toAlert(rows[0] as Record<string, unknown>);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function ownAlert(db: Queryable, userId: string, id: string): Promise<Record<string, unknown>> {
+  // Someone else's alert reads as not found, so ids can't be probed.
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM alerts WHERE id = $1 AND user_id = $2', [id, userId]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return rows[0];
+}
+
+/** Marks one of the user's alerts read (#4). Already read: returned as it is, with its first read time. */
+export async function markAlertRead(db: Queryable, userId: string, id: string): Promise<Alert> {
+  const row = await ownAlert(db, userId, id);
+  if (row.read_at != null) return toAlert(row);
+  try {
+    return toAlert(await updateRecord(db, 'alerts', { id, version: Number(row.version), by: userId, set: { read_at: new Date() } }));
+  } catch (error) {
+    // Opened in two tabs at once: the other one marked it first.
+    if (error instanceof AppError && error.status === 409) return toAlert(await ownAlert(db, userId, id));
+    throw error;
+  }
 }
 
 /** A user's alerts, newest first; `unread` keeps only the ones not yet read. */
