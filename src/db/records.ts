@@ -86,6 +86,9 @@ const reviveTimes = (key: string, value: unknown) =>
   key.endsWith('_at') && typeof value === 'string' ? new Date(value) : value;
 
 /** Every version of a record, oldest first, the current one last (api-list.md Versions<T>). 404 if there is no such record. */
+/** A date column of a listVersions row as YYYY-MM-DD (old rows hold it as JSON text, the current row as a Date). */
+export const dateText = (v: unknown) => (v == null ? undefined : (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10));
+
 export async function listVersions<T>(
   db: Queryable,
   table: string,

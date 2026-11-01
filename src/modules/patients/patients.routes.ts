@@ -6,7 +6,15 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { indiaDate } from '../../time/india.js';
-import { getPatient, registerEmergency, registerPatient, searchPatients, SEXES, updatePatient } from './patients.js';
+import {
+  getPatient,
+  listPatientVersions,
+  registerEmergency,
+  registerPatient,
+  searchPatients,
+  SEXES,
+  updatePatient,
+} from './patients.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -109,4 +117,11 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const patient = await updatePatient(await dbOf(c), c.req.param('id'), change, userOf(c).sub);
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id, reason: change.reason });
     return c.json(patient);
+  })
+  // #24
+  .get('/:id/versions', requirePermission('patient.view'), async (c) => {
+    const id = c.req.param('id');
+    const versions = await listPatientVersions(await dbOf(c), id);
+    auditDetails(c, { patientId: id, recordType: 'patient', recordId: id });
+    return c.json(versions);
   });

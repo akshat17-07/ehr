@@ -187,3 +187,23 @@ describe('PATCH /staff/patients/{id}', () => {
     expect((await patch(kavita, { version: 3, sex: 'F' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/patients/{id}/versions', () => {
+  it('lists every version with who, when and why, dates unchanged', async () => {
+    const rahul = '9a710000-0000-4000-8000-000000000005';
+    await patch(rahul, { version: 1, mobile: '8800000055', reason: 'new number' });
+    const res = await app.request(`/staff/patients/${rahul}/versions`, {}, asStaff('dev-nurse', ['nurse']));
+    expect(res.status).toBe(200);
+    const versions = (await res.json()) as { version: number; by: string; reason?: string; data: { dob: string; mobile: string } }[];
+    expect(versions.map((v) => [v.version, v.by, v.reason, v.data.mobile, v.data.dob])).toEqual([
+      [1, 'system', undefined, '8800000005', '2016-08-09'],
+      [2, 'dev-reception', 'new number', '8800000055', '2016-08-09'],
+    ]);
+  });
+
+  it('404 for no such patient', async () => {
+    for (const id of ['9a710000-0000-4000-8000-000000000999', 'x']) {
+      expect((await app.request(`/staff/patients/${id}/versions`, {}, reception)).status).toBe(404);
+    }
+  });
+});

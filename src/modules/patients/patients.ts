@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { nextCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
-import { updateRecord } from '../../db/records.js';
+import { dateText, listVersions, updateRecord, type Version } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -295,4 +295,12 @@ export async function updatePatient(db: Queryable, id: string, change: PatientCh
 
   await updateRecord(db, 'patients', { id, version: change.version, by, set, reason: change.reason });
   return getPatient(db, id, now);
+}
+
+/** #24: every version of the patient, oldest first, with who changed it, when and why. */
+export async function listPatientVersions(db: Queryable, id: string, now = new Date()): Promise<Version<Patient>[]> {
+  if (!z.uuid().safeParse(id).success) throw notFound();
+  return listVersions(db, 'patients', id, (row) =>
+    toPatient({ ...row, dob_text: dateText(row.dob), age_recorded_on_text: dateText(row.age_recorded_on) }, now),
+  );
 }

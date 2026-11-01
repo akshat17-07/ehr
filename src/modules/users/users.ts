@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
-import { listVersions, updateRecord, type Version } from '../../db/records.js';
+import { dateText, listVersions, updateRecord, type Version } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { isUsernameTaken, type StaffAccounts } from '../../identity/staff-accounts.js';
 import { assertAdminRemains } from '../permissions/admin-rules.js';
@@ -304,7 +304,6 @@ export const demoteHeadDoctor = (db: Queryable, accounts: StaffAccounts, id: str
 
 // A date read with SELECT * comes back as a Date at midnight UTC (Lambda and PGlite run in UTC), and as its ISO text
 // once kept in the history table; both start with YYYY-MM-DD.
-const dateText = (v: unknown) => (v == null ? undefined : (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10));
 
 /** #163: every version of a user, oldest first. Bundles are kept with the permissions (#157), so they are not in here. */
 export async function listUserVersions(db: Queryable, id: string): Promise<Version<Omit<User, 'bundles'>>[]> {
