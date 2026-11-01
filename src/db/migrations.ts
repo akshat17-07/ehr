@@ -259,4 +259,27 @@ export const migrations: Migration[] = [
       seedHospital(),
     ],
   },
+  {
+    // The price list (api-list.md Tariff). Money in paise; gst_rate in percent; setting: opd, ipd or both.
+    // list_version counts the price lists made with POST /admin/tariffs (#192); valid_to is set when a newer list starts.
+    id: '0017_tariffs',
+    statements: () => [
+      ...createTable('tariffs', [
+        'list_version integer NOT NULL',
+        'code text NOT NULL',
+        'name_en text NOT NULL',
+        'name_hi text',
+        'department_id uuid',
+        'price_paise bigint NOT NULL',
+        'gst_rate integer NOT NULL',
+        'sac_code text',
+        'setting text NOT NULL',
+        'valid_from date NOT NULL',
+        'valid_to date',
+      ]),
+      // One price per code per list; the lists in force on a date are found by valid_from.
+      'CREATE UNIQUE INDEX ASYNC tariffs_list_code ON tariffs (list_version, code)',
+      'CREATE INDEX ASYNC tariffs_valid_from ON tariffs (valid_from)',
+    ],
+  },
 ];

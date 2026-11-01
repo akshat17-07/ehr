@@ -48,6 +48,20 @@ export const DEV_DRUGS = [
   ['Morphine', '10 mg/ml', 'injection', 'NDPS', 3500],
 ] as const;
 
+/** code, English name, Hindi name, department code, price in rupees, setting. Services in a hospital are GST-exempt (SAC 9993). */
+export const DEV_TARIFFS = [
+  ['OPD-GEN', 'OPD consultation', 'ओपीडी परामर्श', 'MED', 300, 'opd'],
+  ['OPD-SPL', 'Specialist consultation', 'विशेषज्ञ परामर्श', 'SUR', 500, 'opd'],
+  ['ER-REG', 'Emergency registration', 'आपातकालीन पंजीकरण', 'EMR', 200, 'both'],
+  ['LAB-CBC', 'Complete blood count', 'संपूर्ण रक्त गणना', 'LAB', 350, 'both'],
+  ['LAB-RBS', 'Random blood sugar', 'रैंडम ब्लड शुगर', 'LAB', 100, 'both'],
+  ['RAD-XRC', 'X-ray chest PA view', 'छाती का एक्स-रे', 'RAD', 450, 'both'],
+  ['RAD-USG', 'Ultrasound abdomen', 'पेट का अल्ट्रासाउंड', 'RAD', 1200, 'both'],
+  ['IPD-GEN', 'General ward bed (per day)', 'सामान्य वार्ड बिस्तर (प्रति दिन)', null, 1500, 'ipd'],
+  ['IPD-PVT', 'Private room (per day)', 'निजी कमरा (प्रति दिन)', null, 3500, 'ipd'],
+  ['IPD-NUR', 'Nursing charges (per day)', 'नर्सिंग शुल्क (प्रति दिन)', null, 500, 'ipd'],
+] as const;
+
 const DEV_HOSPITAL_ADDRESS = { line1: '12 Hoshangabad Road', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462011' };
 
 export function devSeedStatements(): string[] {
@@ -66,6 +80,12 @@ export function devSeedStatements(): string[] {
        address = '${JSON.stringify(DEV_HOSPITAL_ADDRESS)}', mp_licence_no = 'MP/BPL/2024/0101', licence_valid_till = '2029-03-31',
        gstin = '23AAAAA0000A1Z5', pcpndt_reg_no = 'PCPNDT/BPL/0042', mtp_reg_no = 'MTP/BPL/0017'
      WHERE id = '${HOSPITAL_ID}' AND name = ''`,
+    ...DEV_TARIFFS.map(([code, nameEn, nameHi, dept, rupees, setting], i) =>
+      seedInsert('tariffs', seedId('7a000000', i + 1), {
+        list_version: '1', code, name_en: nameEn, name_hi: nameHi, ...(dept && { department_id: departmentId(dept) }),
+        price_paise: String(rupees * 100), gst_rate: '0', sac_code: '999311', setting, valid_from: '2024-04-01',
+      }),
+    ),
     ...DEV_USERS.flatMap((u, i) => {
       const user = seedInsert('users', seedId('a0000000', i + 1), {
         cognito_sub: u.sub,

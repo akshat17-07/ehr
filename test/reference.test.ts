@@ -55,3 +55,41 @@ describe('GET /staff/departments', () => {
     expect((await get('/departments?active=yes')).status).toBe(422);
   });
 });
+
+describe('GET /staff/tariffs', () => {
+  type T = { code: string; nameEn: string; pricePaise: number; setting: string; validFrom: string; validTo?: string };
+  const codes = async (query = '') => ((await get(`/tariffs${query}`)).body as T[]).map((t) => t.code);
+
+  it('lists the prices in force today, A to Z, with paise, GST and dates', async () => {
+    const all = (await get('/tariffs')).body as T[];
+    expect(all).toHaveLength(10);
+    expect(all.map((t) => t.nameEn)).toEqual([...all.map((t) => t.nameEn)].sort());
+    expect(all.find((t) => t.code === 'OPD-GEN')).toMatchObject({ pricePaise: 30000, gstRate: 0, setting: 'opd', validFrom: '2024-04-01' });
+    expect(all.find((t) => t.code === 'OPD-GEN')).not.toHaveProperty('validTo');
+  });
+
+  it('filters by setting (with "both"), department and code or name', async () => {
+    const opd = await codes('?setting=opd');
+    expect(opd).toContain('OPD-GEN');
+    expect(opd).toContain('LAB-CBC');
+    expect(opd).not.toContain('IPD-GEN');
+    const lab = String((await db.query("SELECT id FROM departments WHERE code = 'LAB'")).rows[0]?.id);
+    expect((await codes(`?departmentId=${lab}`)).sort()).toEqual(['LAB-CBC', 'LAB-RBS']);
+    expect(await codes('?q=x-ray')).toEqual(['RAD-XRC']);
+    expect(await codes('?q=ipd-p')).toEqual(['IPD-PVT']);
+    expect(await codes('?q=' + encodeURIComponent('अल्ट्रा'))).toEqual(['RAD-USG']);
+  });
+
+  it('gives the prices in force on another date', async () => {
+    await db.query("UPDATE tariffs SET valid_to = '2026-03-31' WHERE code = 'LAB-RBS'");
+    await db.query(
+      `INSERT INTO tariffs (id, status, created_by, updated_by, list_version, code, name_en, price_paise, gst_rate, setting, valid_from)
+       VALUES (gen_random_uuid(), 'active', 'x', 'x', 2, 'LAB-RBS', 'Random blood sugar', 12000, 0, 'both', '2026-04-01')`,
+    );
+    const price = async (on: string) => ((await get(`/tariffs?q=lab-rbs&on=${on}`)).body as T[]).map((t) => t.pricePaise);
+    expect(await price('2026-03-31')).toEqual([10000]);
+    expect(await price('2026-04-01')).toEqual([12000]);
+    expect(await price('2024-03-31')).toEqual([]);
+    expect((await get('/tariffs?on=31-03-2026')).status).toBe(422);
+  });
+});
