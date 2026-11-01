@@ -3,7 +3,8 @@
 // no foreign keys or triggers, and indexes are created with `CREATE INDEX ASYNC`.
 // Make record tables with createTable() (db/table.ts): base columns + `GRANT SELECT, INSERT, UPDATE` (never DELETE).
 // Log tables use appendOnlyTable() instead (read + add only). test/table.test.ts checks every migration follows these rules.
-import { appendOnlyTable } from './table.js';
+import { seedTypePermissions } from '../permissions/type-permissions.js';
+import { appendOnlyTable, createTable } from './table.js';
 
 export interface MigrationContext {
   /** IAM role of the API Lambda; it logs in as ehr_app. */
@@ -58,6 +59,15 @@ export const migrations: Migration[] = [
       // "Who viewed this patient" and "what did this user do".
       'CREATE INDEX ASYNC audit_events_patient ON audit_events (patient_id, at)',
       'CREATE INDEX ASYNC audit_events_user ON audit_events (user_id, at)',
+    ],
+  },
+  {
+    // Each staff type's permissions (api-list.md section 4), filled with the built-in lists. permissions is a JSON array.
+    id: '0003_type_permissions',
+    statements: () => [
+      ...createTable('type_permissions', ['type text NOT NULL', 'permissions text NOT NULL']),
+      'CREATE UNIQUE INDEX ASYNC type_permissions_type ON type_permissions (type)',
+      ...seedTypePermissions(),
     ],
   },
 ];
