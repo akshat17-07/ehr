@@ -5,8 +5,10 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
+import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
-import { createEncounter, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, listEncounters } from './encounters.js';
+import { getPatient } from '../patients/patients.js';
+import { createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters } from './encounters.js';
 
 // Encounters (api-list.md #36-#40), mounted at /staff/encounters.
 
@@ -44,4 +46,12 @@ export const encountersRoutes = new Hono<AuthEnv>()
       : await createEncounter(db, visit, by);
     auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
     return c.json(encounter, 201);
+  })
+  // #38: a clinical read, so the inactive-patient rule applies.
+  .get('/:id', requirePermission('encounter.view'), async (c) => {
+    const db = await dbOf(c);
+    const encounter = await getEncounter(db, c.req.param('id'));
+    auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, encounter.patientId));
+    return c.json(await encounterDetail(db, encounter));
   });

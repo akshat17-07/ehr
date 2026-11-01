@@ -113,3 +113,26 @@ export async function createEncounter(db: Queryable, input: Omit<NewEncounter, '
   await checkDoctor(db, input.doctorId, input.departmentId);
   return openEncounter(db, input, by, now);
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function getEncounter(db: Queryable, id: string): Promise<Encounter> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM encounters WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such encounter');
+  return toEncounter(rows[0] as Record<string, unknown>);
+}
+
+/** #38: the encounter with its patient and everything recorded in it. */
+export interface EncounterDetail extends Encounter {
+  patient: PatientSummary;
+  // Filled in as each part is built: vitals #157, notes #161, diagnoses #166, prescriptions #178.
+  vitals: unknown[];
+  notes: unknown[];
+  diagnoses: unknown[];
+  prescriptions: unknown[];
+}
+
+export async function encounterDetail(db: Queryable, encounter: Encounter, now = new Date()): Promise<EncounterDetail> {
+  const patients = await patientSummaries(db, [encounter.patientId], now);
+  return { ...encounter, patient: patients.get(encounter.patientId) as PatientSummary, vitals: [], notes: [], diagnoses: [], prescriptions: [] };
+}

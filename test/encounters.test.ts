@@ -87,3 +87,29 @@ describe('POST /staff/encounters', () => {
     expect((await post({ patientId: kavita, type: 'OPD', departmentId: med, doctorId }, reception)).status).toBe(403);
   });
 });
+
+describe('GET /staff/encounters/{id}', () => {
+  const get = (id: string, who = doctor) => app.request(`/staff/encounters/${id}`, {}, who);
+
+  it('returns the encounter with its patient and its (still empty) parts', async () => {
+    const { rows } = await db.query('SELECT id FROM encounters WHERE appointment_id = $1', [seedId('a9900000', 1)]);
+    const id = String(rows[0]?.id);
+    const res = await get(id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, type: 'OPD', patient: { uhid: 'U24000001' }, vitals: [], notes: [], diagnoses: [], prescriptions: [] });
+  });
+
+  it('403 for an inactive patient without access; 404 for none; 403 without encounter.view', async () => {
+    const { rows } = await db.query(
+      "INSERT INTO encounters (id, status, created_by, updated_by, patient_id, type, department_id, doctor_id, started_at) VALUES ($1, 'closed', 'x', 'x', $2, 'OPD', $3, $4, '2024-01-05T10:00:00Z') RETURNING id",
+      [seedId('e0c00000', 1), seedId('9a710000', 5), med, doctorId],
+    );
+    await db.query("UPDATE patients SET last_activity_at = '2024-01-05T10:00:00Z' WHERE id = $1", [seedId('9a710000', 5)]);
+    const old = String(rows[0]?.id);
+    expect(await (await get(old)).json()).toMatchObject({ error: 'inactive_patient' });
+    expect((await get(old, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(200);
+    expect((await get(seedId('e0c00000', 999))).status).toBe(404);
+    expect((await get('nope')).status).toBe(404);
+    expect((await get(old, reception)).status).toBe(403);
+  });
+});
