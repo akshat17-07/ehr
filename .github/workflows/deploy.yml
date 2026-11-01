@@ -18,9 +18,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
+      - name: API
+        run: npm ci && npm run typecheck && npm test
+      # Infra tests bundle the API, so the API's packages must be installed first.
+      - name: Infra
+        working-directory: infra
+        run: npm ci && npm run typecheck && npm test
 
   deploy:
     needs: test
@@ -36,19 +42,35 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
       - run: npm ci
+      - run: npm ci
+        working-directory: infra
+      # TEMPORARY: prints which identity GitHub presents to AWS (claims only, never the token). Remove once deploy works.
+      - name: Show OIDC claims
+        run: |
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          PAYLOAD=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="$PAYLOAD="; done
+          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, ref}'
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
       # Does nothing if the account is already bootstrapped.
       - run: npx cdk bootstrap
-      - run: npx cdk deploy --require-approval never -c alertEmail="$ALERT_EMAIL" --outputs-file outputs.json
+        working-directory: infra
+      - run: npx cdk deploy ehr-dev --require-approval never -c alertEmail="$ALERT_EMAIL" --outputs-file outputs.json
+        working-directory: infra
         env:
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
       - name: Show addresses
+        working-directory: infra
         run: |
           echo '### Deployed to ap-south-1' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Copy WebsiteBucket, WebsiteDistributionId and FrontendDeployRoleArn into the frontend repo secrets.' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           cat outputs.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
