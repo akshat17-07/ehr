@@ -118,6 +118,7 @@ npm install
 npm test          # unit tests
 npm run typecheck
 npm run dev       # API on http://localhost:3000, database in .data/db (see below)
+npm run seed      # sample users (one per staff type), departments and drugs in .data/db
 
 cd infra
 npm install

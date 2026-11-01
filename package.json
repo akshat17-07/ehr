@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "seed": "tsx src/seed.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm test && npm --prefix infra run check",

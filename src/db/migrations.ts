@@ -112,4 +112,52 @@ export const migrations: Migration[] = [
     id: '0007_user_bundles',
     statements: () => ['ALTER TABLE user_permissions ADD COLUMN bundles text'],
   },
+  {
+    // Hospital departments (api-list.md Department).
+    id: '0008_departments',
+    statements: () => [
+      ...createTable('departments', ['code text NOT NULL', 'name_en text NOT NULL', 'name_hi text NOT NULL', 'active boolean NOT NULL DEFAULT true']),
+      'CREATE UNIQUE INDEX ASYNC departments_code ON departments (code)',
+    ],
+  },
+  {
+    // The drug list (api-list.md Drug). schedule: OTC, H, H1, X or NDPS. Money in paise; gst_rate in percent.
+    id: '0009_drugs',
+    statements: () => [
+      ...createTable('drugs', [
+        'name text NOT NULL',
+        'strength text',
+        'form text',
+        'schedule text NOT NULL',
+        'hsn text',
+        'gst_rate integer',
+        'mrp_paise bigint',
+        'active boolean NOT NULL DEFAULT true',
+      ]),
+      // Search by name as the user types (GET /staff/drugs).
+      'CREATE INDEX ASYNC drugs_name ON drugs (name)',
+    ],
+  },
+  {
+    // Staff and partner accounts (api-list.md User); sign-in is in Cognito, linked by cognito_sub.
+    // department_ids is a JSON array. Bundles are kept in user_permissions (0007).
+    id: '0010_users',
+    statements: () => [
+      ...createTable('users', [
+        'cognito_sub text NOT NULL',
+        'name text NOT NULL',
+        'email text NOT NULL',
+        'mobile text NOT NULL',
+        'type text NOT NULL',
+        'department_ids text NOT NULL',
+        'council_name text',
+        'council_reg_no text',
+        'reg_valid_till date',
+        'pharmacist_reg_no text',
+        'active boolean NOT NULL DEFAULT true',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC users_cognito_sub ON users (cognito_sub)',
+      'CREATE UNIQUE INDEX ASYNC users_email ON users (email)',
+    ],
+  },
 ];
