@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createUser, getUser, listUsers } from './users.js';
+import { createUser, getUser, listUsers, updateUser } from './users.js';
 
 // /admin/users: staff accounts (api-list.md 7.2).
 
@@ -51,6 +51,23 @@ const newUser = z
     }
   });
 
+const clearable = z.string().trim().min(1).max(200).nullable().optional();
+
+const userChange = z
+  .object({
+    version: z.number().int().min(1),
+    name: z.string().trim().min(2).max(100).optional(),
+    mobile: mobile.optional(),
+    departmentIds: z.array(z.uuid()).max(20).optional(),
+    councilName: clearable,
+    councilRegNo: clearable,
+    regValidTill: z.iso.date().nullable().optional(),
+    pharmacistRegNo: clearable,
+    reason: z.string().trim().min(5).max(500).optional(),
+  })
+  .strict()
+  .refine((c) => Object.keys(c).some((k) => !['version', 'reason'].includes(k)), 'nothing to change');
+
 export const usersRoutes = new Hono<AuthEnv>()
   .get('/', requirePermission('user.view'), async (c) => {
     const query = listQuery.parse(c.req.query());
@@ -60,4 +77,8 @@ export const usersRoutes = new Hono<AuthEnv>()
     const input = newUser.parse(await c.req.json().catch(() => undefined));
     return c.json(await createUser(await dbOf(c), accountsOf(c), input, userOf(c).sub), 201);
   })
-  .get('/:id', requirePermission('user.view'), async (c) => c.json(await getUser(await dbOf(c), c.req.param('id'))));
+  .get('/:id', requirePermission('user.view'), async (c) => c.json(await getUser(await dbOf(c), c.req.param('id'))))
+  .patch('/:id', requirePermission('user.update'), async (c) => {
+    const change = userChange.parse(await c.req.json().catch(() => undefined));
+    return c.json(await updateUser(await dbOf(c), c.req.param('id'), change, userOf(c).sub));
+  });

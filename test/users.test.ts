@@ -149,3 +149,39 @@ describe('GET /admin/users/{id}', () => {
     expect((await get(id, asStaff('head-x', ['head_doctor']))).status).toBe(403);
   });
 });
+
+describe('PATCH /admin/users/{id}', () => {
+  const patch = async (id: string, body: unknown, who = asStaff('dev-admin', ['admin'])) => {
+    const res = await app.request(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, who);
+    return { status: res.status, body: (await res.json()) as User & { error?: string; message?: string } };
+  };
+  const idOf = async (sub: string) => String((await db.query('SELECT id FROM users WHERE cognito_sub = $1', [sub])).rows[0]?.id);
+
+  it('changes details with the version check and keeps the old row', async () => {
+    const id = await idOf('dev-nurse');
+    const ped = await departmentId('PED');
+    const res = await patch(id, { version: 1, mobile: '9000000001', departmentIds: [ped], reason: 'moved to paediatrics' });
+    expect(res).toMatchObject({ status: 200, body: { version: 2, mobile: '9000000001', departmentIds: [ped], name: 'Sunita Yadav' } });
+    expect(await patch(id, { version: 1, name: 'Late edit' })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+
+    const { rows } = await db.query('SELECT version, reason FROM users_versions WHERE record_id = $1', [id]);
+    expect(rows).toEqual([{ version: 1, reason: 'moved to paediatrics' }]);
+  });
+
+  it('clears optional details with null, but doctors keep their council details', async () => {
+    const pharmacist = await idOf('dev-medical');
+    expect((await patch(pharmacist, { version: 1, pharmacistRegNo: null })).body).not.toHaveProperty('pharmacistRegNo');
+    const doctor = await idOf('dev-doctor');
+    expect(await patch(doctor, { version: 1, councilRegNo: null })).toMatchObject({ status: 422, body: { message: 'doctors must keep: councilRegNo' } });
+    expect(await patch(doctor, { version: 1, regValidTill: '2032-12-31' })).toMatchObject({ status: 200, body: { regValidTill: '2032-12-31' } });
+  });
+
+  it('422 for email or type changes, an empty change or a bad department; 404 unknown; 403 for Head Doctors', async () => {
+    const id = await idOf('dev-gp');
+    for (const body of [{ version: 1, email: 'new@x.in' }, { version: 1, type: 'admin' }, { version: 1 }, { version: 1, departmentIds: ['00000000-0000-4000-8000-000000000000'] }]) {
+      expect((await patch(id, body)).status).toBe(422);
+    }
+    expect((await patch('00000000-0000-4000-8000-000000000000', { version: 1, name: 'Nobody' })).status).toBe(404);
+    expect((await patch(id, { version: 1, name: 'Dr A Dubey' }, asStaff('dev-head-doctor', ['head_doctor']))).status).toBe(403);
+  });
+});

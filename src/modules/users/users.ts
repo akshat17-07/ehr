@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { isUsernameTaken, type StaffAccounts } from '../../identity/staff-accounts.js';
 import { bundlesNamed } from '../../permissions/bundles.js';
@@ -186,5 +187,47 @@ export async function createUser(db: Queryable, accounts: StaffAccounts, input: 
     if ((error as { code?: string }).code === '23505') throw emailTaken();
     throw error;
   }
+  return getUser(db, id);
+}
+
+export interface UserChange {
+  version: number;
+  name?: string;
+  mobile?: string;
+  departmentIds?: string[];
+  /** null clears it. */
+  councilName?: string | null;
+  councilRegNo?: string | null;
+  regValidTill?: string | null;
+  pharmacistRegNo?: string | null;
+  reason?: string;
+}
+
+const COLUMNS = {
+  name: 'name',
+  mobile: 'mobile',
+  councilName: 'council_name',
+  councilRegNo: 'council_reg_no',
+  regValidTill: 'reg_valid_till',
+  pharmacistRegNo: 'pharmacist_reg_no',
+} as const;
+
+/** #156: edits a user's details (not email or type). The old row goes to users_versions. */
+export async function updateUser(db: Queryable, id: string, change: UserChange, by: string): Promise<User> {
+  const current = await getUser(db, id);
+  const set: Record<string, unknown> = {};
+  for (const [key, column] of Object.entries(COLUMNS) as [keyof typeof COLUMNS, string][]) {
+    if (change[key] !== undefined) set[column] = change[key];
+  }
+  if (change.departmentIds !== undefined) {
+    await checkDepartments(db, change.departmentIds);
+    set.department_ids = JSON.stringify([...new Set(change.departmentIds)]);
+  }
+
+  if (current.type === 'doctor' || current.type === 'head_doctor') {
+    const missing = (['councilName', 'councilRegNo', 'regValidTill'] as const).filter((k) => change[k] === null);
+    if (missing.length > 0) throw invalid(`doctors must keep: ${missing.join(', ')}`);
+  }
+  await updateRecord(db, 'users', { id, version: change.version, by, set, reason: change.reason });
   return getUser(db, id);
 }
