@@ -40,3 +40,18 @@ describe('GET /staff/hospital', () => {
     expect(body).not.toHaveProperty('licenceValidTill');
   });
 });
+
+describe('GET /staff/departments', () => {
+  it('lists departments A to Z with Hindi names, and filters by active', async () => {
+    const all = (await get('/departments')).body as { code: string; nameEn: string; nameHi: string; active: boolean }[];
+    expect(all).toHaveLength(9);
+    expect(all.map((d) => d.nameEn)).toEqual([...all.map((d) => d.nameEn)].sort());
+    expect(all.find((d) => d.code === 'MED')).toMatchObject({ nameHi: expect.any(String), active: true });
+
+    await db.query("UPDATE departments SET active = false WHERE code = 'DEN'");
+    const active = (await get('/departments?active=true')).body as { code: string }[];
+    expect(active.map((d) => d.code)).not.toContain('DEN');
+    expect(((await get('/departments?active=false')).body as { code: string }[]).map((d) => d.code)).toEqual(['DEN']);
+    expect((await get('/departments?active=yes')).status).toBe(422);
+  });
+});
