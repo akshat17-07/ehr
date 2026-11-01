@@ -11,15 +11,18 @@ export interface FilesProps {
 }
 
 /**
- * Patient files bucket: private, encrypted (SSE-S3) and HTTPS only.
+ * Two buckets, both private, encrypted (SSE-S3) and HTTPS only.
  *
  * files:   patient documents (prescription photos, reports). Versioned and protected by Object Lock:
  *            dev:  governance mode, 1 day    (test files can be cleaned up)
  *            prod: compliance mode, 10 years (nobody, including the root user, can delete)
  *          Moves to Glacier Instant Retrieval after 90 days (same speed to open, ~80% cheaper).
+ *
+ * exports: short-lived copies only (record-copy PDFs, FHIR exports). Deleted after 7 days.
  */
 export class Files extends Construct {
   readonly bucket: s3.Bucket;
+  readonly exportsBucket: s3.Bucket;
 
   constructor(scope: Construct, id: string, props: FilesProps) {
     super(scope, id);
@@ -57,12 +60,23 @@ export class Files extends Construct {
       ],
       removalPolicy: RemovalPolicy.RETAIN,
     });
+
+    this.exportsBucket = new s3.Bucket(this, 'ExportsBucket', {
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      cors,
+      lifecycleRules: [{ id: 'delete-after-7-days', expiration: Duration.days(7) }],
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
   }
 
   // Upload and read only. The API never gets permission to delete patient files.
   grantPutAndRead(grantee: iam.IGrantable): void {
     this.bucket.grantPut(grantee);
     this.bucket.grantRead(grantee);
+    this.exportsBucket.grantPut(grantee);
+    this.exportsBucket.grantRead(grantee);
   }
 
 }
