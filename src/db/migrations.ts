@@ -463,4 +463,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC appointments_doctor ON appointments (doctor_id, at)',
     ],
   },
+  {
+    // Encounters (api-list.md Encounter); status open / closed. One per appointment at most.
+    id: '0031_encounters',
+    statements: () => [
+      ...createTable('encounters', [
+        'patient_id uuid NOT NULL',
+        'type text NOT NULL',
+        'department_id uuid NOT NULL',
+        'doctor_id uuid NOT NULL',
+        'appointment_id uuid',
+        'started_at timestamptz NOT NULL',
+        'closed_at timestamptz',
+      ]),
+      'CREATE INDEX ASYNC encounters_patient ON encounters (patient_id, started_at)',
+      'CREATE INDEX ASYNC encounters_started ON encounters (started_at)',
+      'CREATE UNIQUE INDEX ASYNC encounters_appointment ON encounters (appointment_id)',
+    ],
+  },
 ];

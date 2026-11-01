@@ -136,3 +136,33 @@ describe('PATCH /staff/appointments/{id}', () => {
     expect((await patch(seedId('a9900000', 999), { version: 1, note: 'x' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/appointments/{id}/check-in', () => {
+  const ramesh = seedId('9a710000', 1);
+  const rameshToday = seedId('a9900000', 1);
+
+  it("marks today's appointment arrived and opens its OPD encounter", async () => {
+    const before = Date.now();
+    const res = await post(`/${rameshToday}/check-in`, {});
+    expect(res.status).toBe(200);
+    const { appointment, encounter } = (await res.json()) as { appointment: Record<string, unknown>; encounter: Record<string, unknown> };
+    expect(appointment).toMatchObject({ id: rameshToday, status: 'arrived', version: 2 });
+    expect(encounter).toMatchObject({ status: 'open', type: 'OPD', patientId: ramesh, doctorId, departmentId: med, appointmentId: rameshToday });
+    const activity = await db.query('SELECT last_activity_at, version FROM patients WHERE id = $1', [ramesh]);
+    expect((activity.rows[0]?.last_activity_at as Date).getTime()).toBeGreaterThanOrEqual(before - 1000);
+    expect(activity.rows[0]?.version).toBe(1);
+
+    const timeline = await app.request(`/staff/patients/${ramesh}/timeline`, {}, asStaff('dev-doctor', ['doctor']));
+    expect(((await timeline.json()) as { items: { kind: string; title: string }[] }).items).toMatchObject([
+      { kind: 'encounter', title: 'OPD visit: General Medicine' },
+    ]);
+  });
+
+  it('409 for an appointment already in, cancelled, or not for today; 404 for none', async () => {
+    expect((await post(`/${rameshToday}/check-in`, {})).status).toBe(409);
+    const later = await bookOne(slot(7, '10:00'));
+    expect(await (await post(`/${later}/check-in`, {})).json()).toMatchObject({ error: 'not_today' });
+    expect((await post(`/${seedId('a9900000', 999)}/check-in`, {})).status).toBe(404);
+    expect((await db.query('SELECT count(*)::int AS n FROM encounters')).rows[0]).toEqual({ n: 1 });
+  });
+});

@@ -231,6 +231,8 @@ describe('GET /staff/patients/{id}/timeline', () => {
       ('00000000-0000-4000-8000-000000000003', '${ramesh}', '2026-03-05T04:00:00Z', 'Voided', now()),
       ('00000000-0000-4000-8000-000000000004', '9a710000-0000-4000-8000-000000000003', '2026-03-05T04:00:00Z', 'Other patient', null)`);
     await db.query(`INSERT INTO t_bills VALUES ('00000000-0000-4000-8000-000000000005', '${ramesh}', '2026-03-05T04:00:00Z', 'INV-1', null)`);
+    const builtIn = [...TIMELINE_SOURCES];
+    TIMELINE_SOURCES.length = 0;
     TIMELINE_SOURCES.push(
       { kind: 'encounter', table: 't_visits', at: 'at', title: "'OPD: ' || label" },
       { kind: 'bill', table: 't_bills', at: 'at', title: "'Bill ' || label" },
@@ -245,7 +247,7 @@ describe('GET /staff/patients/{id}/timeline', () => {
       expect((await timeline('?from=2026-03-05&to=2026-03-10')).body.items.map((i) => i.title)).toEqual(['Bill INV-1']);
       expect((await timeline('?from=2026-03-11')).body.items.map((i) => i.title)).toEqual(['OPD: Surgery']);
     } finally {
-      TIMELINE_SOURCES.length = 0;
+      TIMELINE_SOURCES.splice(0, TIMELINE_SOURCES.length, ...builtIn);
     }
   });
 

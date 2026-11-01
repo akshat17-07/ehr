@@ -157,6 +157,30 @@ describe('withTransaction (BEGIN / COMMIT path used in AWS)', () => {
     expect(log).toEqual(['BEGIN', 'INSERT x', 'ROLLBACK']);
   });
 
+  it('joins a transaction already open instead of starting another', async () => {
+    const { db, log } = recorder();
+    await withTransaction(db, (tx) => withTransaction(tx, (inner) => inner.query('INSERT x')));
+    expect(log).toEqual(['BEGIN', 'INSERT x', 'COMMIT']);
+    // Closed again afterwards: the next one starts its own.
+    await withTransaction(db, (tx) => tx.query('INSERT y'));
+    expect(log.slice(3)).toEqual(['BEGIN', 'INSERT y', 'COMMIT']);
+  });
+
+  it('undoes an inner step when the outer work fails (PGlite path)', async () => {
+    const db = await openLocalDb();
+    for (const sql of createTable('notes', ['text text NOT NULL'])) await db.query(sql);
+    await expect(
+      withTransaction(db, async (tx) => {
+        await withTransaction(tx, (inner) =>
+          inner.query("INSERT INTO notes (id, status, created_by, updated_by, text) VALUES ($1, 'active', 'u', 'u', 'x')", [newId()]),
+        );
+        throw new Error('stop');
+      }),
+    ).rejects.toThrow('stop');
+    expect((await db.query('SELECT count(*)::int AS n FROM notes')).rows[0]).toEqual({ n: 0 });
+    await db.close();
+  });
+
   it('keeps nothing when the work fails (PGlite path)', async () => {
     const db = await openLocalDb();
     for (const sql of createTable('notes', ['text text NOT NULL'])) await db.query(sql);

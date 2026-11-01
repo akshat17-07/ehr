@@ -25,8 +25,14 @@ export interface TimelineSource {
   title: string;
 }
 
-/** Filled in by each module (none are built yet). */
-export const TIMELINE_SOURCES: TimelineSource[] = [];
+export const TIMELINE_SOURCES: TimelineSource[] = [
+  {
+    kind: 'encounter',
+    table: 'encounters',
+    at: 'started_at',
+    title: "type || ' visit: ' || coalesce((SELECT name_en FROM departments WHERE departments.id = encounters.department_id), '')",
+  },
+];
 
 const NAME = /^[a-z][a-z0-9_]*$/;
 

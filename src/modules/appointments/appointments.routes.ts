@@ -4,7 +4,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { APPOINTMENT_STATUSES, bookAppointment, listAppointments, updateAppointment } from './appointments.js';
+import { APPOINTMENT_STATUSES, bookAppointment, checkIn, listAppointments, updateAppointment } from './appointments.js';
 
 // /staff/appointments (api-list.md 6.4).
 
@@ -58,4 +58,10 @@ export const appointmentsRoutes = new Hono<AuthEnv>()
     const appointment = await updateAppointment(await dbOf(c), c.req.param('id'), change, userOf(c).sub);
     auditDetails(c, { patientId: appointment.patientId, recordType: 'appointment', recordId: appointment.id });
     return c.json(appointment);
+  })
+  // #34
+  .post('/:id/check-in', requirePermission('appointment.update'), async (c) => {
+    const result = await checkIn(await dbOf(c), c.req.param('id'), userOf(c).sub);
+    auditDetails(c, { patientId: result.encounter.patientId, recordType: 'encounter', recordId: result.encounter.id });
+    return c.json(result);
   });

@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
+import { openEncounter, type Encounter } from '../encounters/encounters.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { PATIENT_SELECT, toPatient, toSummary, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
@@ -179,4 +181,24 @@ export async function updateAppointment(db: Queryable, id: string, change: Appoi
   if (change.note !== undefined) set.note = change.note;
   await updateRecord(db, 'appointments', { id, version: change.version, by, set });
   return getAppointment(db, id, now);
+}
+
+/**
+ * #34: the patient has arrived. Marks today's booked appointment arrived and opens its OPD encounter, together.
+ * 409 for an appointment not booked (already in, cancelled, no-show) or not for today.
+ */
+export async function checkIn(db: Queryable, id: string, by: string, now = new Date()): Promise<{ appointment: Appointment; encounter: Encounter }> {
+  const current = await getAppointment(db, id, now);
+  assertBooked(current);
+  if (indiaDate(new Date(current.at)) !== indiaDate(now)) throw new AppError(409, 'not_today', 'this appointment is for another day');
+  return withTransaction(db, async (tx) => {
+    await updateRecord(tx, 'appointments', { id, version: current.version, by, set: { status: 'arrived' } });
+    const encounter = await openEncounter(
+      tx,
+      { patientId: current.patientId, type: 'OPD', departmentId: current.departmentId, doctorId: current.doctorId, appointmentId: id },
+      by,
+      now,
+    );
+    return { appointment: await getAppointment(tx, id, now), encounter };
+  });
 }
