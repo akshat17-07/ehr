@@ -341,3 +341,27 @@ describe('GET /staff/registers/x', () => {
     expect((await app.request(`/staff/registers/x?from=${today}&to=${today}`, {}, reception)).status).toBe(403);
   });
 });
+
+describe('GET /staff/registers/ndps', () => {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const morphine = seedId('d0000000', 12);
+
+  it('lists NDPS lines with the patient ID proof and address; the prescriber is the prescribing doctor', async () => {
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'MOR01', '2030-01-31', 2000, 3500, 10, 0)`,
+      [seedId('ba000000', 72), morphine],
+    );
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [{ drugText: 'Morphine inj', dose: '5 mg', frequency: 'SOS', days: 1, quantity: 2 }] }), doctor)).json()) as { id: string }).id;
+    const ndps = { patientIdProof: 'Aadhaar XXXX-XXXX-1234', address: '12 MG Road, Indore' };
+    const given = await app.request('/staff/dispenses', json({ prescriptionId: rx, lines: [{ lineIndex: 0, drugId: morphine, batchId: seedId('ba000000', 72), qty: 2, ndps }] }), medical);
+    expect(given.status).toBe(201);
+    const doc = (await db.query('SELECT name, council_reg_no FROM users WHERE id = $1', [doctorId])).rows[0];
+    const rows = await (await app.request(`/staff/registers/ndps?from=${today}&to=${today}`, {}, medical)).json();
+    expect(rows).toEqual([expect.objectContaining({
+      drug: 'Morphine', schedule: 'NDPS', batchNo: 'MOR01', qty: 2, ...ndps,
+      prescriber: doc?.name, prescriberRegNo: String(doc?.council_reg_no ?? ''),
+    })]);
+    expect((await app.request(`/staff/registers/ndps?from=${today}&to=${today}`, {}, reception)).status).toBe(403);
+  });
+});

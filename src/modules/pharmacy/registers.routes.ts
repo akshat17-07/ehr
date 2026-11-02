@@ -14,4 +14,6 @@ export const registersRoutes = new Hono<AuthEnv>()
   // #113
   .get('/h1', requirePermission('register.print'), print('h1'))
   // #114
-  .get('/x', requirePermission('register.print'), print('x'));
+  .get('/x', requirePermission('register.print'), print('x'))
+  // #115
+  .get('/ndps', requirePermission('register.print'), print('ndps'));

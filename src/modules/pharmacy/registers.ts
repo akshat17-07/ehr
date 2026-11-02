@@ -7,7 +7,7 @@ import type { DispenseLine } from './dispenses.js';
 // Statutory drug registers (api-list.md RegisterRow), read from the dispenses: one row per dispensed line of a drug
 // in the register's schedule, oldest first. Nothing is kept twice; the register is printed from here.
 
-export const REGISTERS = { h1: ['H1'], x: ['X'] } as const;
+export const REGISTERS = { h1: ['H1'], x: ['X'], ndps: ['NDPS'] } as const;
 export type RegisterKind = keyof typeof REGISTERS;
 
 export interface RegisterRow {
@@ -17,6 +17,10 @@ export interface RegisterRow {
   patientId: string;
   patientName: string;
   uhid?: string;
+  /** NDPS register: as checked at the counter. */
+  patientIdProof?: string;
+  address?: string;
+  /** As written in the register at the counter; else the doctor who wrote the prescription. */
   prescriber: string;
   prescriberRegNo: string;
   drug: string;
@@ -31,14 +35,16 @@ export interface RegisterRow {
 /** The longest period one print covers. */
 const MAX_DAYS = 366;
 
-/** #113, #114: 422 if to is before from or the period is over a year. */
+/** #113, #114, #115: 422 if to is before from or the period is over a year. */
 export async function drugRegister(db: Queryable, kind: RegisterKind, query: { from: string; to: string }, now = new Date()): Promise<RegisterRow[]> {
   const start = indiaDayStart(query.from);
   const end = new Date(indiaDayStart(query.to).getTime() + 86_400_000);
   if (end <= start) throw new AppError(422, 'validation_failed', 'to: before from');
   if (end.getTime() - start.getTime() > MAX_DAYS * 86_400_000) throw new AppError(422, 'validation_failed', `to: at most ${MAX_DAYS} days after from`);
   const { rows } = await db.query(
-    `SELECT d.id, d.patient_id, d.lines, d.dispensed_at, u.name AS pharmacist FROM dispenses d LEFT JOIN users u ON u.id = d.pharmacist_id
+    `SELECT d.id, d.patient_id, d.lines, d.dispensed_at, u.name AS pharmacist, doc.name AS doctor, doc.council_reg_no AS doctor_reg_no
+     FROM dispenses d LEFT JOIN users u ON u.id = d.pharmacist_id
+     LEFT JOIN prescriptions p ON p.id = d.prescription_id LEFT JOIN users doc ON doc.id = p.doctor_id
      WHERE d.voided_at IS NULL AND d.dispensed_at >= $1 AND d.dispensed_at < $2 ORDER BY d.dispensed_at, d.id`,
     [start, end],
   );
@@ -68,8 +74,9 @@ export async function drugRegister(db: Queryable, kind: RegisterKind, query: { f
       patientId: String(r.patient_id),
       patientName: patient?.name ?? '',
       ...(patient?.uhid && { uhid: patient.uhid }),
-      prescriber: line.h1?.prescriberName ?? '',
-      prescriberRegNo: line.h1?.prescriberRegNo ?? '',
+      ...(line.ndps && { patientIdProof: line.ndps.patientIdProof, address: line.ndps.address }),
+      prescriber: line.h1?.prescriberName ?? String(r.doctor ?? ''),
+      prescriberRegNo: line.h1?.prescriberRegNo ?? String(r.doctor_reg_no ?? ''),
       drug: String(drug?.name),
       schedule: String(drug?.schedule),
       batchNo: batchNos.get(line.batchId) ?? '',
