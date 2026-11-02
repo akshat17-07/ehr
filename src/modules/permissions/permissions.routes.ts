@@ -13,6 +13,8 @@ import { checkBundles, getUser } from '../users/users.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
 import { addGrantRule, changeGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
+import { pageQuery } from '../../db/page.js';
+import { GRANT_STATUSES, listGrants } from '../../permissions/grants.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -71,6 +73,14 @@ const grantRuleChange = z
   })
   .strict();
 
+const grantsQuery = pageQuery.extend({
+  userId: z.string().uuid().optional(),
+  permission: z.string().min(1).max(100).optional(),
+  status: z.enum(GRANT_STATUSES).optional(),
+});
+
+const split = ({ limit, cursor, ...filter }: z.infer<typeof grantsQuery>) => [filter, { limit, cursor }] as const;
+
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
   // #164: every active bundle, by name.
   .get('/bundles', requirePermission('grant.view'), async (c) => c.json(await listBundles(await dbOf(c))))
@@ -91,6 +101,8 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
 
   // #167
   .get('/grant-rules', requirePermission('grant.view'), async (c) => c.json(await listGrantRules(await dbOf(c), c.req.query('grantorUserId'))))
+  // #170
+  .get('/grants', requirePermission('grant.view'), async (c) => c.json(await listGrants(await dbOf(c), ...split(grantsQuery.parse(c.req.query())))))
   // #168 (Admin only)
   .post('/grant-rules', requirePermission('grant_rule.manage'), async (c) => {
     const body = newGrantRule.parse(await c.req.json().catch(() => undefined));

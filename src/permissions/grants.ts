@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../db/page.js';
 import { updateRecord } from '../db/records.js';
 import { AppError } from '../middleware/errors.js';
 import { isPermission, type Permission } from './catalog.js';
@@ -104,4 +105,49 @@ export async function activeGrants(db: Queryable, userId: string, now = new Date
     [userId, now],
   );
   return rows.map((r) => fromRow(r, now));
+}
+
+export const GRANT_STATUSES = ['active', 'expired', 'revoked'] as const;
+export type GrantStatus = (typeof GRANT_STATUSES)[number];
+
+export interface GrantFilter {
+  /** users.id (the admin API speaks users.id; grants are stored by Cognito sub). */
+  userId?: string;
+  permission?: string;
+  status?: GrantStatus;
+}
+
+/**
+ * #170: grants, newest first. userId and grantorId come back as users.id (the stored sub when no user row has it,
+ * e.g. a system account). A userId nobody has gives an empty page.
+ */
+export async function listGrants(db: Queryable, filter: GrantFilter, page: PageQuery, now = new Date()): Promise<Page<Grant>> {
+  if (filter.permission !== undefined && !isPermission(filter.permission)) invalid(`unknown permission: ${filter.permission}`);
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    where.push(sql.replace('?', `$${params.length}`));
+  };
+  if (filter.userId !== undefined) add('u.id = ?', filter.userId);
+  if (filter.permission !== undefined) add('g.permission = ?', filter.permission);
+  if (filter.status === 'revoked') where.push("g.status = 'revoked'");
+  if (filter.status === 'active') add("g.status <> 'revoked' AND g.ends_at > ?", now);
+  if (filter.status === 'expired') add("g.status <> 'revoked' AND g.ends_at <= ?", now);
+  return pageRows(
+    db,
+    {
+      select: `SELECT g.*, u.id AS user_row_id, gu.id AS grantor_row_id FROM grants g
+               LEFT JOIN users u ON u.cognito_sub = g.user_id LEFT JOIN users gu ON gu.cognito_sub = g.grantor_id`,
+      where,
+      params,
+      orderBy: ['g.created_at', 'g.id'],
+    },
+    page,
+    (row) => ({
+      ...fromRow(row, now),
+      userId: String(row.user_row_id ?? row.user_id),
+      grantorId: String(row.grantor_row_id ?? row.grantor_id),
+    }),
+  );
 }
