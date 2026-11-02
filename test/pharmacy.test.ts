@@ -317,3 +317,27 @@ describe('GET /staff/registers/h1', () => {
     expect((await register(`?from=${today}&to=${today}`, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/registers/x', () => {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const ketamine = seedId('d0000000', 90);
+
+  it('lists Schedule X lines only, with the prescriber', async () => {
+    await db.query(
+      `INSERT INTO drugs (id, status, created_by, updated_by, name, strength, form, schedule, gst_rate, mrp_paise) VALUES ($1, 'active', 'x', 'x', 'Ketamine', '50 mg/ml', 'injection', 'X', 5, 15000)`,
+      [ketamine],
+    );
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'KET01', '2030-01-31', 9000, 15000, 10, 0)`,
+      [seedId('ba000000', 71), ketamine],
+    );
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [{ drugText: 'Ketamine inj', dose: '50 mg', frequency: 'STAT', days: 1, quantity: 1 }] }), doctor)).json()) as { id: string }).id;
+    const h1 = { prescriberName: 'Dr. Anil Rao', prescriberRegNo: 'MPMC-777' };
+    const given = await app.request('/staff/dispenses', json({ prescriptionId: rx, lines: [{ lineIndex: 0, drugId: ketamine, batchId: seedId('ba000000', 71), qty: 1, h1 }] }), medical);
+    expect(given.status).toBe(201);
+    const rows = (await (await app.request(`/staff/registers/x?from=${today}&to=${today}`, {}, medical)).json()) as { schedule: string }[];
+    expect(rows).toEqual([expect.objectContaining({ drug: 'Ketamine', schedule: 'X', batchNo: 'KET01', qty: 1, prescriber: 'Dr. Anil Rao', prescriberRegNo: 'MPMC-777' })]);
+    expect((await app.request(`/staff/registers/x?from=${today}&to=${today}`, {}, reception)).status).toBe(403);
+  });
+});

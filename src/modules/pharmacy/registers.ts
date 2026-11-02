@@ -7,7 +7,7 @@ import type { DispenseLine } from './dispenses.js';
 // Statutory drug registers (api-list.md RegisterRow), read from the dispenses: one row per dispensed line of a drug
 // in the register's schedule, oldest first. Nothing is kept twice; the register is printed from here.
 
-export const REGISTERS = { h1: ['H1'] } as const;
+export const REGISTERS = { h1: ['H1'], x: ['X'] } as const;
 export type RegisterKind = keyof typeof REGISTERS;
 
 export interface RegisterRow {
@@ -31,7 +31,7 @@ export interface RegisterRow {
 /** The longest period one print covers. */
 const MAX_DAYS = 366;
 
-/** #113: 422 if to is before from or the period is over a year. */
+/** #113, #114: 422 if to is before from or the period is over a year. */
 export async function drugRegister(db: Queryable, kind: RegisterKind, query: { from: string; to: string }, now = new Date()): Promise<RegisterRow[]> {
   const start = indiaDayStart(query.from);
   const end = new Date(indiaDayStart(query.to).getTime() + 86_400_000);
