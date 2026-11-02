@@ -42,3 +42,32 @@ describe('GET /staff/referrers', () => {
     expect((await app.request('/staff/referrers?q=anil', {}, asStaff('dev-medical', ['medical']))).status).toBe(403);
   });
 });
+
+const post = (path: string, body: unknown, who = doctor) => app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+describe('POST /staff/referrers', () => {
+  it('adds a pseudo referrer; the same phone or reg no. is a possible duplicate until forced', async () => {
+    const res = await post('/staff/referrers', { name: 'Dr Meera Shah', clinic: 'Shah Clinic', town: 'Dewas', phone: '9811111111', regNo: 'MP-777' });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { id: string };
+    expect(made).toMatchObject({ name: 'Dr Meera Shah', clinic: 'Shah Clinic', town: 'Dewas', phone: '9811111111', regNo: 'MP-777', pseudo: true, createdBy: 'dev-doctor' });
+    const again = await post('/staff/referrers', { name: 'Meera Shah', regNo: 'mp-777' });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: 'possible_duplicate', matches: [{ id: made.id }] });
+    expect((await post('/staff/referrers', { name: 'Meera Shah', regNo: 'mp-777', force: true })).status).toBe(201);
+  });
+
+  it('a new patient can name who sent them', async () => {
+    const ref = (await (await post('/staff/referrers', { name: 'Dr Om Prakash' })).json()) as { id: string };
+    const patient = { name: 'Geeta Bai', sex: 'F', ageYears: 50 };
+    const res = await post('/staff/patients', { ...patient, referrerId: ref.id }, asStaff('dev-reception', ['staff']));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ referrerId: ref.id });
+    expect((await post('/staff/patients', { ...patient, referrerId: randomUUID() }, asStaff('dev-reception', ['staff']))).status).toBe(422);
+  });
+
+  it('422 for a bad phone; 403 without referrer.create_pseudo', async () => {
+    expect((await post('/staff/referrers', { name: 'Dr X', phone: '12345' })).status).toBe(422);
+    expect((await post('/staff/referrers', { name: 'Dr X' }, asStaff('dev-medical', ['medical']))).status).toBe(403);
+  });
+});

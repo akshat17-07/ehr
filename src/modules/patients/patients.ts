@@ -1,3 +1,4 @@
+import { assertReferrer } from '../referrals/referrers.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { nextCount } from '../../db/counters.js';
@@ -43,6 +44,8 @@ export interface Patient extends BaseFields {
   inactive: boolean;
   allergies: string[];
   activePolicyId?: string;
+  /** Who sent the patient (#141). */
+  referrerId?: string;
   /** Unknown emergency patients (#21): what they look like, and who brought them in. */
   emergencyNote?: string;
   broughtBy?: string;
@@ -87,6 +90,7 @@ export function toPatient(r: Record<string, unknown>, now = new Date()): Patient
     inactive: !lastActivity || now.getTime() - lastActivity.getTime() > INACTIVE_AFTER_DAYS * 86_400_000,
     allergies: JSON.parse(String(r.allergies)) as string[],
     activePolicyId: opt(r.active_policy_id),
+    referrerId: opt(r.referrer_id),
     emergencyNote: opt(r.emergency_note),
     broughtBy: opt(r.brought_by),
   };
@@ -158,6 +162,8 @@ export interface NewPatient {
   address?: Address;
   /** Added with the patient; more with #26. */
   guardian?: { name: string; relation: string; mobile?: string };
+  /** Who sent the patient (#141). */
+  referrerId?: string;
 }
 
 const MAX_UHID_TRIES = 5;
@@ -187,6 +193,7 @@ interface PatientRow {
   unknown?: boolean;
   emergencyNote?: string;
   broughtBy?: string;
+  referrerId?: string;
 }
 
 /**
@@ -205,13 +212,13 @@ async function addPatient(
     withTransaction(db, async (tx) => {
       await tx.query(
         `INSERT INTO patients (id, status, created_by, updated_by, uhid, name, name_search, sex, dob, age_years, age_recorded_on,
-           mobile, email, address, unknown, emergency_note, brought_by, labels, allergies, last_activity_at)
-         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '[]', '[]', $16)`,
+           mobile, email, address, unknown, emergency_note, brought_by, labels, allergies, last_activity_at, referrer_id)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '[]', '[]', $16, $17)`,
         [
           id, by, uhid, row.name, row.name.toLowerCase(), row.sex, row.dob ?? null, row.ageYears ?? null,
           row.ageYears === undefined ? null : indiaDate(now), row.mobile ?? null, row.email ?? null,
           row.address ? JSON.stringify(row.address) : null, row.unknown ?? false, row.emergencyNote ?? null,
-          row.broughtBy ?? null, now,
+          row.broughtBy ?? null, now, row.referrerId ?? null,
         ],
       );
       await more?.(tx, id);
@@ -223,6 +230,7 @@ async function addPatient(
 /** #20: a new patient with a new UHID, and their guardian if given. */
 export async function registerPatient(db: Queryable, input: NewPatient, by: string, now = new Date()): Promise<Patient> {
   const { guardian, ...row } = input;
+  if (row.referrerId) await assertReferrer(db, row.referrerId);
   return addPatient(db, row, by, now, async (tx, id) => {
     if (!guardian) return;
     await tx.query(

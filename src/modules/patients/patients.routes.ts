@@ -71,6 +71,7 @@ const newPatient = z
     email: z.email().max(254).optional(),
     address: address.optional(),
     guardian: z.object({ name, relation, mobile: mobile.optional() }).strict().optional(),
+    referrerId: z.uuid().optional(),
   })
   .strict()
   .refine((p) => (p.dob === undefined) !== (p.ageYears === undefined), { message: 'give dob or ageYears (one of them)', path: ['dob'] });
