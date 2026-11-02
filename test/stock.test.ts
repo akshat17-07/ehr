@@ -385,3 +385,37 @@ describe('POST /staff/stock/supplier-returns', () => {
     expect((await send(body, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/stock/movements', () => {
+  type Moves = { items: { at: string; itemId: string; batchId: string; kind: string; qty: number; ref: string; by: string }[]; nextCursor?: string };
+  const moves = async (query = '', who = medical) => (await (await app.request(`/staff/stock/movements${query}`, {}, who)).json()) as Moves;
+  const gz = seedId('ba000000', 99);
+
+  it('every change to a batch, newest first, signed in and out', async () => {
+    const ret = await moves(`?batchId=${seedId('ba000000', 60)}`);
+    expect(ret.items).toEqual([{ at: expect.any(String), itemId: paracetamol, batchId: seedId('ba000000', 60), kind: 'supplier_return', qty: -12, ref: expect.any(String), by: 'dev-medical' }]);
+    const gauzeMoves = (await moves(`?itemId=${gauze}&limit=100`)).items;
+    expect(gauzeMoves.length).toBeGreaterThan(0);
+    expect(gauzeMoves.every((m) => m.itemId === gauze && (m.kind === 'issue' ? m.qty < 0 : m.kind === 'grn' && m.qty > 0))).toBe(true);
+    expect(gauzeMoves.filter((m) => m.batchId === gz).map((m) => [m.kind, m.qty])).toEqual([['issue', -3], ['issue', -2]]);
+    expect(gauzeMoves.map((m) => m.at)).toEqual([...gauzeMoves.map((m) => m.at)].sort().reverse());
+    expect((await moves('?kind=grn&limit=100')).items.every((m) => m.kind === 'grn' && m.qty > 0)).toBe(true);
+    const quarantined = (await moves(`?kind=quarantine&batchId=${seedId('ba000000', 4)}`)).items;
+    expect(quarantined[0]).toMatchObject({ kind: 'quarantine', qty: -10, itemId: seedId('d0000000', 3) });
+  });
+
+  it('pages without repeats; an old period is empty', async () => {
+    const all = (await moves('?limit=100')).items;
+    const first = await moves('?limit=3');
+    const second = await moves(`?limit=3&cursor=${first.nextCursor}`);
+    expect([...first.items, ...second.items]).toEqual(all.slice(0, 6));
+    expect((await moves('?from=2020-01-01&to=2020-01-31')).items).toEqual([]);
+  });
+
+  it('422 for a backwards or too long period or a bad kind; 403 for reception', async () => {
+    expect((await app.request('/staff/stock/movements?from=2026-02-01&to=2026-01-01', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/stock/movements?from=2024-01-01&to=2026-01-01', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/stock/movements?kind=theft', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/stock/movements', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});

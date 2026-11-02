@@ -11,6 +11,7 @@ import { issueIndent, requestIndent } from './indents.js';
 import { issueStock } from './issues.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
+import { listMovements, MOVEMENT_KINDS } from './movements.js';
 import { listStock, STOCK_ALERT_KINDS, stockAlerts } from './stock.js';
 import { returnToSupplier, SUPPLIER_REFUND_MODES, SUPPLIER_RETURN_REASONS } from './supplier-returns.js';
 
@@ -92,6 +93,14 @@ const newSupplierReturn = z
   })
   .strict();
 
+const movementsQuery = pageQuery.extend({
+  itemId: z.uuid().optional(),
+  batchId: z.uuid().optional(),
+  kind: z.enum(MOVEMENT_KINDS).optional(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+});
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -143,6 +152,11 @@ export const stockRoutes = new Hono<AuthEnv>()
     const result = await returnToSupplier(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { recordType: 'supplier_return', recordId: result.id });
     return c.json(result, 201);
+  })
+  // #282
+  .get('/movements', requirePermission('stock.view'), async (c) => {
+    const query = movementsQuery.parse(c.req.query());
+    return c.json(await listMovements(await dbOf(c), query));
   })
   // #110
   .post('/quarantine', requirePermission('stock.quarantine'), async (c) => {

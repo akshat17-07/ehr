@@ -1031,4 +1031,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC supplier_returns_created ON supplier_returns (created_at)',
     ],
   },
+  {
+    // Stock movements (#282) read these by time.
+    id: '0068_movement_indexes',
+    statements: () => [
+      'CREATE INDEX ASYNC pharmacy_returns_created ON pharmacy_returns (created_at)',
+      'CREATE INDEX ASYNC quarantines_created ON quarantines (created_at)',
+    ],
+  },
 ];
