@@ -764,4 +764,29 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC mtp_register_admission ON mtp_register (admission_date, id)',
     ],
   },
+  {
+    // Surgeries (api-list.md Surgery), here or at a partner hospital. status: scheduled / done / cancelled.
+    // team_ids and consent_document_ids are JSON lists; checklist and op_note are JSON objects.
+    id: '0049_surgeries',
+    statements: () => [
+      ...createTable('surgeries', [
+        'patient_id uuid NOT NULL',
+        'procedure text NOT NULL',
+        'site text',
+        'side text',
+        'surgeon_id uuid NOT NULL',
+        'team_ids text NOT NULL',
+        'scheduled_at timestamptz NOT NULL',
+        'venue text NOT NULL',
+        'partner_hospital_id uuid',
+        'charges_paise bigint NOT NULL',
+        'consent_document_ids text NOT NULL',
+        'instructions text',
+        'checklist text',
+        'op_note text',
+      ]),
+      'CREATE INDEX ASYNC surgeries_scheduled ON surgeries (scheduled_at, id)',
+      'CREATE INDEX ASYNC surgeries_patient ON surgeries (patient_id, scheduled_at)',
+    ],
+  },
 ];

@@ -29,6 +29,7 @@ import { prescriptionsRoutes } from './modules/prescriptions/prescriptions.route
 import { admissionsRoutes } from './modules/admissions/admissions.routes.js';
 import { dischargeRoutes } from './modules/admissions/discharge.routes.js';
 import { mtpRoutes } from './modules/departments/mtp.routes.js';
+import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
 import { accessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
@@ -72,6 +73,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/admissions', admissionsRoutes)
     .route('/discharge-summaries', dischargeRoutes)
     .route('/mtp-register', mtpRoutes)
+    .route('/surgeries', surgeriesRoutes)
     .route('/allergies', allergiesRoutes)
     .route('/problems', problemsRoutes)
     .route('/', referenceRoutes);
