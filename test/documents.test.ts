@@ -5,6 +5,7 @@ import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
 import type { FileUploads, StoredFile } from '../src/files/uploads.js';
+import { createGrant } from '../src/permissions/grants.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -88,5 +89,74 @@ describe('POST /staff/documents/{id}/complete', () => {
     expect((await complete(seedId('d0c00000', 999))).status).toBe(404);
     expect((await complete('nope')).status).toBe(404);
     expect((await complete((await start('f5'.repeat(32))).id, reception)).status).toBe(403);
+  });
+});
+
+describe('documentId links from other records', () => {
+  const kavita = seedId('9a710000', 4);
+  const MED = seedId('de000000', 1);
+  const surgeonId = seedId('a0000000', 4);
+  /** A ready document of the patient (as if uploaded through #94 and #95). */
+  const readyDoc = async (patientId: string) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key, uploaded_at)
+       VALUES (gen_random_uuid(), 'ready', 'x', 'x', $1, 'consent', 'form.pdf', 'application/pdf', 1000, md5(random()::text), 'k', now()) RETURNING id`,
+      [patientId],
+    )).rows[0]?.id);
+  const pendingDoc = async (patientId: string) => {
+    const id = await readyDoc(patientId);
+    await db.query("UPDATE documents SET status = 'pending' WHERE id = $1", [id]);
+    return id;
+  };
+
+  it('consents (#27) and order results (#60): the patient\'s own uploaded document only', async () => {
+    const consent = (documentId: string) => app.request(`/staff/patients/${ramesh}/consents`, json({ kind: 'treatment', language: 'en', given: true, documentId }), reception);
+    const mine = await readyDoc(ramesh);
+    expect(await (await consent(mine)).json()).toMatchObject({ documentId: mine });
+    expect((await consent(await readyDoc(kavita))).status).toBe(422);
+    expect((await consent(await pendingDoc(ramesh))).status).toBe(422);
+
+    const arrived = await app.request(`/staff/appointments/${seedId('a9900000', 1)}/check-in`, { method: 'POST' }, reception);
+    const encounterId = ((await arrived.json()) as { encounter: { id: string } }).encounter.id;
+    const order = (await (await app.request(`/staff/encounters/${encounterId}/orders`, json({ kind: 'lab', name: 'Lipid profile' }), doctor)).json()) as { id: string };
+    const report = await readyDoc(ramesh);
+    const result = await app.request(`/staff/orders/${order.id}/results`, json({ documentId: report }), doctor);
+    expect(result.status).toBe(201);
+    expect(await result.json()).toMatchObject({ documentId: report });
+    expect((await app.request(`/staff/orders/${order.id}/results`, json({ documentId: await readyDoc(kavita) }), doctor)).status).toBe(422);
+  });
+
+  it('Form F (#82) and MTP entries (#84)', async () => {
+    for (const permission of ['pcpndt.write', 'mtp.write']) {
+      await createGrant(db, { userId: 'dev-doctor', permission, scope: 'all', end: new Date(Date.now() + 86_400_000), grantorId: 'dev-admin', reason: 'Gyn roster' });
+    }
+    const opened = await app.request('/staff/encounters', json({ patientId: kavita, type: 'OPD', departmentId: MED, doctorId: seedId('a0000000', 3) }), doctor);
+    const encounterId = ((await opened.json()) as { id: string }).id;
+    const form = { indication: 'Dating scan', procedure: 'Ultrasound, obstetric', declarationSigned: true };
+    expect((await app.request(`/staff/encounters/${encounterId}/form-f`, json({ ...form, documentId: await readyDoc(ramesh) }), doctor)).status).toBe(422);
+    const signed = await readyDoc(kavita);
+    expect(await (await app.request(`/staff/encounters/${encounterId}/form-f`, json({ ...form, documentId: signed }), doctor)).json()).toMatchObject({ documentId: signed });
+
+    const entry = { patientId: kavita, admissionDate: '2026-10-20', gestationWeeks: 8, indication: 'Contraceptive failure', opinionDoctorIds: [seedId('a0000000', 3)] };
+    const opinion = await readyDoc(kavita);
+    expect(await (await app.request('/staff/mtp-register', json({ ...entry, documentId: opinion }), doctor)).json()).toMatchObject({ documentId: opinion });
+    expect((await app.request('/staff/mtp-register', json({ ...entry, documentId: await pendingDoc(kavita) }), doctor)).status).toBe(422);
+  });
+
+  it('surgery consents (#87, #89) and implant stickers (#85)', async () => {
+    const plan = (consentDocumentIds: string[]) =>
+      app.request('/staff/surgeries', json({ patientId: ramesh, procedure: 'Hernia repair', surgeonId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), venue: 'own', chargesPaise: 3000000, consentDocumentIds }), doctor);
+    const first = await readyDoc(ramesh);
+    const surgery = (await (await plan([first, first])).json()) as { id: string; version: number; consentDocumentIds: string[] };
+    expect(surgery.consentDocumentIds).toEqual([first]);
+    expect((await plan([await readyDoc(kavita)])).status).toBe(422);
+    const second = await readyDoc(ramesh);
+    const patched = await app.request(`/staff/surgeries/${surgery.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: surgery.version, consentDocumentIds: [first, second] }) }, doctor);
+    expect(await patched.json()).toMatchObject({ consentDocumentIds: [first, second] });
+
+    const sticker = await readyDoc(ramesh);
+    const implant = { name: 'Polypropylene mesh', batchNo: 'PM-9', mrpPaise: 450000 };
+    expect(await (await app.request(`/staff/surgeries/${surgery.id}/implants`, json({ ...implant, stickerDocumentId: sticker }), doctor)).json()).toMatchObject({ stickerDocumentId: sticker });
+    expect((await app.request(`/staff/surgeries/${surgery.id}/implants`, json({ ...implant, stickerDocumentId: await readyDoc(kavita) }), doctor)).status).toBe(422);
   });
 });

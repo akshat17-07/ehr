@@ -118,3 +118,14 @@ export async function completeUpload(db: Queryable, files: FileUploads, bucket: 
   await updateRecord(db, 'documents', { id, version: document.version, by, set: { status: 'ready', uploaded_at: now } });
   return getDocument(db, id);
 }
+
+/** 422 unless each id is an uploaded (ready) document of this patient. For links from other records (#27, #60, #82...). */
+export async function assertPatientDocuments(db: Queryable, patientId: string, ids: string[], field: string): Promise<void> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+  const { rows } = await db.query(
+    `SELECT id FROM documents WHERE patient_id = $1 AND status = 'ready' AND id IN (${unique.map((_, i) => `$${i + 2}`).join(', ')})`,
+    [patientId, ...unique],
+  );
+  if (rows.length !== unique.length) throw new AppError(422, 'invalid_input', `${field}: each must be an uploaded document of this patient`);
+}

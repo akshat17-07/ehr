@@ -6,6 +6,7 @@ import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { getPatient, patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // MTP register (api-list.md MtpEntry): the hospital's register of medical terminations of pregnancy, as the
@@ -65,6 +66,7 @@ export interface NewMtpEntry {
   indication: string;
   opinionDoctorIds: string[];
   procedureDate?: string;
+  documentId?: string;
 }
 
 /** MTP Act: one doctor's opinion up to 20 weeks, two after that. */
@@ -92,13 +94,16 @@ export async function addMtpEntry(db: Queryable, input: NewMtpEntry, by: string,
   if (found.length !== doctors.length) invalid('opinionDoctorIds: each must be an active doctor');
   const patient = await getPatient(db, input.patientId, now);
   if (patient.sex !== 'F') invalid('patientId: the MTP register is for a female patient');
+  if (input.documentId) await assertPatientDocuments(db, patient.id, [input.documentId], 'documentId');
 
   return withTransaction(db, async (tx) => {
     const { rows } = await tx.query(
-      `INSERT INTO mtp_register (id, status, created_by, updated_by, patient_id, admission_date, gestation_weeks, indication, opinion_doctor_ids, procedure_date)
-       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO mtp_register (id, status, created_by, updated_by, patient_id, admission_date, gestation_weeks, indication, opinion_doctor_ids, procedure_date,
+         document_id)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *, admission_date::text AS admission_text, procedure_date::text AS procedure_text`,
-      [randomUUID(), by, patient.id, input.admissionDate, input.gestationWeeks, input.indication, JSON.stringify(doctors), input.procedureDate ?? null],
+      [randomUUID(), by, patient.id, input.admissionDate, input.gestationWeeks, input.indication, JSON.stringify(doctors), input.procedureDate ?? null,
+        input.documentId ?? null],
     );
     if (!patient.labels.includes('mtp')) {
       await updateRecord(tx, 'patients', {

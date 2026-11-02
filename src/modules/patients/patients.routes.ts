@@ -102,6 +102,7 @@ const newConsent = z
     noticeVersion: z.string().trim().min(1).max(50).optional(),
     language: z.enum(LANGUAGES),
     given: z.boolean(),
+    documentId: z.uuid().optional(),
   })
   .strict();
 

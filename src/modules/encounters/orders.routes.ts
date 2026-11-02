@@ -23,9 +23,10 @@ const newResult = z
     unit: z.string().trim().min(1).max(30).optional(),
     text: z.string().trim().min(1).max(5000).optional(),
     resultedAt: z.iso.datetime({ offset: true }).optional(),
+    documentId: z.uuid().optional(),
   })
   .strict()
-  .refine((r) => r.value !== undefined || r.text !== undefined, 'give a value or text')
+  .refine((r) => r.value !== undefined || r.text !== undefined || r.documentId !== undefined, 'give a value, text or the report document')
   .refine((r) => r.unit === undefined || r.value !== undefined, { message: 'a unit goes with a value', path: ['unit'] });
 
 const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();

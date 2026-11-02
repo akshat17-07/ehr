@@ -95,12 +95,13 @@ const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
-// documentId comes with documents (#211).
+// documentId: the signed paper form, uploaded first (#94).
 const newFormF = z
   .object({
     indication: z.string().trim().min(3).max(500),
     procedure: z.string().trim().min(3).max(200),
     declarationSigned: z.literal(true),
+    documentId: z.uuid().optional(),
   })
   .strict();
 

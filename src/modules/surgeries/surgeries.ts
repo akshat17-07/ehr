@@ -4,6 +4,7 @@ import { updateRecord, voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { getPatient, patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // Surgeries (api-list.md Surgery): planned here or at a partner hospital (then we pay the venue, #92).
@@ -117,6 +118,7 @@ export interface NewSurgery {
   partnerHospitalId?: string;
   chargesPaise: number;
   instructions?: string;
+  consentDocumentIds?: string[];
 }
 
 /** An emergency done overnight can be entered next morning; nothing earlier, nor over a year ahead. */
@@ -139,13 +141,15 @@ export async function planSurgery(db: Queryable, input: NewSurgery, by: string, 
   const teamIds = [...new Set(input.teamIds ?? [])].filter((id) => id !== input.surgeonId);
   await assertActiveUsers(db, 'teamIds', teamIds);
   if (input.partnerHospitalId) await assertPartnerHospital(db, input.partnerHospitalId);
+  const consents = [...new Set(input.consentDocumentIds ?? [])];
+  await assertPatientDocuments(db, patient.id, consents, 'consentDocumentIds');
   const { rows } = await db.query(
     `INSERT INTO surgeries (id, status, created_by, updated_by, patient_id, procedure, site, side, surgeon_id, team_ids, scheduled_at, venue,
        partner_hospital_id, charges_paise, consent_document_ids, instructions)
-     VALUES ($1, 'scheduled', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '[]', $13) RETURNING *`,
+     VALUES ($1, 'scheduled', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
     [
       randomUUID(), by, patient.id, input.procedure, input.site ?? null, input.side ?? null, input.surgeonId, JSON.stringify(teamIds),
-      input.scheduledAt, input.venue, input.partnerHospitalId ?? null, input.chargesPaise, input.instructions ?? null,
+      input.scheduledAt, input.venue, input.partnerHospitalId ?? null, input.chargesPaise, JSON.stringify(consents), input.instructions ?? null,
     ],
   );
   return toSurgery(rows[0] as Record<string, unknown>);
@@ -173,6 +177,7 @@ export interface SurgeryChange {
   partnerHospitalId?: string;
   chargesPaise?: number;
   instructions?: string;
+  consentDocumentIds?: string[];
   reason?: string;
 }
 
@@ -205,6 +210,11 @@ export async function updateSurgery(db: Queryable, id: string, change: SurgeryCh
   }
   if (change.chargesPaise !== undefined) set.charges_paise = change.chargesPaise;
   if (change.instructions !== undefined) set.instructions = change.instructions;
+  if (change.consentDocumentIds) {
+    const consents = [...new Set(change.consentDocumentIds)];
+    await assertPatientDocuments(db, surgery.patientId, consents, 'consentDocumentIds');
+    set.consent_document_ids = JSON.stringify(consents);
+  }
   await updateRecord(db, 'surgeries', { id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) });
   return getSurgery(db, id);
 }

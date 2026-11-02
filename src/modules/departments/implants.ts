@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import type { BaseFields } from '../patients/patients.js';
 import { assertNotCancelled, getSurgery } from '../surgeries/surgeries.js';
 
@@ -36,6 +37,7 @@ export interface NewImplant {
   manufacturer?: string;
   batchNo: string;
   size?: string;
+  stickerDocumentId?: string;
   mrpPaise: number;
 }
 
@@ -43,10 +45,14 @@ export interface NewImplant {
 export async function addImplant(db: Queryable, surgeryId: string, input: NewImplant, by: string): Promise<Implant> {
   const surgery = await getSurgery(db, surgeryId);
   assertNotCancelled(surgery);
+  if (input.stickerDocumentId) await assertPatientDocuments(db, surgery.patientId, [input.stickerDocumentId], 'stickerDocumentId');
   const { rows } = await db.query(
-    `INSERT INTO implants (id, status, created_by, updated_by, surgery_id, patient_id, name, manufacturer, batch_no, size, mrp_paise)
-     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [randomUUID(), by, surgery.id, surgery.patientId, input.name, input.manufacturer ?? null, input.batchNo, input.size ?? null, input.mrpPaise],
+    `INSERT INTO implants (id, status, created_by, updated_by, surgery_id, patient_id, name, manufacturer, batch_no, size, mrp_paise, sticker_document_id)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [
+      randomUUID(), by, surgery.id, surgery.patientId, input.name, input.manufacturer ?? null, input.batchNo, input.size ?? null, input.mrpPaise,
+      input.stickerDocumentId ?? null,
+    ],
   );
   return toImplant(rows[0] as Record<string, unknown>);
 }

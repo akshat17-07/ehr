@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { assertOpen, type Encounter } from '../encounters/encounters.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { prescriberId } from '../prescriptions/prescriptions.js';
@@ -53,19 +54,20 @@ export function assertNoFetalSex(body: unknown): void {
 export async function writeFormF(
   db: Queryable,
   encounter: Encounter,
-  input: { indication: string; procedure: string },
+  input: { indication: string; procedure: string; documentId?: string },
   by: string,
 ): Promise<FormF> {
   assertOpen(encounter);
   const patient = await getPatient(db, encounter.patientId);
   if (patient.sex !== 'F') throw new AppError(422, 'invalid_input', 'Form F is for a female patient');
+  if (input.documentId) await assertPatientDocuments(db, patient.id, [input.documentId], 'documentId');
   const { rows: existing } = await db.query('SELECT id FROM form_f WHERE encounter_id = $1', [encounter.id]);
   if (existing[0]) throw new AppError(409, 'already_written', 'this encounter already has a Form F');
   try {
     const { rows } = await db.query(
-      `INSERT INTO form_f (id, status, created_by, updated_by, encounter_id, patient_id, doctor_id, indication, procedure, declaration_signed)
-       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, true) RETURNING *`,
-      [randomUUID(), by, encounter.id, encounter.patientId, await prescriberId(db, by), input.indication, input.procedure],
+      `INSERT INTO form_f (id, status, created_by, updated_by, encounter_id, patient_id, doctor_id, indication, procedure, declaration_signed, document_id)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, true, $8) RETURNING *`,
+      [randomUUID(), by, encounter.id, encounter.patientId, await prescriberId(db, by), input.indication, input.procedure, input.documentId ?? null],
     );
     return toFormF(rows[0] as Record<string, unknown>);
   } catch (err) {

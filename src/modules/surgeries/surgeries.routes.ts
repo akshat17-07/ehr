@@ -28,7 +28,7 @@ const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
   .strict();
 
-// consentDocumentIds come with documents (#211).
+// consentDocumentIds: signed consent forms, uploaded first (#94).
 const newSurgery = z
   .object({
     patientId: z.uuid(),
@@ -42,21 +42,22 @@ const newSurgery = z
     partnerHospitalId: z.uuid().optional(),
     chargesPaise: z.number().int().min(0).max(10_000_000_000),
     instructions: z.string().trim().min(1).max(2000).optional(),
+    consentDocumentIds: z.array(z.uuid()).max(10).optional(),
   })
   .strict();
 
-// stickerDocumentId comes with documents (#211).
+// stickerDocumentId: a photo of the implant sticker, uploaded first (#94).
 const newImplant = z
   .object({
     name: z.string().trim().min(2).max(200),
     manufacturer: z.string().trim().min(1).max(200).optional(),
     batchNo: z.string().trim().min(1).max(50),
     size: z.string().trim().min(1).max(50).optional(),
+    stickerDocumentId: z.uuid().optional(),
     mrpPaise: z.number().int().min(0).max(10_000_000_000),
   })
   .strict();
 
-// consentDocumentIds come with documents (#211).
 const surgeryChange = z
   .object({
     version: z.number().int().min(1),
@@ -66,6 +67,7 @@ const surgeryChange = z
     partnerHospitalId: z.uuid().optional(),
     chargesPaise: z.number().int().min(0).max(10_000_000_000).optional(),
     instructions: z.string().trim().min(1).max(2000).optional(),
+    consentDocumentIds: z.array(z.uuid()).max(10).optional(),
     reason: z.string().trim().min(5).max(500).optional(),
   })
   .strict()

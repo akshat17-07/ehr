@@ -5,6 +5,7 @@ import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 import { assertOpen, getEncounter } from './encounters.js';
@@ -146,6 +147,8 @@ export interface NewResult {
   unit?: string;
   text?: string;
   resultedAt?: string;
+  /** The report, uploaded first (#94). */
+  documentId?: string;
 }
 
 /** #60: 409 on a cancelled order; the first result marks the order resulted. Also after the encounter closed. */
@@ -154,11 +157,12 @@ export async function addResult(db: Queryable, orderId: string, input: NewResult
   if (order.status === 'cancelled') throw new AppError(409, 'cancelled', 'this order was cancelled');
   const resultedAt = input.resultedAt ? new Date(input.resultedAt) : now;
   if (resultedAt.getTime() > now.getTime() + 5 * 60_000) throw new AppError(422, 'invalid_input', 'resultedAt: this time has not come yet');
+  if (input.documentId) await assertPatientDocuments(db, order.patientId, [input.documentId], 'documentId');
   return withTransaction(db, async (tx) => {
     const { rows } = await tx.query(
-      `INSERT INTO order_results (id, status, created_by, updated_by, order_id, patient_id, value_num, unit, text, resulted_at)
-       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [randomUUID(), by, order.id, order.patientId, input.value ?? null, input.unit ?? null, input.text ?? null, resultedAt],
+      `INSERT INTO order_results (id, status, created_by, updated_by, order_id, patient_id, value_num, unit, text, resulted_at, document_id)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [randomUUID(), by, order.id, order.patientId, input.value ?? null, input.unit ?? null, input.text ?? null, resultedAt, input.documentId ?? null],
     );
     if (order.status === 'ordered') {
       await updateRecord(tx, 'orders', { id: order.id, version: order.version, by, set: { status: 'resulted' } });

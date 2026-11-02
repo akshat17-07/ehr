@@ -9,7 +9,7 @@ import { addMtpEntry, listMtp } from './mtp.js';
 
 const listQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
 
-// documentId comes with documents (#211).
+// documentId: the signed opinion forms, uploaded first (#94).
 const newEntry = z
   .object({
     patientId: z.uuid(),
@@ -18,6 +18,7 @@ const newEntry = z
     indication: z.string().trim().min(3).max(500),
     opinionDoctorIds: z.array(z.uuid()).min(1).max(5),
     procedureDate: z.iso.date().optional(),
+    documentId: z.uuid().optional(),
   })
   .strict();
 
