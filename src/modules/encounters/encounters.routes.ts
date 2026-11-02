@@ -4,11 +4,12 @@ import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
-import { requirePermission } from '../../permissions/check.js';
+import { assertPermission, requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { writeSummary } from '../admissions/discharge.js';
 import { summaryFields } from '../admissions/discharge.routes.js';
 import { checkIn } from '../appointments/appointments.js';
+import { getFormF } from '../departments/form-f.js';
 import { getPatient } from '../patients/patients.js';
 import { writePrescription } from '../prescriptions/prescriptions.js';
 import { acknowledgedAlerts, rxLines } from '../prescriptions/prescriptions.routes.js';
@@ -186,4 +187,13 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const summary = await writeSummary(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: summary.patientId, recordType: 'discharge_summary', recordId: summary.id });
     return c.json(summary, 201);
+  })
+  // #81: PC-PNDT access comes from a grant, for all, the encounter's department or this patient.
+  .get('/:id/form-f', async (c) => {
+    const db = await dbOf(c);
+    const encounter = await getEncounter(db, c.req.param('id'));
+    await assertPermission(c, 'pcpndt.view', { patientId: encounter.patientId, departmentIds: [encounter.departmentId] });
+    auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, encounter.patientId));
+    return c.json(await getFormF(db, encounter.id));
   });

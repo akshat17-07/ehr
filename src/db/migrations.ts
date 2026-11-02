@@ -730,4 +730,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC anc_records_patient ON anc_records (patient_id, created_at)',
     ],
   },
+  {
+    // PC-PNDT Form F (api-list.md FormF), one per encounter. There is no fetal-sex column, by law.
+    id: '0047_form_f',
+    statements: () => [
+      ...createTable('form_f', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'doctor_id uuid NOT NULL',
+        'indication text NOT NULL',
+        'procedure text NOT NULL',
+        'declaration_signed boolean NOT NULL',
+        'document_id uuid',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC form_f_encounter ON form_f (encounter_id)',
+      // The monthly PCPNDT register (#217).
+      'CREATE INDEX ASYNC form_f_created ON form_f (created_at)',
+    ],
+  },
 ];
