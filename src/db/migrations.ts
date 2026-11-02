@@ -709,4 +709,25 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC dental_entries_patient ON dental_entries (patient_id, at)',
     ],
   },
+  {
+    // Antenatal care visits (api-list.md AncRecord).
+    id: '0046_anc_records',
+    statements: () => [
+      ...createTable('anc_records', [
+        'patient_id uuid NOT NULL',
+        'encounter_id uuid',
+        'lmp date',
+        'edd date',
+        'gravida integer',
+        'para integer',
+        'gestation_weeks integer',
+        'bp text',
+        'weight_kg numeric(5,1)',
+        'fundal_height_cm numeric(4,1)',
+        'fhr integer',
+        'notes text',
+      ]),
+      'CREATE INDEX ASYNC anc_records_patient ON anc_records (patient_id, created_at)',
+    ],
+  },
 ];

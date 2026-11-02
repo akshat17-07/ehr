@@ -64,3 +64,24 @@ describe('POST /staff/patients/{id}/dental-chart', () => {
     expect((await add(irfan, { entries: [{ tooth: '36', condition: 'Caries' }] }, nurse)).status).toBe(403);
   });
 });
+
+describe('GET /staff/patients/{id}/anc-records', () => {
+  const list = (patient: string, who = doctor) => app.request(`/staff/patients/${patient}/anc-records`, {}, who);
+
+  it("lists the patient's ANC visits, oldest first", async () => {
+    expect(await (await list(ramesh)).json()).toEqual([]);
+    await db.query(
+      `INSERT INTO anc_records (id, status, created_by, updated_by, patient_id, lmp, edd, gravida, para, gestation_weeks, bp, weight_kg, fhr)
+       VALUES (gen_random_uuid(), 'active', 'x', 'x', $1, '2026-06-01', '2027-03-08', 2, 1, 22, '110/70', 58.5, 140)`,
+      [ramesh],
+    );
+    expect(await (await list(ramesh)).json()).toMatchObject([
+      { patientId: ramesh, lmp: '2026-06-01', edd: '2027-03-08', gravida: 2, para: 1, gestationWeeks: 22, bp: '110/70', weightKg: 58.5, fhr: 140 },
+    ]);
+  });
+
+  it('404 for no patient; 403 for a nurse', async () => {
+    expect((await list(seedId('9a710000', 999))).status).toBe(404);
+    expect((await list(ramesh, nurse)).status).toBe(403);
+  });
+});
