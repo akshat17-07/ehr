@@ -12,6 +12,7 @@ import { issueStock } from './issues.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
 import { listStock, STOCK_ALERT_KINDS, stockAlerts } from './stock.js';
+import { returnToSupplier, SUPPLIER_REFUND_MODES, SUPPLIER_RETURN_REASONS } from './supplier-returns.js';
 
 const stockQuery = pageQuery.extend({
   itemId: z.uuid().optional(),
@@ -80,6 +81,17 @@ const newCount = z
   })
   .strict();
 
+const newSupplierReturn = z
+  .object({
+    supplierId: z.uuid(),
+    lines: z.array(z.object({ batchId: z.uuid(), qty: z.number().int().min(1).max(1_000_000) }).strict()).min(1).max(100),
+    reason: z.enum(SUPPLIER_RETURN_REASONS),
+    creditNoteNo: z.string().trim().min(1).max(50).optional(),
+    refundPaise: z.number().int().min(0).max(10_000_000_000),
+    refundMode: z.enum(SUPPLIER_REFUND_MODES).optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -124,6 +136,13 @@ export const stockRoutes = new Hono<AuthEnv>()
     const count = await recordCount(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { recordType: 'stock_count', recordId: count.id });
     return c.json(count, 201);
+  })
+  // #281
+  .post('/supplier-returns', requirePermission('stock.supplier_return'), async (c) => {
+    const input = newSupplierReturn.parse(await bodyOf(c));
+    const result = await returnToSupplier(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'supplier_return', recordId: result.id });
+    return c.json(result, 201);
   })
   // #110
   .post('/quarantine', requirePermission('stock.quarantine'), async (c) => {

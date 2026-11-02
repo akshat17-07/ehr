@@ -354,3 +354,34 @@ describe('POST /staff/stock/counts', () => {
     expect((await count({ lines: [{ batchId: gz, countedQty: 1 }] }, asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/supplier-returns', () => {
+  const send = (body: Record<string, unknown>, who = medical) =>
+    app.request('/staff/stock/supplier-returns', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const supplier = seedId('5a000000', 1);
+  const batch = async (id: string) => (await db.query('SELECT qty_on_hand, qty_quarantined, cost_paise FROM batches WHERE id = $1', [id])).rows[0];
+
+  it('stock leaves the books, quarantined stock first; lines are costed', async () => {
+    const id = seedId('ba000000', 60);
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'RET01', '2030-01-31', 1200, 2000, 30, 10)`,
+      [id, paracetamol],
+    );
+    const res = await send({ supplierId: supplier, lines: [{ batchId: id, qty: 12 }], reason: 'damaged', creditNoteNo: 'CN-881', refundPaise: 14400, refundMode: 'credit_note' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ supplierId: supplier, lines: [{ batchId: id, qty: 12, amountPaise: 14400 }], reason: 'damaged', creditNoteNo: 'CN-881', refundPaise: 14400, refundMode: 'credit_note' });
+    expect(await batch(id)).toMatchObject({ qty_on_hand: 18, qty_quarantined: 0 });
+    expect(await (await send({ supplierId: supplier, lines: [{ batchId: id, qty: 19 }], reason: 'excess', refundPaise: 0 })).json()).toMatchObject({ error: 'short_stock' });
+  });
+
+  it('422 for an unknown supplier or batch, a batch twice or a bad reason; 403 for a nurse', async () => {
+    const gz = seedId('ba000000', 99);
+    const body = { supplierId: supplier, lines: [{ batchId: gz, qty: 1 }], reason: 'expired', refundPaise: 0 };
+    expect((await send({ ...body, supplierId: seedId('5a000000', 999) })).status).toBe(422);
+    expect((await send({ ...body, lines: [{ batchId: seedId('ba000000', 999), qty: 1 }] })).status).toBe(422);
+    expect((await send({ ...body, lines: [{ batchId: gz, qty: 1 }, { batchId: gz, qty: 1 }] })).status).toBe(422);
+    expect((await send({ ...body, reason: 'unwanted' })).status).toBe(422);
+    expect((await send(body, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

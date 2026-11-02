@@ -1016,4 +1016,19 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC stock_counts_created ON stock_counts (created_at)',
     ],
   },
+  {
+    // Stock sent back to a supplier (api-list.md SupplierReturn); lines is JSON (with the cost of each line).
+    id: '0067_supplier_returns',
+    statements: () => [
+      ...createTable('supplier_returns', [
+        'supplier_id uuid NOT NULL',
+        'lines text NOT NULL',
+        'reason text NOT NULL',
+        'credit_note_no text',
+        'refund_paise bigint NOT NULL',
+        'refund_mode text',
+      ]),
+      'CREATE INDEX ASYNC supplier_returns_created ON supplier_returns (created_at)',
+    ],
+  },
 ];
