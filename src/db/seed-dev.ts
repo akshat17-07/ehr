@@ -158,6 +158,12 @@ export function devSeedStatements(): string[] {
     seedInsert('allergies', seedId('a1e70000', 1), {
       patient_id: seedId('9a710000', 1), substance: 'Penicillin', reaction: 'Rash', severity: 'moderate', status: 'active',
     }),
+    seedInsert('problems', seedId('9b0b0000', 1), {
+      patient_id: seedId('9a710000', 3), icd10: 'I10', text: 'Hypertension', onset: '2019-06-01', status: 'active',
+    }),
+    seedInsert('problems', seedId('9b0b0000', 2), {
+      patient_id: seedId('9a710000', 3), icd10: 'A90', text: 'Dengue', onset: '2023-08-10', resolved_at: '2023-08-24', status: 'resolved',
+    }),
     ...DEV_APPOINTMENTS.map(([patient, doctor, dept, time, minutes], i) => {
       const at = new Date(`${indiaDate()}T${time}:00+05:30`);
       return seedInsert('appointments', seedId('a9900000', i + 1), {

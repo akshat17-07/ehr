@@ -22,6 +22,7 @@ import { patientObservations } from '../encounters/observations.js';
 import { patientVitals } from '../encounters/vitals.js';
 import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
+import { listProblems } from './problems.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
 // /staff/patients (api-list.md 6.3).
@@ -116,6 +117,8 @@ const newAllergy = z
     severity: z.enum(ALLERGY_SEVERITIES),
   })
   .strict();
+
+const problemsQuery = z.object({ active: z.enum(['true', 'false']).optional() });
 
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
@@ -216,6 +219,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const allergy = await addAllergy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: allergy.patientId, recordType: 'allergy', recordId: allergy.id });
     return c.json(allergy, 201);
+  })
+  // #55: a clinical read, so the inactive-patient rule applies.
+  .get('/:id/problems', requirePermission('patient.view'), async (c) => {
+    const { active } = problemsQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json(await listProblems(db, patient.id, active === undefined ? undefined : active === 'true'));
   })
   // #26
   .post('/:id/guardians', requirePermission('patient.update'), async (c) => {

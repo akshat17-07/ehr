@@ -572,4 +572,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC allergies_patient ON allergies (patient_id, created_at)',
     ],
   },
+  {
+    // Problem list (api-list.md Problem): long-standing conditions; status active / resolved.
+    id: '0038_problems',
+    statements: () => [
+      ...createTable('problems', ['patient_id uuid NOT NULL', 'icd10 text', 'text text NOT NULL', 'onset date', 'resolved_at date']),
+      'CREATE INDEX ASYNC problems_patient ON problems (patient_id, created_at)',
+    ],
+  },
 ];
