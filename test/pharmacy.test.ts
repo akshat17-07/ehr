@@ -281,3 +281,39 @@ describe('GET /staff/pharmacy/bills/{id}', () => {
     expect((await app.request('/staff/pharmacy/bills/nope', {}, medical)).status).toBe(404);
   });
 });
+
+describe('GET /staff/registers/h1', () => {
+  const register = async (query: string, who = medical) => app.request(`/staff/registers/h1${query}`, {}, who);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const cefixime = seedId('d0000000', 8);
+  const h1 = { prescriberName: 'Dr. Meera Joshi', prescriberRegNo: 'MPMC-12345' };
+
+  it('one row per H1 line dispensed in the period, oldest first; other drugs are left out', async () => {
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'CFX01', '2030-01-31', 5000, 9000, 50, 0)`,
+      [seedId('ba000000', 70), cefixime],
+    );
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [paracetamol, { drugText: 'Cefixime 200', dose: '1 tab', frequency: 'BD', days: 5, quantity: 10 }] }), doctor)).json()) as { id: string }).id;
+    const given = (await (await app.request('/staff/dispenses', json({ prescriptionId: rx, lines: [
+      { lineIndex: 0, drugId: paracetamol.drugId, batchId: seedId('ba000000', 3), qty: 9 },
+      { lineIndex: 1, drugId: cefixime, batchId: seedId('ba000000', 70), qty: 10, h1 },
+    ] }), medical)).json()) as { id: string };
+    const res = await register(`?from=${today}&to=${today}`);
+    expect(res.status).toBe(200);
+    const rows = (await res.json()) as { dispenseId: string }[];
+    expect(rows.filter((r) => r.dispenseId === given.id)).toEqual([{
+      date: today, at: expect.any(String), dispenseId: given.id, patientId: irfan, patientName: expect.any(String), uhid: expect.any(String),
+      prescriber: 'Dr. Meera Joshi', prescriberRegNo: 'MPMC-12345', drug: 'Cefixime', schedule: 'H1', batchNo: 'CFX01', qty: 10, returnedQty: 0,
+      pharmacist: expect.any(String),
+    }]);
+    expect(await (await register('?from=2020-01-01&to=2020-01-31')).json()).toEqual([]);
+  });
+
+  it('422 for a bad or backwards period, or over a year; 403 for a nurse', async () => {
+    expect((await register('?from=2026-01-10')).status).toBe(422);
+    expect((await register('?from=2026-01-10&to=2026-01-09')).status).toBe(422);
+    expect((await register('?from=2024-01-01&to=2026-01-01')).status).toBe(422);
+    expect((await register(`?from=${today}&to=${today}`, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
