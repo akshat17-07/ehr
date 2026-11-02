@@ -4,6 +4,7 @@ import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
 import type { Queryable } from '../db/migrate.js';
 import type { SignGetUrl } from '../files/signed-url.js';
+import type { FileUploads } from '../files/uploads.js';
 import type { StaffAccounts } from '../identity/staff-accounts.js';
 import type { UserPermissions } from '../permissions/check.js';
 import type { AuditDetails } from './audit.js';
@@ -37,6 +38,8 @@ export type AuthEnv = {
     permissions?: UserPermissions;
     /** Makes signed S3 download links, set by createApp. */
     signGetUrl?: SignGetUrl;
+    /** Signs uploads and checks stored files, set by createApp. */
+    uploads?: FileUploads;
     /** Cognito staff accounts, set by createApp. */
     staffAccounts?: StaffAccounts;
   };

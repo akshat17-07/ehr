@@ -825,4 +825,25 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC venue_payments_paid_on ON venue_payments (paid_on, id)',
     ],
   },
+  {
+    // Patient files (api-list.md Document): the file is in the files bucket at s3_key; sha256 is hex.
+    // status: pending (link given, not uploaded yet) / ready / misfiled. linked_from: the misfiled original (#99).
+    id: '0052_documents',
+    statements: () => [
+      ...createTable('documents', [
+        'patient_id uuid NOT NULL',
+        'type text NOT NULL',
+        'file_name text NOT NULL',
+        'mime text NOT NULL',
+        'size_bytes bigint NOT NULL',
+        'sha256 text NOT NULL',
+        's3_key text NOT NULL',
+        'uploaded_at timestamptz',
+        'linked_from uuid',
+      ]),
+      'CREATE INDEX ASYNC documents_patient ON documents (patient_id, created_at)',
+      // "Is this file already on the patient's record?" (#94).
+      'CREATE INDEX ASYNC documents_patient_hash ON documents (patient_id, sha256)',
+    ],
+  },
 ];

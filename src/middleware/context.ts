@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import type { Queryable } from '../db/migrate.js';
 import { signGetUrl, type SignGetUrl } from '../files/signed-url.js';
+import { s3Uploads, type FileUploads } from '../files/uploads.js';
 import { cognitoStaffAccounts, type StaffAccounts } from '../identity/staff-accounts.js';
 import type { AuthEnv, CurrentUser } from './auth.js';
 import { AppError } from './errors.js';
@@ -15,6 +16,10 @@ export async function dbOf(c: Context<AuthEnv>): Promise<Queryable> {
 
 export function signerOf(c: Context<AuthEnv>): SignGetUrl {
   return c.get('signGetUrl') ?? signGetUrl;
+}
+
+export function uploadsOf(c: Context<AuthEnv>): FileUploads {
+  return c.get('uploads') ?? s3Uploads;
 }
 
 export function accountsOf(c: Context<AuthEnv>): StaffAccounts {

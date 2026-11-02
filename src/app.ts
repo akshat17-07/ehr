@@ -13,6 +13,7 @@ import {
 import { getDb } from './db/client.js';
 import type { Queryable } from './db/migrate.js';
 import { signGetUrl, type SignGetUrl } from './files/signed-url.js';
+import { s3Uploads, type FileUploads } from './files/uploads.js';
 import { cognitoStaffAccounts, type StaffAccounts } from './identity/staff-accounts.js';
 import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
@@ -29,6 +30,7 @@ import { prescriptionsRoutes } from './modules/prescriptions/prescriptions.route
 import { admissionsRoutes } from './modules/admissions/admissions.routes.js';
 import { dischargeRoutes } from './modules/admissions/discharge.routes.js';
 import { mtpRoutes } from './modules/departments/mtp.routes.js';
+import { documentsRoutes } from './modules/documents/documents.routes.js';
 import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
@@ -49,11 +51,13 @@ export interface AppDeps {
   db?: () => Promise<Queryable>;
   /** Signed S3 links (tests pass a fake). */
   signUrl?: SignGetUrl;
+  /** Upload links and stored-file checks (tests pass a fake). */
+  uploads?: FileUploads;
   /** Cognito staff accounts (tests pass a fake). */
   staffAccounts?: StaffAccounts;
 }
 
-export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = cognitoStaffAccounts }: AppDeps = {}) {
+export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Uploads, staffAccounts = cognitoStaffAccounts }: AppDeps = {}) {
   const staff = new Hono<AuthEnv>()
     .use(requireUser('staff', WORKFORCE_GROUPS))
     .route('/me', meRoutes)
@@ -74,6 +78,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/discharge-summaries', dischargeRoutes)
     .route('/mtp-register', mtpRoutes)
     .route('/surgeries', surgeriesRoutes)
+    .route('/documents', documentsRoutes)
     .route('/allergies', allergiesRoutes)
     .route('/problems', problemsRoutes)
     .route('/', referenceRoutes);
@@ -91,6 +96,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .use(async (c, next) => {
       c.set('db', db);
       c.set('signGetUrl', signUrl);
+      c.set('uploads', uploads);
       c.set('staffAccounts', staffAccounts);
       await next();
     })
