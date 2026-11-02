@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
-import { voidRecord } from '../../db/records.js';
+import { updateRecord, voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertPatientDocuments } from '../documents/documents.js';
@@ -141,4 +141,36 @@ export async function voidPrescription(db: Queryable, id: string, reason: string
   const prescription = await getPrescription(db, id);
   if (prescription.status === 'dispensed') throw new AppError(409, 'dispensed', 'already dispensed: it can no longer be voided');
   return toPrescription(await voidRecord(db, 'prescriptions', { id, version: prescription.version, by, reason, status: 'void' }));
+}
+
+/**
+ * #64: a doctor confirms an uploaded draft with its final lines. The checks run now (409 rx_alerts unless cleared);
+ * then it can be dispensed. 409 unless it is an uploaded draft.
+ */
+export async function confirmUpload(
+  db: Queryable,
+  id: string,
+  input: { version: number; lines: RxLine[]; acknowledgedAlerts?: string[] },
+  by: string,
+  now = new Date(),
+): Promise<Prescription> {
+  const prescription = await getPrescription(db, id);
+  if (prescription.source !== 'uploaded' || prescription.status !== 'draft') {
+    throw new AppError(409, 'not_draft', 'only an uploaded draft is confirmed; this one is ' + prescription.status);
+  }
+  const acknowledged = input.acknowledgedAlerts ?? [];
+  assertAlertsCleared(await checkLines(db, prescription.patientId, input.lines), acknowledged);
+  await updateRecord(db, 'prescriptions', {
+    id,
+    version: input.version,
+    by,
+    set: {
+      status: 'confirmed',
+      lines: JSON.stringify(input.lines),
+      acknowledged_alerts: JSON.stringify(acknowledged),
+      confirmed_at: now,
+      confirmed_by: by,
+    },
+  });
+  return getPrescription(db, id);
 }

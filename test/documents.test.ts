@@ -193,3 +193,43 @@ describe('POST /staff/encounters/{id}/prescriptions/upload', () => {
     expect((await upload(seedId('e0000000', 999), { documentId: await photo(irfan) })).status).toBe(404);
   });
 });
+
+describe('POST /staff/prescriptions/{id}/confirm', () => {
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const confirm = (id: string, body: unknown, who = doctor) => app.request(`/staff/prescriptions/${id}/confirm`, json(body), who);
+  const amoxicillin = { drugId: seedId('d0000000', 3), drugText: 'Amoxicillin 500 mg', dose: '1 cap', frequency: 'TDS', days: 5 };
+  const paracetamol = { drugId: seedId('d0000000', 1), drugText: 'Paracetamol 500 mg', dose: '1 tab', frequency: 'SOS', days: 3 };
+  /** An uploaded draft for Ramesh (penicillin allergy, moderate). */
+  const draft = async () => {
+    const opened = await app.request('/staff/encounters', json({ patientId: ramesh, type: 'OPD', departmentId: seedId('de000000', 1), doctorId: seedId('a0000000', 3) }), doctor);
+    const encounterId = ((await opened.json()) as { id: string }).id;
+    const documentId = String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key, uploaded_at)
+       VALUES (gen_random_uuid(), 'ready', 'x', 'x', $1, 'prescription', 'rx.jpg', 'image/jpeg', 90000, md5(random()::text), 'k', now()) RETURNING id`,
+      [ramesh],
+    )).rows[0]?.id);
+    return (await (await app.request(`/staff/encounters/${encounterId}/prescriptions/upload`, json({ documentId }), doctor)).json()) as { id: string; version: number };
+  };
+
+  it('confirms with the final lines once the alerts are cleared', async () => {
+    const { id, version } = await draft();
+    const blocked = await confirm(id, { version, lines: [amoxicillin, paracetamol] });
+    expect(blocked.status).toBe(409);
+    const { alerts } = (await blocked.json()) as { alerts: { id: string; kind: string }[] };
+    expect(alerts.map((a) => a.kind)).toContain('allergy');
+    const res = await confirm(id, { version, lines: [amoxicillin, paracetamol], acknowledgedAlerts: alerts.map((a) => a.id) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'confirmed', source: 'uploaded', lines: [amoxicillin, paracetamol], confirmedBy: 'dev-doctor', confirmedAt: expect.any(String), version: version + 1 });
+    expect(await (await confirm(id, { version: version + 1, lines: [paracetamol] })).json()).toMatchObject({ error: 'not_draft' });
+  });
+
+  it('409 for a typed prescription or a stale version; 422 without lines; 403 for a nurse; 404 for none', async () => {
+    const { id, version } = await draft();
+    expect((await confirm(id, { version, lines: [] })).status).toBe(422);
+    expect((await confirm(id, { version, lines: [paracetamol] }, nurse)).status).toBe(403);
+    expect((await confirm(id, { version: version + 3, lines: [paracetamol] })).status).toBe(409);
+    const typed = String((await db.query("SELECT id FROM prescriptions WHERE source = 'typed' LIMIT 1")).rows[0]?.id ?? seedId('d5000000', 1));
+    if (typed !== seedId('d5000000', 1)) expect(await (await confirm(typed, { version: 1, lines: [paracetamol] })).json()).toMatchObject({ error: 'not_draft' });
+    expect((await confirm(seedId('d5000000', 999), { version: 1, lines: [paracetamol] })).status).toBe(404);
+  });
+});

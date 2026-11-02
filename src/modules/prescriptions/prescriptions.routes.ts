@@ -6,7 +6,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { getPrescription, voidPrescription } from './prescriptions.js';
+import { confirmUpload, getPrescription, voidPrescription } from './prescriptions.js';
 import { checkLines } from './rx-checks.js';
 
 // Prescriptions by id (api-list.md #64-#68), mounted at /staff/prescriptions. They are written in an encounter (#62).
@@ -36,6 +36,8 @@ const checkBody = z.object({ patientId: z.uuid(), lines: rxLines }).strict();
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
+const confirmation = z.object({ version: z.number().int().min(1), lines: rxLines, acknowledgedAlerts }).strict();
+
 export const prescriptionsRoutes = new Hono<AuthEnv>()
   // #65: the alerts while the doctor types, before saving.
   .post('/check', requirePermission('rx.write'), async (c) => {
@@ -54,6 +56,12 @@ export const prescriptionsRoutes = new Hono<AuthEnv>()
     return c.json(prescription);
   })
   // #68
+  // #64
+  .post('/:id/confirm', requirePermission('rx.confirm_upload'), async (c) => {
+    const prescription = await confirmUpload(await dbOf(c), c.req.param('id'), confirmation.parse(await bodyOf(c)), userOf(c).sub);
+    auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
+    return c.json(prescription);
+  })
   .post('/:id/void', requirePermission('rx.write'), async (c) => {
     const { reason } = reasonBody.parse(await bodyOf(c));
     const prescription = await voidPrescription(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
