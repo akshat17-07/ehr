@@ -413,3 +413,27 @@ describe('POST /staff/encounters/{id}/nursing-notes', () => {
     expect((await chart(id, { text: 'x' }, reception)).status).toBe(403);
   });
 });
+
+describe('POST /staff/encounters/{id}/diagnoses', () => {
+  const diagnose = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/encounters/${id}/diagnoses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('records a coded diagnosis; the encounter shows it', async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await diagnose(id, { icd10: 'j18.9', text: 'Right lower lobe pneumonia', kind: 'provisional' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ icd10: 'J18.9', kind: 'provisional', encounterId: id, status: 'active' });
+    const detail = (await (await app.request(`/staff/encounters/${id}`, {}, doctor)).json()) as { diagnoses: { icd10: string }[] };
+    expect(detail.diagnoses.map((d) => d.icd10)).toEqual(['J18.9']);
+  });
+
+  it('422 for a code not in the list or a bad kind; 409 once closed; 403 for a nurse', async () => {
+    const id = await open(seedId('9a710000', 2));
+    expect(await (await diagnose(id, { icd10: 'Z99.9', text: 'x', kind: 'final' })).json()).toMatchObject({ error: 'invalid_input' });
+    expect((await diagnose(id, { icd10: 'pneumonia', text: 'x', kind: 'final' })).status).toBe(422);
+    expect((await diagnose(id, { icd10: 'I10', text: 'x', kind: 'maybe' })).status).toBe(422);
+    expect((await diagnose(id, { icd10: 'I10', text: 'x', kind: 'final' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor);
+    expect((await diagnose(id, { icd10: 'I10', text: 'x', kind: 'final' })).status).toBe(409);
+  });
+});

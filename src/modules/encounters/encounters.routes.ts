@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
+import { addDiagnosis, DIAGNOSIS_KINDS } from './diagnoses.js';
 import { addNote, addNursingNote, NOTE_KINDS, SHIFTS } from './notes.js';
 import { noteText } from './notes.routes.js';
 import { recordObservation } from './observations.js';
@@ -67,6 +68,13 @@ const newObservation = z
   })
   .strict();
 
+const newDiagnosis = z
+  .object({
+    icd10: z.string().trim().regex(/^[A-Za-z]\d{2}(\.\w{1,4})?$/, 'an ICD-10 code looks like J18.9'),
+    text: z.string().trim().min(1).max(500),
+    kind: z.enum(DIAGNOSIS_KINDS),
+  })
+  .strict();
 const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional() }).strict();
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
@@ -135,4 +143,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const note = await addNursingNote(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: note.patientId, recordType: 'note', recordId: note.id });
     return c.json(note, 201);
+  })
+  // #50
+  .post('/:id/diagnoses', requirePermission('diagnosis.write'), async (c) => {
+    const input = newDiagnosis.parse(await bodyOf(c));
+    const diagnosis = await addDiagnosis(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: diagnosis.patientId, recordType: 'diagnosis', recordId: diagnosis.id });
+    return c.json(diagnosis, 201);
   });

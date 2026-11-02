@@ -543,4 +543,19 @@ export const migrations: Migration[] = [
     id: '0035_notes_shift',
     statements: () => ['ALTER TABLE notes ADD COLUMN shift text'],
   },
+  {
+    // Diagnoses (api-list.md Diagnosis): ICD-10 coded, provisional or final.
+    id: '0036_diagnoses',
+    statements: () => [
+      ...createTable('diagnoses', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'icd10 text NOT NULL',
+        'text text NOT NULL',
+        'kind text NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC diagnoses_encounter ON diagnoses (encounter_id, created_at)',
+      'CREATE INDEX ASYNC diagnoses_patient ON diagnoses (patient_id, created_at)',
+    ],
+  },
 ];

@@ -8,6 +8,7 @@ import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 import { checkDoctor } from '../users/users.js';
+import { encounterDiagnoses, type Diagnosis } from './diagnoses.js';
 import { draftNoteCount, encounterNotes, type Note } from './notes.js';
 import { encounterVitals, type Vital } from './vitals.js';
 
@@ -130,8 +131,8 @@ export interface EncounterDetail extends Encounter {
   patient: PatientSummary;
   vitals: Vital[];
   notes: Note[];
-  // Filled in as each part is built: diagnoses #166, prescriptions #178.
-  diagnoses: unknown[];
+  diagnoses: Diagnosis[];
+  // Filled in when prescriptions are built (#178).
   prescriptions: unknown[];
 }
 
@@ -142,7 +143,7 @@ export async function encounterDetail(db: Queryable, encounter: Encounter, now =
     patient: patients.get(encounter.patientId) as PatientSummary,
     vitals: await encounterVitals(db, encounter.id),
     notes: await encounterNotes(db, encounter.id),
-    diagnoses: [],
+    diagnoses: await encounterDiagnoses(db, encounter.id),
     prescriptions: [],
   };
 }
