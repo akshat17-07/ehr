@@ -1205,4 +1205,25 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC agent_links_patient ON agent_links (patient_id, created_at)',
     ],
   },
+  {
+    // Doctors and clinics who send patients (api-list.md Referrer). pseudo: typed in by staff, not yet claimed by a
+    // GP login (user_id). merged_into: a duplicate folded into another record (#... merge, Head Doctor / Admin).
+    // name_search is the lower-case name for the search box. There are no fee or commission columns.
+    id: '0081_referrers',
+    statements: () => [
+      ...createTable('referrers', [
+        'name text NOT NULL',
+        'name_search text NOT NULL',
+        'clinic text',
+        'town text',
+        'phone text',
+        'reg_no text',
+        'user_id uuid',
+        'merged_into uuid',
+        'pseudo boolean NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC referrers_phone ON referrers (phone)',
+      'CREATE INDEX ASYNC referrers_reg_no ON referrers (reg_no)',
+    ],
+  },
 ];
