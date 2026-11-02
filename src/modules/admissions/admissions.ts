@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
@@ -112,4 +113,41 @@ export async function listAdmissions(db: Queryable, query: AdmissionQuery, now =
   const page = await pageRows(db, { select: 'SELECT * FROM admissions', where, params, ...order }, query, toAdmission);
   const byId = await patientSummaries(db, page.items.map((a) => a.patientId), now);
   return { ...page, items: page.items.map((a) => ({ ...a, patient: byId.get(a.patientId) })) };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One admission; 404 if there is none. */
+export async function getAdmission(db: Queryable, id: string): Promise<Admission> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM admissions WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such admission');
+  return toAdmission(rows[0] as Record<string, unknown>);
+}
+
+/** #71: moves a current admission to another bed (the old bed is in the history, with the reason). */
+export async function transfer(
+  db: Queryable,
+  id: string,
+  input: { version: number; ward: string; bed: string; reason?: string },
+  by: string,
+): Promise<Admission> {
+  const admission = await getAdmission(db, id);
+  if (admission.status !== 'current') throw new AppError(409, 'discharged', 'this patient has been discharged');
+  const key = bedKey(input.ward, input.bed);
+  if (key === bedKey(admission.ward, admission.bed)) throw new AppError(422, 'invalid_input', 'bed: the patient is already in this bed');
+  await assertBedFree(db, input.ward, input.bed);
+  try {
+    const row = await updateRecord(db, 'admissions', {
+      id,
+      version: input.version,
+      by,
+      set: { ward: input.ward, bed: input.bed, bed_key: key },
+      ...(input.reason && { reason: input.reason }),
+    });
+    return toAdmission(row);
+  } catch (error) {
+    // 23505: another admission took the bed in between.
+    if ((error as { code?: string }).code === '23505') throw new AppError(409, 'bed_taken', `${input.ward} bed ${input.bed} is taken`);
+    throw error;
+  }
 }

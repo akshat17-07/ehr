@@ -5,7 +5,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { admit, listAdmissions } from './admissions.js';
+import { admit, listAdmissions, transfer } from './admissions.js';
 
 // Admissions (api-list.md #69-#73), mounted at /staff/admissions.
 
@@ -29,6 +29,10 @@ const listQuery = pageQuery.extend({
   current: z.enum(['true', 'false']).optional(),
 });
 
+const transferBody = z
+  .object({ version: z.number().int().min(1), ward, bed, reason: z.string().trim().min(1).max(500).optional() })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -43,4 +47,11 @@ export const admissionsRoutes = new Hono<AuthEnv>()
     const admission = await admit(await dbOf(c), newAdmission.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: admission.patientId, recordType: 'admission', recordId: admission.id });
     return c.json(admission, 201);
+  })
+  // #71
+  .post('/:id/transfer', requirePermission('admission.update'), async (c) => {
+    const input = transferBody.parse(await bodyOf(c));
+    const admission = await transfer(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: admission.patientId, recordType: 'admission', recordId: admission.id, ...(input.reason && { reason: input.reason }) });
+    return c.json(admission);
   });

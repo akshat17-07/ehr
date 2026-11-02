@@ -74,3 +74,29 @@ describe('GET /staff/admissions', () => {
     expect((await list('', asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/admissions/{id}/transfer', () => {
+  const current = async (patientId: string) =>
+    (await db.query('SELECT id, version FROM admissions WHERE current_patient = $1', [patientId])).rows[0] as { id: string; version: number };
+  const move = (id: string, body: unknown, who = doctor) => app.request(`/staff/admissions/${id}/transfer`, json(body), who);
+
+  it('moves to a free bed; the old bed is free again; the old one is in the history', async () => {
+    const { id, version } = await current(irfan);
+    const res = await move(id, { version, ward: 'ICU', bed: '4', reason: 'platelets under 20,000' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ward: 'ICU', bed: '4', version: version + 1, status: 'current' });
+    const history = await db.query('SELECT data, reason FROM admissions_versions WHERE record_id = $1', [id]);
+    expect(history.rows[0]).toMatchObject({ reason: 'platelets under 20,000' });
+    expect(JSON.parse(String(history.rows[0]?.data))).toMatchObject({ ward: 'General Ward A', bed: '1' });
+    expect((await admit({ patientId: seedId('9a710000', 1), bed: '1' })).status).toBe(201);
+  });
+
+  it('409 for a taken bed or a stale version; 422 for the same bed; 404 for none; 403 for a nurse', async () => {
+    const { id, version } = await current(kavita);
+    expect(await (await move(id, { version, ward: 'icu', bed: '4' })).json()).toMatchObject({ error: 'bed_taken' });
+    expect((await move(id, { version: version + 5, ward: 'ICU', bed: '5' })).status).toBe(409);
+    expect((await move(id, { version, ward: 'General Ward A', bed: '2' })).status).toBe(422);
+    expect((await move(seedId('ad000000', 999), { version: 1, ward: 'ICU', bed: '5' })).status).toBe(404);
+    expect((await move(id, { version, ward: 'ICU', bed: '5' }, nurse)).status).toBe(403);
+  });
+});
