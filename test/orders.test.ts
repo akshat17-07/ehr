@@ -31,6 +31,8 @@ describe('POST /staff/encounters/{id}/orders', () => {
       encounterId, patientId: ramesh, kind: 'lab', code: 'CBC', name: 'Complete blood count', status: 'ordered', results: [], createdBy: 'dev-doctor',
     });
     expect((await order({ kind: 'imaging', name: 'X-ray chest PA view' })).status).toBe(201);
+    // A second apart: the local database clock is per millisecond, and same-time rows sort by random id.
+    await db.query("UPDATE orders SET created_at = created_at - interval '1 second' WHERE name = 'Complete blood count'");
   });
 
   it('422 for a bad kind or body; 404 for no encounter; 403 for a nurse; 409 once closed', async () => {

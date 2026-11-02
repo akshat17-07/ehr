@@ -674,4 +674,23 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC mar_entries_admission ON mar_entries (admission_id, at)',
     ],
   },
+  {
+    // Discharge summaries (api-list.md DischargeSummary): one per IPD encounter; medicines is JSON text of RxLines.
+    id: '0044_discharge_summaries',
+    statements: () => [
+      ...createTable('discharge_summaries', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'diagnosis_text text NOT NULL',
+        'course text NOT NULL',
+        'procedures text',
+        'medicines text NOT NULL',
+        'advice text NOT NULL',
+        'follow_up_date date',
+        'signed_at timestamptz',
+        'signed_by text',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC discharge_summaries_encounter ON discharge_summaries (encounter_id)',
+    ],
+  },
 ];

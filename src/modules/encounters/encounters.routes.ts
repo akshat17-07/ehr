@@ -6,6 +6,8 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
+import { writeSummary } from '../admissions/discharge.js';
+import { summaryFields } from '../admissions/discharge.routes.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
 import { writePrescription } from '../prescriptions/prescriptions.js';
@@ -86,6 +88,7 @@ const newOrder = z
     notes: z.string().trim().min(1).max(1000).optional(),
   })
   .strict();
+const newSummary = z.object(summaryFields).strict();
 const newPrescription = z.object({ lines: rxLines, acknowledgedAlerts }).strict();
 const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional() }).strict();
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
@@ -176,4 +179,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const prescription = await writePrescription(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
     return c.json(prescription, 201);
+  })
+  // #74
+  .post('/:id/discharge-summary', requirePermission('discharge.write'), async (c) => {
+    const input = newSummary.parse(await bodyOf(c));
+    const summary = await writeSummary(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: summary.patientId, recordType: 'discharge_summary', recordId: summary.id });
+    return c.json(summary, 201);
   });

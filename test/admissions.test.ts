@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
+import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -159,5 +160,36 @@ describe('POST /staff/admissions/{id}/mar', () => {
     expect((await record(id, { prescriptionId, lineIndex: 0, outcome: 'given', at: '2020-01-01T00:00:00Z' })).status).toBe(422);
     expect((await record(id, { prescriptionId, lineIndex: 0, outcome: 'given' }, asStaff('dev-reception', ['staff']))).status).toBe(403);
     expect((await record(seedId('ad000000', 999), { prescriptionId, lineIndex: 0, outcome: 'given' })).status).toBe(404);
+  });
+});
+
+describe('POST /staff/encounters/{id}/discharge-summary', () => {
+  const encounterOf = async (patientId: string) =>
+    String((await db.query('SELECT encounter_id FROM admissions WHERE current_patient = $1', [patientId])).rows[0]?.encounter_id);
+  const summary = {
+    diagnosisText: 'Dengue fever with thrombocytopenia (A90)',
+    course: 'IV fluids, platelets monitored daily; rose to 1.2 lakh by day 5.',
+    medicinesOnDischarge: [{ drugText: 'Paracetamol 500 mg', dose: '1 tablet', frequency: 'when fever', days: 3 }],
+    advice: 'Plenty of fluids. Come back if bleeding or fever returns.',
+    followUpDate: indiaDate(new Date(Date.now() + 7 * 86_400_000)),
+  };
+  const write = (encounterId: string, body: unknown, who = doctor) => app.request(`/staff/encounters/${encounterId}/discharge-summary`, json(body), who);
+
+  it('writes a draft summary on the IPD encounter; 409 for a second one', async () => {
+    const encounterId = await encounterOf(irfan);
+    const res = await write(encounterId, summary);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ encounterId, patientId: irfan, status: 'draft', followUpDate: summary.followUpDate, medicinesOnDischarge: [{ days: 3 }] });
+    expect(await (await write(encounterId, summary)).json()).toMatchObject({ error: 'already_written' });
+  });
+
+  it('422 for an OPD encounter, a past follow-up or a bad body; 403 for a nurse; 404 for none', async () => {
+    const opd = await app.request('/staff/encounters', json({ patientId: kavita, type: 'OPD', departmentId: med, doctorId }), doctor);
+    expect((await write(((await opd.json()) as { id: string }).id, summary)).status).toBe(422);
+    const encounterId = await encounterOf(kavita);
+    expect((await write(encounterId, { ...summary, followUpDate: '2020-01-01' })).status).toBe(422);
+    expect((await write(encounterId, { ...summary, advice: '' })).status).toBe(422);
+    expect((await write(encounterId, summary, nurse)).status).toBe(403);
+    expect((await write(seedId('e0000000', 999), summary)).status).toBe(404);
   });
 });
