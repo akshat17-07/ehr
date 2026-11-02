@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -72,4 +73,32 @@ export async function addProblem(db: Queryable, patientId: string, input: NewPro
   );
   const { rows } = await db.query(`${PROBLEM_SELECT} WHERE id = $1`, [id]);
   return toProblem(rows[0] as Record<string, unknown>);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** #57: resolves an active problem (default today); the note is kept as the history reason. */
+export async function resolveProblem(
+  db: Queryable,
+  id: string,
+  input: { resolvedAt?: string; note?: string },
+  by: string,
+  now = new Date(),
+): Promise<Problem> {
+  const { rows } = UUID.test(id) ? await db.query(`${PROBLEM_SELECT} WHERE id = $1`, [id]) : { rows: [] };
+  const problem = rows[0] ? toProblem(rows[0] as Record<string, unknown>) : undefined;
+  if (!problem || problem.voidedAt) throw new AppError(404, 'not_found', 'no such problem');
+  if (problem.status === 'resolved') throw new AppError(409, 'resolved', 'this problem is already resolved');
+  const resolvedAt = input.resolvedAt ?? indiaDate(now);
+  if (resolvedAt > indiaDate(now)) throw new AppError(422, 'invalid_input', 'resolvedAt: cannot be in the future');
+  if (problem.onset && resolvedAt < problem.onset) throw new AppError(422, 'invalid_input', 'resolvedAt: before the onset');
+  await updateRecord(db, 'problems', {
+    id,
+    version: problem.version,
+    by,
+    set: { status: 'resolved', resolved_at: resolvedAt },
+    ...(input.note && { reason: input.note }),
+  });
+  const updated = await db.query(`${PROBLEM_SELECT} WHERE id = $1`, [id]);
+  return toProblem(updated.rows[0] as Record<string, unknown>);
 }

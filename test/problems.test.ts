@@ -66,3 +66,28 @@ describe('POST /staff/patients/{id}/problems', () => {
     expect((await add(rahul, { text: 'Something' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/problems/{id}/resolve', () => {
+  const hypertension = seedId('9b0b0000', 1);
+  const resolve = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/problems/${id}/resolve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('422 for a future date, a date before onset or a bad body; 403 for a nurse; 404 for none', async () => {
+    expect((await resolve(hypertension, { resolvedAt: '2999-01-01' })).status).toBe(422);
+    expect((await resolve(hypertension, { resolvedAt: '2019-05-31' })).status).toBe(422);
+    expect((await resolve(hypertension, { when: 'now' })).status).toBe(422);
+    expect((await resolve(hypertension, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await resolve(seedId('9b0b0000', 999), {})).status).toBe(404);
+    expect((await resolve('nope', {})).status).toBe(404);
+  });
+
+  it('resolves with a date and note; 409 when already resolved', async () => {
+    const res = await resolve(hypertension, { resolvedAt: '2026-10-01', note: 'BP normal off medicines for 6 months' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'resolved', resolvedAt: '2026-10-01', onset: '2019-06-01', version: 2, updatedBy: 'dev-doctor' });
+    expect((await list(irfan, '?active=true')).body.map((p) => p.text)).not.toContain('Hypertension');
+    const history = await db.query('SELECT reason FROM problems_versions WHERE record_id = $1', [hypertension]);
+    expect(history.rows).toEqual([{ reason: 'BP normal off medicines for 6 months' }]);
+    expect(await (await resolve(hypertension, {})).json()).toMatchObject({ error: 'resolved' });
+  });
+});
