@@ -9,7 +9,7 @@ import { assertPatientAccess } from '../access/patient-access.js';
 import { writeSummary } from '../admissions/discharge.js';
 import { summaryFields } from '../admissions/discharge.routes.js';
 import { checkIn } from '../appointments/appointments.js';
-import { getFormF } from '../departments/form-f.js';
+import { assertNoFetalSex, getFormF, writeFormF } from '../departments/form-f.js';
 import { getPatient } from '../patients/patients.js';
 import { writePrescription } from '../prescriptions/prescriptions.js';
 import { acknowledgedAlerts, rxLines } from '../prescriptions/prescriptions.routes.js';
@@ -95,6 +95,15 @@ const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
+// documentId comes with documents (#211).
+const newFormF = z
+  .object({
+    indication: z.string().trim().min(3).max(500),
+    procedure: z.string().trim().min(3).max(200),
+    declarationSigned: z.literal(true),
+  })
+  .strict();
+
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
 export const encountersRoutes = new Hono<AuthEnv>()
@@ -196,4 +205,15 @@ export const encountersRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: encounter.patientId, recordType: 'encounter', recordId: encounter.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, encounter.patientId));
     return c.json(await getFormF(db, encounter.id));
+  })
+  // #82
+  .post('/:id/form-f', async (c) => {
+    const db = await dbOf(c);
+    const encounter = await getEncounter(db, c.req.param('id'));
+    await assertPermission(c, 'pcpndt.write', { patientId: encounter.patientId, departmentIds: [encounter.departmentId] });
+    const body: unknown = await bodyOf(c);
+    assertNoFetalSex(body);
+    const form = await writeFormF(db, encounter, newFormF.parse(body), userOf(c).sub);
+    auditDetails(c, { patientId: form.patientId, recordType: 'form_f', recordId: form.id });
+    return c.json(form, 201);
   });

@@ -43,3 +43,34 @@ describe('GET /staff/encounters/{id}/form-f', () => {
     expect((await get(seedId('e0000000', 999))).status).toBe(404);
   });
 });
+
+describe('POST /staff/encounters/{id}/form-f', () => {
+  const write = (id: string, body: unknown, who = doctor) => app.request(`/staff/encounters/${id}/form-f`, json(body), who);
+  const form = { indication: 'Anomaly scan at 20 weeks', procedure: 'Ultrasound, obstetric', declarationSigned: true };
+  const openFor = async (patientId: string) =>
+    ((await (await app.request('/staff/encounters', json({ patientId, type: 'OPD', departmentId: MED, doctorId: seedId('a0000000', 3) }), doctor)).json()) as { id: string }).id;
+
+  it('writes the form once per encounter, signed by the doctor', async () => {
+    const id = await openFor(kavita);
+    const res = await write(id, form);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ encounterId: id, patientId: kavita, doctorId: seedId('a0000000', 3), declarationSigned: true, version: 1 });
+    expect(await (await write(id, form)).json()).toMatchObject({ error: 'already_written' });
+  });
+
+  it('422 fetal_sex_forbidden for any sex field, whatever its value', async () => {
+    const id = await openFor(kavita);
+    for (const key of ['fetalSex', 'sex', 'gender', 'babyGender']) {
+      expect(await (await write(id, { ...form, [key]: 'not told' })).json()).toMatchObject({ error: 'fetal_sex_forbidden' });
+    }
+    expect((await db.query('SELECT count(*)::int AS n FROM form_f WHERE encounter_id = $1', [id])).rows[0]).toEqual({ n: 0 });
+  });
+
+  it('422 without the declaration or for a male patient; 403 without a grant; 404 for no encounter', async () => {
+    const id = await openFor(kavita);
+    expect((await write(id, { ...form, declarationSigned: false })).status).toBe(422);
+    expect((await write(await openFor(seedId('9a710000', 5)), form)).status).toBe(422);
+    expect((await write(id, form, surgeon)).status).toBe(403);
+    expect((await write(seedId('e0000000', 999), form)).status).toBe(404);
+  });
+});
