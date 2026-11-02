@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { applyStockTake, checkStockTake, type StockTake } from './batches.js';
@@ -90,4 +91,23 @@ export async function writeIssue(tx: Queryable, { input, take, lines }: Prepared
     ],
   );
   return toStockIssue(rows[0] as Record<string, unknown>);
+}
+
+/** The visit, admission or surgery an issue is for: each must be the patient's (422). */
+const LINKS = [
+  ['encounterId', 'encounters'],
+  ['admissionId', 'admissions'],
+  ['surgeryId', 'surgeries'],
+] as const;
+
+/** #279: consumables used on a patient, charged to their bill. See prepareIssue for the checks. */
+export async function issueStock(db: Queryable, input: Omit<NewIssue, 'indentId'>, by: string, now = new Date()): Promise<StockIssue> {
+  for (const [field, table] of LINKS) {
+    const id = input[field];
+    if (!id) continue;
+    const { rows } = await db.query(`SELECT patient_id FROM ${table} WHERE id = $1`, [id]);
+    if (rows[0]?.patient_id !== input.patientId) throw new AppError(422, 'validation_failed', `${field}: not this patient's`);
+  }
+  const prepared = await prepareIssue(db, input, now);
+  return withTransaction(db, (tx) => writeIssue(tx, prepared, by));
 }

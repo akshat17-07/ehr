@@ -303,3 +303,28 @@ describe('POST /staff/stock/indents/{id}/issue', () => {
     expect((await issue({}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/issues', () => {
+  const issue = (body: Record<string, unknown>, who = medical) =>
+    app.request('/staff/stock/issues', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const ramesh = seedId('9a710000', 1);
+  const gz = seedId('ba000000', 99);
+  const line = { itemId: gauze, batchId: gz, qty: 1 };
+  const doctor = asStaff('dev-doctor', ['doctor']);
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('takes the items for the patient, linked to the visit, priced at MRP', async () => {
+    const encounter = (await (await app.request('/staff/encounters', json({ patientId: ramesh, type: 'OPD', departmentId: seedId('de000000', 1), doctorId: seedId('a0000000', 3) }), doctor)).json()) as { id: string };
+    const res = await issue({ patientId: ramesh, encounterId: encounter.id, lines: [{ ...line, qty: 3 }] });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: ramesh, encounterId: encounter.id, totalPaise: 13500, lines: [{ itemId: gauze, qty: 3, amountPaise: 13500 }] });
+    expect(await (await issue({ patientId: seedId('9a710000', 3), encounterId: encounter.id, lines: [line] })).json()).toMatchObject({ error: 'validation_failed' });
+  });
+
+  it('409 for short stock; 422 for an unknown link; 404 for no patient; 403 for reception', async () => {
+    expect(await (await issue({ patientId: ramesh, lines: [{ ...line, qty: 9_999 }] })).json()).toMatchObject({ error: 'short_stock' });
+    expect((await issue({ patientId: ramesh, surgeryId: seedId('17e00000', 999), lines: [line] })).status).toBe(422);
+    expect((await issue({ patientId: seedId('9a710000', 999), lines: [line] })).status).toBe(404);
+    expect((await issue({ patientId: ramesh, lines: [line] }, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});

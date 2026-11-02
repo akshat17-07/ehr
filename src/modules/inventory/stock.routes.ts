@@ -7,6 +7,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { receiveGoods } from './grn.js';
 import { issueIndent, requestIndent } from './indents.js';
+import { issueStock } from './issues.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
 import { listStock, STOCK_ALERT_KINDS, stockAlerts } from './stock.js';
@@ -67,6 +68,10 @@ const issueLines = z.array(z.object({ itemId: z.uuid(), batchId: z.uuid(), qty: 
 
 const indentIssue = z.object({ patientId: z.uuid(), lines: issueLines }).strict();
 
+const newIssue = z
+  .object({ patientId: z.uuid(), encounterId: z.uuid().optional(), admissionId: z.uuid().optional(), surgeryId: z.uuid().optional(), lines: issueLines })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -97,6 +102,13 @@ export const stockRoutes = new Hono<AuthEnv>()
     const result = await issueIndent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: result.issue.patientId, recordType: 'stock_issue', recordId: result.issue.id });
     return c.json(result);
+  })
+  // #279
+  .post('/issues', requirePermission('stock.issue'), async (c) => {
+    const input = newIssue.parse(await bodyOf(c));
+    const issue = await issueStock(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { patientId: issue.patientId, recordType: 'stock_issue', recordId: issue.id });
+    return c.json(issue, 201);
   })
   // #110
   .post('/quarantine', requirePermission('stock.quarantine'), async (c) => {
