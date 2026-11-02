@@ -189,3 +189,34 @@ describe('POST /staff/encounters/{id}/vitals', () => {
     expect((await vitals(id, { pulse: 70 })).status).toBe(409);
   });
 });
+
+describe('GET /staff/patients/{id}/vitals', () => {
+  const irfan = seedId('9a710000', 3);
+  const history = (query = '', who = doctor) => app.request(`/staff/patients/${irfan}/vitals${query}`, {}, who);
+
+  it("lists the patient's vitals across encounters, newest first, by date range and page", async () => {
+    const insert = (n: number, at: string, pulse: number) =>
+      db.query(
+        "INSERT INTO vitals (id, status, created_by, updated_by, encounter_id, patient_id, taken_at, pulse) VALUES ($1, 'active', 'x', 'x', $2, $3, $4, $5)",
+        [seedId('717a0000', n), seedId('e0c00000', 50), irfan, at, pulse],
+      );
+    await insert(1, '2026-03-01T05:00:00Z', 70);
+    await insert(2, '2026-04-01T05:00:00Z', 80);
+    await insert(3, '2026-05-01T05:00:00Z', 90);
+    await db.query('UPDATE vitals SET voided_at = now() WHERE id = $1', [seedId('717a0000', 3)]);
+
+    const all = (await (await history()).json()) as { items: { pulse: number }[] };
+    expect(all.items.map((v) => v.pulse)).toEqual([80, 70]);
+    const march = (await (await history('?from=2026-03-01&to=2026-03-31')).json()) as { items: { pulse: number }[] };
+    expect(march.items.map((v) => v.pulse)).toEqual([70]);
+    const first = (await (await history('?limit=1')).json()) as { items: { pulse: number }[]; nextCursor: string };
+    const next = (await (await history(`?limit=1&cursor=${first.nextCursor}`)).json()) as { items: { pulse: number }[] };
+    expect(next.items.map((v) => v.pulse)).toEqual([70]);
+  });
+
+  it('422 for a bad date; 404 for no such patient; 403 for a GP', async () => {
+    expect((await history('?from=yesterday')).status).toBe(422);
+    expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/vitals`, {}, doctor)).status).toBe(404);
+    expect((await history('', asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
+import { indiaDayStart } from '../../time/india.js';
 import type { BaseFields } from '../patients/patients.js';
 import { assertOpen, getEncounter } from './encounters.js';
 
@@ -65,4 +67,19 @@ export async function recordVital(db: Queryable, encounterId: string, input: New
 export async function encounterVitals(db: Queryable, encounterId: string): Promise<Vital[]> {
   const { rows } = await db.query('SELECT * FROM vitals WHERE encounter_id = $1 AND voided_at IS NULL ORDER BY taken_at, id', [encounterId]);
   return rows.map(toVital);
+}
+
+export interface VitalsQuery extends PageQuery {
+  /** India dates, YYYY-MM-DD, both days included. */
+  from?: string;
+  to?: string;
+}
+
+/** #42: a patient's vitals across encounters, newest first (for trends). */
+export async function patientVitals(db: Queryable, patientId: string, query: VitalsQuery): Promise<Page<Vital>> {
+  const params: unknown[] = [patientId];
+  const where = ['patient_id = $1', 'voided_at IS NULL'];
+  if (query.from) where.push(`taken_at >= $${params.push(indiaDayStart(query.from))}`);
+  if (query.to) where.push(`taken_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
+  return pageRows(db, { select: 'SELECT * FROM vitals', where, params, orderBy: ['taken_at', 'id'] }, query, toVital);
 }
