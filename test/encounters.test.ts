@@ -437,3 +437,29 @@ describe('POST /staff/encounters/{id}/diagnoses', () => {
     expect((await diagnose(id, { icd10: 'I10', text: 'x', kind: 'final' })).status).toBe(409);
   });
 });
+
+describe('POST /staff/diagnoses/{id}/void', () => {
+  const voidIt = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/diagnoses/${id}/void`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('voids a diagnosis with its reason, also after the encounter closed; it leaves the encounter', async () => {
+    const encounter = await open(seedId('9a710000', 2));
+    const created = await app.request(`/staff/encounters/${encounter}/diagnoses`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icd10: 'B54', text: 'Malaria', kind: 'provisional' }),
+    }, doctor);
+    const id = ((await created.json()) as { id: string }).id;
+    await app.request(`/staff/encounters/${encounter}/close`, { method: 'POST' }, doctor);
+    expect((await voidIt(id, { reason: 'no' })).status).toBe(422);
+    const res = await voidIt(id, { reason: 'smear negative, entered in error' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'voided', voidedBy: 'dev-doctor', voidReason: 'smear negative, entered in error', version: 2 });
+    expect(await (await voidIt(id, { reason: 'smear negative again' })).json()).toMatchObject({ error: 'voided' });
+    const detail = (await (await app.request(`/staff/encounters/${encounter}`, {}, doctor)).json()) as { diagnoses: unknown[] };
+    expect(detail.diagnoses).toEqual([]);
+  });
+
+  it('404 for none; 403 for a nurse', async () => {
+    expect((await voidIt(seedId('e0c00000', 999), { reason: 'not real' })).status).toBe(404);
+    expect((await voidIt(seedId('e0c00000', 999), { reason: 'not real' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

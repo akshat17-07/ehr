@@ -118,3 +118,27 @@ export async function listVersions<T>(
     };
   });
 }
+
+export interface RecordVoid {
+  id: string;
+  version: number;
+  by: string;
+  reason: string;
+  /** The status it ends in: voided unless the record has its own word (an appointment is cancelled). */
+  status?: string;
+  now?: Date;
+}
+
+/** Voids a record: it stays, marked with who, when and why, and drops out of lists. 409 if already voided. */
+export async function voidRecord(db: Queryable, table: string, change: RecordVoid): Promise<Record<string, unknown>> {
+  const { rows } = await db.query(`SELECT voided_at FROM ${checkName(table)} WHERE id = $1`, [change.id]);
+  if (rows[0]?.voided_at) throw new AppError(409, 'voided', 'this record is already voided');
+  const now = change.now ?? new Date();
+  return updateRecord(db, table, {
+    id: change.id,
+    version: change.version,
+    by: change.by,
+    reason: change.reason,
+    set: { status: change.status ?? 'voided', voided_at: now, voided_by: change.by, void_reason: change.reason },
+  });
+}

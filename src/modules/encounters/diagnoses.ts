@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import type { BaseFields } from '../patients/patients.js';
@@ -57,4 +58,14 @@ export async function encounterDiagnoses(db: Queryable, encounterId: string): Pr
     encounterId,
   ]);
   return rows.map(toDiagnosis);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** #51: voids a wrong diagnosis, with the reason (also in a closed encounter: it corrects the record). */
+export async function voidDiagnosis(db: Queryable, id: string, reason: string, by: string): Promise<Diagnosis> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM diagnoses WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such diagnosis');
+  const voided = await voidRecord(db, 'diagnoses', { id, version: Number(rows[0].version), by, reason });
+  return toDiagnosis(voided);
 }
