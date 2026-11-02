@@ -846,4 +846,9 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC documents_patient_hash ON documents (patient_id, sha256)',
     ],
   },
+  {
+    // The pharmacy queue (#100): confirmed prescriptions by the time they were confirmed.
+    id: '0053_prescriptions_queue',
+    statements: () => ['CREATE INDEX ASYNC prescriptions_status_confirmed ON prescriptions (status, confirmed_at)'],
+  },
 ];
