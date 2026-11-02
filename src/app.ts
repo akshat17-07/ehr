@@ -37,6 +37,7 @@ import { stockRoutes } from './modules/inventory/stock.routes.js';
 import { inventoryRoutes } from './modules/inventory/items.routes.js';
 import { recallsRoutes } from './modules/inventory/recalls.routes.js';
 import { depositsRoutes } from './modules/billing/deposits.routes.js';
+import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { billsRoutes } from './modules/billing/bills.routes.js';
 import { purchaseOrdersRoutes } from './modules/inventory/purchase-orders.routes.js';
 import { registersRoutes } from './modules/pharmacy/registers.routes.js';
@@ -95,6 +96,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Upload
     .route('/recalls', recallsRoutes)
     .route('/bills', billsRoutes)
     .route('/deposits', depositsRoutes)
+    .route('/reports', reportsRoutes)
     .route('/purchase-orders', purchaseOrdersRoutes)
     .route('/registers', registersRoutes)
     .route('/allergies', allergiesRoutes)
