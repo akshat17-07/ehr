@@ -28,3 +28,24 @@ describe('GET /admin/bundles', () => {
     expect((await app.request('/admin/bundles', {}, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+describe('POST /admin/bundles', () => {
+  const post = (body: unknown, who = admin) => app.request('/admin/bundles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('adds a bundle with sorted permissions; the name cannot be reused', async () => {
+    const res = await post({ name: 'lab_desk', permissions: ['result.record', 'document.view', 'result.record'] });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { id: string };
+    expect(made).toMatchObject({ name: 'lab_desk', permissions: ['document.view', 'result.record'], builtIn: false, version: 1 });
+    expect(((await (await app.request('/admin/bundles', {}, admin)).json()) as { name: string }[]).map((b) => b.name)).toContain('lab_desk');
+    expect(await (await post({ name: 'lab_desk', permissions: ['document.view'] })).json()).toMatchObject({ error: 'duplicate', bundleId: made.id });
+  });
+
+  it('422 for unknown, Admin-only or grant-only permissions or a bad name; 403 for a Head Doctor', async () => {
+    expect((await post({ name: 'x_desk', permissions: ['no.such'] })).status).toBe(422);
+    expect((await post({ name: 'x_desk', permissions: ['settings.bundles'] })).status).toBe(422);
+    expect((await post({ name: 'x_desk', permissions: ['mtp.view'] })).status).toBe(422);
+    expect((await post({ name: 'Front Desk', permissions: ['document.view'] })).status).toBe(422);
+    expect((await post({ name: 'x_desk', permissions: ['document.view'] }, head)).status).toBe(403);
+  });
+});

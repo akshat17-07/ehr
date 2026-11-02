@@ -4,7 +4,8 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { PERMISSIONS } from '../../permissions/catalog.js';
 import { loadPermissions, requirePermission } from '../../permissions/check.js';
-import { bundlesNamed, listBundles } from '../../permissions/bundles.js';
+import { addBundle, bundlesNamed, listBundles } from '../../permissions/bundles.js';
+import { auditDetails } from '../../middleware/audit.js';
 import { checkCustomLists, getCustomPermissions, saveBundles, saveCustomPermissions } from '../../permissions/custom.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { listTypePermissions, saveTypePermissions } from '../../permissions/type-permissions.js';
@@ -41,9 +42,20 @@ const typeChange = z
   })
   .strict();
 
+// Bundle names: lower case, as the built-in ones (front_desk, lab_staff ...).
+const bundleName = z.string().trim().regex(/^[a-z][a-z0-9_]{1,49}$/, 'lower-case letters, digits and _');
+const newBundle = z.object({ name: bundleName, permissions: z.array(z.string()).min(1).max(100) }).strict();
+
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
   // #164: every active bundle, by name.
   .get('/bundles', requirePermission('grant.view'), async (c) => c.json(await listBundles(await dbOf(c))))
+  // #165 (Admin only)
+  .post('/bundles', requirePermission('settings.bundles'), async (c) => {
+    const body = newBundle.parse(await c.req.json().catch(() => undefined));
+    const bundle = await addBundle(await dbOf(c), body, userOf(c).sub);
+    auditDetails(c, { recordType: 'bundle', recordId: bundle.id });
+    return c.json(bundle, 201);
+  })
 
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.
   .get('/permissions', requirePermission('user.permissions'), (c) => c.json(PERMISSIONS))

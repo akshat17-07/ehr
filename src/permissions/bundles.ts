@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../db/migrate.js';
+import { AppError } from '../middleware/errors.js';
 import { seedId, seedInsert } from '../db/table.js';
-import type { Permission } from './catalog.js';
+import { isPermission, PERMISSIONS, type Permission } from './catalog.js';
+import { GRANT_ONLY } from './defaults.js';
 
 // Bundles: named sets of permissions given to a user on top of their type (api-list.md Bundle; section 4 "B").
 // The built-in ones are made with the database; an Admin can add more and edit them (settings.bundles).
@@ -62,4 +65,34 @@ export async function bundlesNamed(db: Queryable, names: readonly string[]): Pro
     [...names],
   );
   return rows.map(fromRow);
+}
+
+const ADMIN_ONLY = new Set<string>(PERMISSIONS.filter((p) => p.adminOnly).map((p) => p.key));
+
+/** 422 for an unknown, Admin-only or grant-only permission (those are never bundled). Sorted, without repeats. */
+export function checkBundlePermissions(keys: readonly string[]): Permission[] {
+  const issues = keys.flatMap((key) =>
+    !isPermission(key)
+      ? [`unknown permission: ${key}`]
+      : ADMIN_ONLY.has(key)
+        ? [`${key} is Admin-only`]
+        : GRANT_ONLY.includes(key)
+          ? [`${key} is given only with a grant`]
+          : [],
+  );
+  if (issues.length) throw new AppError(422, 'invalid_input', issues.join('; '));
+  return [...new Set(keys)].sort() as Permission[];
+}
+
+/** #165: 409 duplicate if the name is taken (bundle names are never reused). */
+export async function addBundle(db: Queryable, input: { name: string; permissions: string[] }, by: string): Promise<Bundle> {
+  const permissions = checkBundlePermissions(input.permissions);
+  const { rows: taken } = await db.query('SELECT id FROM bundles WHERE name = $1', [input.name]);
+  if (taken[0]) throw new AppError(409, 'duplicate', 'a bundle with this name exists', { bundleId: String(taken[0].id) });
+  const { rows } = await db.query(
+    `INSERT INTO bundles (id, status, created_by, updated_by, name, permissions, built_in) VALUES ($1, 'active', $2, $2, $3, $4, false)
+     RETURNING id, version, name, permissions, built_in`,
+    [randomUUID(), by, input.name, JSON.stringify(permissions)],
+  );
+  return fromRow(rows[0] as Record<string, unknown>);
 }
