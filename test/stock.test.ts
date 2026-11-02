@@ -328,3 +328,29 @@ describe('POST /staff/stock/issues', () => {
     expect((await issue({ patientId: ramesh, lines: [line] }, asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/counts', () => {
+  const count = (body: unknown, who = medical) =>
+    app.request('/staff/stock/counts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const gz = seedId('ba000000', 99);
+  const pcm = seedId('ba000000', 3);
+  const onHand = async (id: string) => Number((await db.query('SELECT qty_on_hand FROM batches WHERE id = $1', [id])).rows[0]?.qty_on_hand);
+
+  it('records book and counted quantities with the difference; stock is not changed', async () => {
+    const [gzBook, pcmBook] = [await onHand(gz), await onHand(pcm)];
+    const res = await count({ lines: [{ batchId: gz, countedQty: gzBook - 2 }, { batchId: pcm, countedQty: pcmBook }], note: 'Monthly count, store 1' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      countedBy: 'dev-medical', at: expect.any(String), note: 'Monthly count, store 1',
+      lines: [{ batchId: gz, bookQty: gzBook, countedQty: gzBook - 2, difference: -2 }, { batchId: pcm, bookQty: pcmBook, countedQty: pcmBook, difference: 0 }],
+    });
+    expect([await onHand(gz), await onHand(pcm)]).toEqual([gzBook, pcmBook]);
+  });
+
+  it('422 for an unknown batch, a batch twice or a negative count; 403 for reception', async () => {
+    expect((await count({ lines: [{ batchId: seedId('ba000000', 999), countedQty: 1 }] })).status).toBe(422);
+    expect((await count({ lines: [{ batchId: gz, countedQty: 1 }, { batchId: gz, countedQty: 2 }] })).status).toBe(422);
+    expect((await count({ lines: [{ batchId: gz, countedQty: -1 }] })).status).toBe(422);
+    expect((await count({ lines: [{ batchId: gz, countedQty: 1 }] }, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});

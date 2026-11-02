@@ -1007,4 +1007,13 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC stock_issues_created ON stock_issues (created_at)',
     ],
   },
+  {
+    // A physical count (api-list.md StockCount): what the books said and what was found; lines is JSON. Stock is
+    // not changed; the differences are for Admin/Head Doctor (#304).
+    id: '0066_stock_counts',
+    statements: () => [
+      ...createTable('stock_counts', ['lines text NOT NULL', 'note text']),
+      'CREATE INDEX ASYNC stock_counts_created ON stock_counts (created_at)',
+    ],
+  },
 ];
