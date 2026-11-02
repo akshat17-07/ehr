@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
-import type { BaseFields } from '../patients/patients.js';
+import { AppError } from '../../middleware/errors.js';
+import { getPatient, type BaseFields } from '../patients/patients.js';
 
 // Copies of a patient's record (api-list.md RecordRequest). Each request is due 72 hours after it was made.
 
@@ -54,4 +56,42 @@ export async function listRecordRequests(db: Queryable, query: RecordRequestQuer
     where.push(query.overdue === 'true' ? overdue : `NOT ${overdue}`);
   }
   return pageRows(db, { select: 'SELECT * FROM record_requests', where, params, orderBy: ['created_at', 'id'], direction: 'asc' }, query, toRecordRequest);
+}
+
+export interface NewRecordRequest {
+  patientId: string;
+  scope: RecordRequest['scope'];
+  encounterIds?: string[];
+  includeSensitive?: boolean;
+  email: string;
+}
+
+/**
+ * #146 (counter) and #253 (patient portal): due in 72 hours. 404 for no patient; 422 if scope encounter has no
+ * encounterIds, another scope has some, or an encounter isn't the patient's.
+ */
+export async function createRecordRequest(
+  db: Queryable,
+  input: NewRecordRequest,
+  requestedBy: RecordRequest['requestedBy'],
+  by: string,
+): Promise<RecordRequest> {
+  const patient = await getPatient(db, input.patientId);
+  const encounterIds = [...new Set(input.encounterIds ?? [])];
+  if ((input.scope === 'encounter') !== encounterIds.length > 0) {
+    throw new AppError(422, 'validation_failed', 'encounterIds: needed for scope encounter, and only then');
+  }
+  if (encounterIds.length > 0) {
+    const { rows } = await db.query(
+      `SELECT id FROM encounters WHERE patient_id = $1 AND id IN (${encounterIds.map((_, i) => `$${i + 2}`).join(', ')})`,
+      [patient.id, ...encounterIds],
+    );
+    if (rows.length !== encounterIds.length) throw new AppError(422, 'validation_failed', "encounterIds: not this patient's");
+  }
+  const { rows } = await db.query(
+    `INSERT INTO record_requests (id, status, created_by, updated_by, patient_id, requested_by, scope, encounter_ids, include_sensitive, email)
+     VALUES ($1, 'pending', $2, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [randomUUID(), by, patient.id, requestedBy, input.scope, JSON.stringify(encounterIds), input.includeSensitive ?? false, input.email],
+  );
+  return toRecordRequest(rows[0] as Record<string, unknown>);
 }

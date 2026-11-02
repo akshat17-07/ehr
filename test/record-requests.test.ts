@@ -48,3 +48,37 @@ describe('GET /staff/record-requests', () => {
     expect((await app.request('/staff/record-requests?status=lost', {}, admin)).status).toBe(422);
   });
 });
+
+describe('POST /staff/record-requests', () => {
+  const post = (body: unknown, who = admin) => app.request('/staff/record-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const irfan = seedId('9a710000', 3);
+  const openVisit = async (patientId: string) => {
+    const body = { patientId, type: 'OPD', departmentId: seedId('de000000', 1), doctorId: seedId('a0000000', 3) };
+    const res = await app.request('/staff/encounters', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, asStaff('dev-doctor', ['doctor']));
+    return ((await res.json()) as { id: string }).id;
+  };
+
+  it('takes a request at the counter, due in 72 hours', async () => {
+    const res = await post({ patientId: ramesh, scope: 'full', email: 'ramesh@example.in' });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { createdAt: string; dueBy: string };
+    expect(made).toMatchObject({ status: 'pending', patientId: ramesh, requestedBy: 'counter', scope: 'full', includeSensitive: false, createdBy: 'dev-admin' });
+    expect(new Date(made.dueBy).getTime() - new Date(made.createdAt).getTime()).toBe(72 * 3_600_000);
+  });
+
+  it('scope encounter needs the patient own encounters', async () => {
+    const visit = await openVisit(irfan);
+    const ok = await post({ patientId: irfan, scope: 'encounter', encounterIds: [visit], includeSensitive: true, email: 'irfan@example.in' });
+    expect(ok.status).toBe(201);
+    expect(await ok.json()).toMatchObject({ scope: 'encounter', encounterIds: [visit], includeSensitive: true });
+    expect((await post({ patientId: ramesh, scope: 'encounter', encounterIds: [visit], email: 'r@example.in' })).status).toBe(422);
+    expect((await post({ patientId: irfan, scope: 'encounter', email: 'r@example.in' })).status).toBe(422);
+    expect((await post({ patientId: irfan, scope: 'full', encounterIds: [visit], email: 'r@example.in' })).status).toBe(422);
+  });
+
+  it('422 for a bad email; 404 for no patient; 403 for a doctor', async () => {
+    expect((await post({ patientId: ramesh, scope: 'full', email: 'not-an-email' })).status).toBe(422);
+    expect((await post({ patientId: seedId('9a710000', 999), scope: 'full', email: 'x@example.in' })).status).toBe(404);
+    expect((await post({ patientId: ramesh, scope: 'full', email: 'x@example.in' }, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});
