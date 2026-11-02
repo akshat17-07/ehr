@@ -693,4 +693,20 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC discharge_summaries_encounter ON discharge_summaries (encounter_id)',
     ],
   },
+  {
+    // Dental chart (api-list.md DentalEntry): findings and treatment per tooth, FDI numbering.
+    id: '0045_dental_entries',
+    statements: () => [
+      ...createTable('dental_entries', [
+        'patient_id uuid NOT NULL',
+        'encounter_id uuid',
+        'tooth text NOT NULL',
+        'surface text',
+        'condition text NOT NULL',
+        'treatment text',
+        'at timestamptz NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC dental_entries_patient ON dental_entries (patient_id, at)',
+    ],
+  },
 ];

@@ -23,6 +23,7 @@ import { patientVitals } from '../encounters/vitals.js';
 import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
 import { addProblem, listProblems } from './problems.js';
+import { dentalChart } from '../departments/dental.js';
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
@@ -229,6 +230,14 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const allergy = await addAllergy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: allergy.patientId, recordType: 'allergy', recordId: allergy.id });
     return c.json(allergy, 201);
+  })
+  // #77: a clinical read, so the inactive-patient rule applies.
+  .get('/:id/dental-chart', requirePermission('dept.dental'), async (c) => {
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json(await dentalChart(db, patient.id));
   })
   // #67: a clinical read, so the inactive-patient rule applies.
   .get('/:id/prescriptions', requirePermission('rx.view'), async (c) => {
