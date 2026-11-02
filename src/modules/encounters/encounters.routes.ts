@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
+import { addNote, NOTE_KINDS } from './notes.js';
 import { recordObservation } from './observations.js';
 import { recordVital, VITAL_FIELDS, type VitalField } from './vitals.js';
 import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
@@ -65,6 +66,9 @@ const newObservation = z
   })
   .strict();
 
+const noteText = z.string().trim().min(1).max(20_000);
+const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -116,4 +120,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const observation = await recordObservation(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: observation.patientId, recordType: 'observation', recordId: observation.id });
     return c.json(observation, 201);
+  })
+  // #45
+  .post('/:id/notes', requirePermission('note.write'), async (c) => {
+    const input = newNote.parse(await bodyOf(c));
+    const note = await addNote(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: note.patientId, recordType: 'note', recordId: note.id });
+    return c.json(note, 201);
   });

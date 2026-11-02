@@ -8,6 +8,7 @@ import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 import { checkDoctor } from '../users/users.js';
+import { draftNoteCount, encounterNotes, type Note } from './notes.js';
 import { encounterVitals, type Vital } from './vitals.js';
 
 // Encounters (api-list.md Encounter): one visit, OPD, IPD or ER, with a doctor of a department. status: open until
@@ -128,8 +129,8 @@ export async function getEncounter(db: Queryable, id: string): Promise<Encounter
 export interface EncounterDetail extends Encounter {
   patient: PatientSummary;
   vitals: Vital[];
-  // Filled in as each part is built: notes #161, diagnoses #166, prescriptions #178.
-  notes: unknown[];
+  notes: Note[];
+  // Filled in as each part is built: diagnoses #166, prescriptions #178.
   diagnoses: unknown[];
   prescriptions: unknown[];
 }
@@ -140,7 +141,7 @@ export async function encounterDetail(db: Queryable, encounter: Encounter, now =
     ...encounter,
     patient: patients.get(encounter.patientId) as PatientSummary,
     vitals: await encounterVitals(db, encounter.id),
-    notes: [],
+    notes: await encounterNotes(db, encounter.id),
     diagnoses: [],
     prescriptions: [],
   };
@@ -176,10 +177,11 @@ export async function updateEncounter(db: Queryable, id: string, change: Encount
   return getEncounter(db, id);
 }
 
-/** #40: closes an open encounter. (Once notes exist, #161, a draft note will keep it open.) */
+/** #40: closes an open encounter. 409 while a note is still a draft: it must be signed (or voided) first. */
 export async function closeEncounter(db: Queryable, id: string, by: string, now = new Date()): Promise<Encounter> {
   const current = await getEncounter(db, id);
   assertOpen(current);
+  if ((await draftNoteCount(db, id)) > 0) throw new AppError(409, 'draft_notes', 'sign the draft notes before closing');
   await updateRecord(db, 'encounters', { id, version: current.version, by, set: { status: 'closed', closed_at: now } });
   return getEncounter(db, id);
 }

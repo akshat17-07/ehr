@@ -521,4 +521,21 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC observations_patient ON observations (patient_id, loinc, taken_at)',
     ],
   },
+  {
+    // Clinical notes (api-list.md Note); status draft / signed. addenda is a JSON list of { text, by, at }.
+    id: '0034_notes',
+    statements: () => [
+      ...createTable('notes', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'kind text NOT NULL',
+        'text text NOT NULL',
+        'signed_at timestamptz',
+        'signed_by text',
+        'addenda text NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC notes_encounter ON notes (encounter_id, created_at)',
+      'CREATE INDEX ASYNC notes_patient ON notes (patient_id, created_at)',
+    ],
+  },
 ];

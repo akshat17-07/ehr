@@ -168,29 +168,29 @@ describe('withTransaction (BEGIN / COMMIT path used in AWS)', () => {
 
   it('undoes an inner step when the outer work fails (PGlite path)', async () => {
     const db = await openLocalDb();
-    for (const sql of createTable('notes', ['text text NOT NULL'])) await db.query(sql);
+    for (const sql of createTable('scribbles', ['text text NOT NULL'])) await db.query(sql);
     await expect(
       withTransaction(db, async (tx) => {
         await withTransaction(tx, (inner) =>
-          inner.query("INSERT INTO notes (id, status, created_by, updated_by, text) VALUES ($1, 'active', 'u', 'u', 'x')", [newId()]),
+          inner.query("INSERT INTO scribbles (id, status, created_by, updated_by, text) VALUES ($1, 'active', 'u', 'u', 'x')", [newId()]),
         );
         throw new Error('stop');
       }),
     ).rejects.toThrow('stop');
-    expect((await db.query('SELECT count(*)::int AS n FROM notes')).rows[0]).toEqual({ n: 0 });
+    expect((await db.query('SELECT count(*)::int AS n FROM scribbles')).rows[0]).toEqual({ n: 0 });
     await db.close();
   });
 
   it('keeps nothing when the work fails (PGlite path)', async () => {
     const db = await openLocalDb();
-    for (const sql of createTable('notes', ['text text NOT NULL'])) await db.query(sql);
+    for (const sql of createTable('scribbles', ['text text NOT NULL'])) await db.query(sql);
     await expect(
       withTransaction(db, async (tx) => {
-        await tx.query("INSERT INTO notes (id, status, created_by, updated_by, text) VALUES ($1, 'active', 'u', 'u', 'x')", [newId()]);
+        await tx.query("INSERT INTO scribbles (id, status, created_by, updated_by, text) VALUES ($1, 'active', 'u', 'u', 'x')", [newId()]);
         throw new Error('stop');
       }),
     ).rejects.toThrow('stop');
-    expect((await db.query('SELECT count(*)::int AS n FROM notes')).rows[0]).toEqual({ n: 0 });
+    expect((await db.query('SELECT count(*)::int AS n FROM scribbles')).rows[0]).toEqual({ n: 0 });
     await db.close();
   });
 });

@@ -274,3 +274,32 @@ describe('GET /staff/patients/{id}/observations', () => {
     expect((await history('', asStaff('dev-gp', ['gp']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/encounters/{id}/notes', () => {
+  const note = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/encounters/${id}/notes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('adds a draft note; the encounter shows it, the timeline lists it, and it keeps the encounter open', async () => {
+    const sita = seedId('9a710000', 2);
+    const id = await open(sita);
+    const res = await note(id, { kind: 'progress', text: 'Fever 3 days. Advised CBC.' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'draft', kind: 'progress', encounterId: id, patientId: sita, addenda: [] });
+    const detail = (await (await app.request(`/staff/encounters/${id}`, {}, doctor)).json()) as { notes: { text: string }[] };
+    expect(detail.notes.map((n) => n.text)).toEqual(['Fever 3 days. Advised CBC.']);
+    const timeline = (await (await app.request(`/staff/patients/${sita}/timeline?kind=note`, {}, doctor)).json()) as { items: { title: string }[] };
+    expect(timeline.items.map((i) => i.title)).toContain('Progress note');
+    const close = await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor);
+    expect(await close.json()).toMatchObject({ error: 'draft_notes' });
+  });
+
+  it('422 for a nursing or unknown kind or empty text; 409 once closed; 403 for a nurse', async () => {
+    const id = await open(seedId('9a710000', 2));
+    for (const body of [{ kind: 'nursing', text: 'x' }, { kind: 'memo', text: 'x' }, { kind: 'progress', text: '  ' }, { kind: 'progress' }]) {
+      expect((await note(id, body)).status, JSON.stringify(body)).toBe(422);
+    }
+    expect((await note(id, { kind: 'progress', text: 'x' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor);
+    expect((await note(id, { kind: 'progress', text: 'x' })).status).toBe(409);
+  });
+});
