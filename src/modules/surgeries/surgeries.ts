@@ -243,3 +243,32 @@ export async function recordChecklist(
   await updateRecord(db, 'surgeries', { id, version: surgery.version, by, set: { checklist: JSON.stringify(checklist) } });
   return getSurgery(db, id);
 }
+
+export interface OpNote {
+  findings: string;
+  procedureDone: string;
+  complications?: string;
+  bloodLossMl?: number;
+  implantsUsed?: boolean;
+}
+
+/**
+ * #91: the operation note; the surgery is then done and can't change. 409 if already written or cancelled; 422 if
+ * implants were used but none is recorded yet (#85).
+ */
+export async function writeOpNote(db: Queryable, id: string, note: OpNote, by: string, now = new Date()): Promise<Surgery> {
+  const surgery = await getSurgery(db, id);
+  assertNotCancelled(surgery);
+  if (surgery.status === 'done') throw new AppError(409, 'done', 'the op note is already written');
+  if (note.implantsUsed) {
+    const { rows } = await db.query('SELECT 1 FROM implants WHERE surgery_id = $1 AND voided_at IS NULL LIMIT 1', [id]);
+    if (!rows[0]) invalid('implantsUsed: record the implants first');
+  }
+  await updateRecord(db, 'surgeries', {
+    id,
+    version: surgery.version,
+    by,
+    set: { status: 'done', op_note: JSON.stringify({ ...note, by, at: now.toISOString() }) },
+  });
+  return getSurgery(db, id);
+}

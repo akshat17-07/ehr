@@ -7,7 +7,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
-import { CHECKLIST_ITEMS, getSurgery, listSurgeries, planSurgery, recordChecklist, updateSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
+import { CHECKLIST_ITEMS, getSurgery, listSurgeries, planSurgery, recordChecklist, updateSurgery, writeOpNote, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
 
 const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
@@ -64,6 +64,16 @@ const checklist = z
   .strict()
   .refine((b) => Object.keys(b).length > 0, 'record at least one phase');
 
+const opNote = z
+  .object({
+    findings: z.string().trim().min(3).max(5000),
+    procedureDone: z.string().trim().min(3).max(5000),
+    complications: z.string().trim().min(1).max(2000).optional(),
+    bloodLossMl: z.number().int().min(0).max(20000).optional(),
+    implantsUsed: z.boolean().optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -94,6 +104,12 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
   // #90
   .post('/:id/checklist', requirePermission('surgery.update'), async (c) => {
     const surgery = await recordChecklist(await dbOf(c), c.req.param('id'), checklist.parse(await bodyOf(c)), userOf(c).sub);
+    auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
+    return c.json(surgery);
+  })
+  // #91
+  .post('/:id/op-note', requirePermission('surgery.op_note'), async (c) => {
+    const surgery = await writeOpNote(await dbOf(c), c.req.param('id'), opNote.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery);
   })

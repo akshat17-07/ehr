@@ -197,3 +197,35 @@ describe('POST /staff/surgeries/{id}/checklist', () => {
     expect(await (await record(id, { signIn })).json()).toMatchObject({ error: 'cancelled' });
   });
 });
+
+describe('POST /staff/surgeries/{id}/op-note', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const write = (id: string, body: unknown, who = doctor) => app.request(`/staff/surgeries/${id}/op-note`, json(body), who);
+  const note = { findings: 'Inflamed appendix, no perforation.', procedureDone: 'Laparoscopic appendicectomy.', bloodLossMl: 50 };
+  const planned = async () =>
+    ((await (await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Appendicectomy', surgeonId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), venue: 'own', chargesPaise: 3000000 }), doctor)).json()) as { id: string; version: number });
+
+  it('writes the note and marks the surgery done; then it cannot change', async () => {
+    const { id, version } = await planned();
+    const res = await write(id, note);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'done', opNote: { ...note, by: 'dev-doctor', at: expect.any(String) }, version: version + 1 });
+    expect(await (await write(id, note)).json()).toMatchObject({ error: 'done' });
+    const patch = await app.request(`/staff/surgeries/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: version + 1, chargesPaise: 1 }) }, doctor);
+    expect(await patch.json()).toMatchObject({ error: 'done' });
+  });
+
+  it('implants used: 422 until one is recorded', async () => {
+    const { id } = await planned();
+    expect((await write(id, { ...note, implantsUsed: true })).status).toBe(422);
+    await app.request(`/staff/surgeries/${id}/implants`, json({ name: 'Mesh', batchNo: 'M-1', mrpPaise: 500000 }), doctor);
+    expect((await write(id, { ...note, implantsUsed: true })).status).toBe(200);
+  });
+
+  it('422 without findings; 403 for a nurse; 404 for none', async () => {
+    const { id } = await planned();
+    expect((await write(id, { procedureDone: 'x' })).status).toBe(422);
+    expect((await write(id, note, nurse)).status).toBe(403);
+    expect((await write(seedId('5e000000', 999), note)).status).toBe(404);
+  });
+});
