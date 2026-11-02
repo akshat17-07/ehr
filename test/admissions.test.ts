@@ -217,3 +217,39 @@ describe('PATCH /staff/discharge-summaries/{id}', () => {
     expect((await patch(seedId('d5000000', 999), { version: 1, course: 'x' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/discharge-summaries/{id}/sign', () => {
+  const sign = (id: string, body: unknown, who = doctor) => app.request(`/staff/discharge-summaries/${id}/sign`, json(body), who);
+  const summaryFor = async (patientId: string) =>
+    (await db.query('SELECT id, version, encounter_id FROM discharge_summaries WHERE patient_id = $1', [patientId])).rows[0] as {
+      id: string; version: number; encounter_id: string;
+    };
+
+  it('signs, discharges the patient, frees the bed and closes the encounter', async () => {
+    const { id, version, encounter_id } = await summaryFor(irfan);
+    expect((await sign(id, { version }, nurse)).status).toBe(403);
+    const res = await sign(id, { version });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'signed', signedBy: 'dev-doctor', signedAt: expect.any(String), version: version + 1 });
+    const admission = (await db.query('SELECT * FROM admissions WHERE encounter_id = $1', [encounter_id])).rows[0];
+    expect(admission).toMatchObject({ status: 'discharged', bed_key: null, current_patient: null });
+    expect(admission?.discharged_at).toBeInstanceOf(Date);
+    expect(await (await app.request(`/staff/encounters/${encounter_id}`, {}, doctor)).json()).toMatchObject({ status: 'closed' });
+    expect((await admit({ patientId: seedId('9a710000', 2), bed: '4', ward: 'ICU' })).status).toBe(201);
+    expect(await (await sign(id, { version: version + 1 })).json()).toMatchObject({ error: 'signed' });
+    const patch = await app.request(`/staff/discharge-summaries/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: version + 1, course: 'x' }) }, doctor);
+    expect(await patch.json()).toMatchObject({ error: 'signed' });
+  });
+
+  it('409 draft_notes with an unsigned note, and nothing changes; 409 for a stale version', async () => {
+    const encounterId = String((await db.query('SELECT encounter_id FROM admissions WHERE current_patient = $1', [kavita])).rows[0]?.encounter_id);
+    const written = await app.request(`/staff/encounters/${encounterId}/discharge-summary`, json({ diagnosisText: 'Viral fever', course: 'Settled.', medicinesOnDischarge: [], advice: 'Rest.' }), doctor);
+    const { id, version } = (await written.json()) as { id: string; version: number };
+    expect((await app.request(`/staff/encounters/${encounterId}/notes`, json({ kind: 'progress', text: 'Afebrile today.' }), doctor)).status).toBe(201);
+    expect(await (await sign(id, { version })).json()).toMatchObject({ error: 'draft_notes' });
+    expect((await summaryFor(kavita))).toMatchObject({ version });
+    expect((await db.query('SELECT status FROM admissions WHERE encounter_id = $1', [encounterId])).rows[0]).toMatchObject({ status: 'current' });
+    expect((await sign(id, { version: version + 2 })).status).toBe(409);
+    expect((await sign(seedId('d5000000', 999), { version: 1 })).status).toBe(404);
+  });
+});

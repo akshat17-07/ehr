@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { rxLine } from '../prescriptions/prescriptions.routes.js';
-import { updateSummary } from './discharge.js';
+import { signSummary, updateSummary } from './discharge.js';
 
 // Discharge summaries by id (api-list.md #75-#76), mounted at /staff/discharge-summaries. Written on the encounter (#74).
 
@@ -26,6 +26,8 @@ const summaryChange = z
   .strict()
   .refine((b) => Object.keys(b).length > 1, 'change at least one field');
 
+const versionBody = z.object({ version: z.number().int().min(1) }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -34,6 +36,13 @@ export const dischargeRoutes = new Hono<AuthEnv>()
   .patch('/:id', requirePermission('discharge.write'), async (c) => {
     const input = summaryChange.parse(await bodyOf(c));
     const summary = await updateSummary(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: summary.patientId, recordType: 'discharge_summary', recordId: summary.id });
+    return c.json(summary);
+  })
+  // #76
+  .post('/:id/sign', requirePermission('discharge.sign'), async (c) => {
+    const { version } = versionBody.parse(await bodyOf(c));
+    const summary = await signSummary(await dbOf(c), c.req.param('id'), version, userOf(c).sub);
     auditDetails(c, { patientId: summary.patientId, recordType: 'discharge_summary', recordId: summary.id });
     return c.json(summary);
   });

@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
-import { assertOpen, getEncounter } from '../encounters/encounters.js';
+import { assertOpen, closeEncounter, getEncounter } from '../encounters/encounters.js';
 import type { BaseFields } from '../patients/patients.js';
 import type { RxLine } from '../prescriptions/rx-checks.js';
 
@@ -123,4 +124,27 @@ export async function updateSummary(
   }
   await updateRecord(db, 'discharge_summaries', { id, version: input.version, by, set });
   return getSummary(db, id);
+}
+
+/**
+ * #76: signs the summary and discharges the patient in one go: the admission ends (the bed is free) and the IPD
+ * encounter closes (409 draft_notes if a note is unsigned). Unpaid dues never block it.
+ */
+export async function signSummary(db: Queryable, id: string, version: number, by: string, now = new Date()): Promise<DischargeSummary> {
+  const summary = await getSummary(db, id);
+  if (summary.status === 'signed') throw new AppError(409, 'signed', 'this discharge summary is already signed');
+  return withTransaction(db, async (tx) => {
+    await closeEncounter(tx, summary.encounterId, by, now);
+    await updateRecord(tx, 'discharge_summaries', { id, version, by, set: { status: 'signed', signed_at: now, signed_by: by } });
+    const { rows } = await tx.query("SELECT id, version FROM admissions WHERE encounter_id = $1 AND status = 'current'", [summary.encounterId]);
+    for (const a of rows) {
+      await updateRecord(tx, 'admissions', {
+        id: String(a.id),
+        version: Number(a.version),
+        by,
+        set: { status: 'discharged', discharged_at: now, bed_key: null, current_patient: null },
+      });
+    }
+    return getSummary(tx, id);
+  });
 }
