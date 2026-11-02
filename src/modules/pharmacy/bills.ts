@@ -8,6 +8,7 @@ import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { applyStockTake, batchesByIds, checkStockTake, type StockTake } from '../inventory/batches.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 import { getDispense } from './dispenses.js';
 import type { Setting } from './queue.js';
 
@@ -138,4 +139,11 @@ export async function listPharmacyBills(db: Queryable, query: PageQuery & { date
     where.push(`created_at >= $${params.push(start)}`, `created_at < $${params.push(new Date(start.getTime() + 86_400_000))}`);
   }
   return pageRows(db, { select: 'SELECT * FROM pharmacy_bills', where, params, orderBy: ['created_at', 'id'] }, query, toPharmacyBill);
+}
+
+/** #106: one bill; 404 if there is none. */
+export async function getPharmacyBill(db: Queryable, id: string): Promise<PharmacyBill> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM pharmacy_bills WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such bill');
+  return toPharmacyBill(rows[0] as Record<string, unknown>);
 }

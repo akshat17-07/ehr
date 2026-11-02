@@ -5,7 +5,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createPharmacyBill, listPharmacyBills } from './bills.js';
+import { createPharmacyBill, getPharmacyBill, listPharmacyBills } from './bills.js';
 import { pharmacyQueue, SETTINGS } from './queue.js';
 
 const queueQuery = z.object({ date: z.iso.date().optional(), setting: z.enum(SETTINGS).optional() });
@@ -47,4 +47,10 @@ export const pharmacyRoutes = new Hono<AuthEnv>()
     const query = billsQuery.parse(c.req.query());
     if (query.patientId) auditDetails(c, { patientId: query.patientId });
     return c.json(await listPharmacyBills(await dbOf(c), query));
+  })
+  // #106
+  .get('/bills/:id', requirePermission('pharmacy_bill.view'), async (c) => {
+    const bill = await getPharmacyBill(await dbOf(c), c.req.param('id'));
+    auditDetails(c, { patientId: bill.patientId, recordType: 'pharmacy_bill', recordId: bill.id });
+    return c.json(bill);
   });

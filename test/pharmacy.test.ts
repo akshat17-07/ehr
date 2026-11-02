@@ -257,3 +257,16 @@ describe('GET /staff/pharmacy/bills', () => {
     expect((await list('', asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/pharmacy/bills/{id}', () => {
+  it('returns the bill; 403 for a nurse; 404 for none', async () => {
+    const sale = await app.request('/staff/pharmacy/bills', json({ patientId: rahul, setting: 'ipd', lines: [{ drugId: paracetamol.drugId, batchId: seedId('ba000000', 3), qty: 4 }] }), medical);
+    const { id } = (await sale.json()) as { id: string };
+    const res = await app.request(`/staff/pharmacy/bills/${id}`, {}, medical);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, patientId: rahul, setting: 'ipd', totalPaise: 8400, lines: [{ qty: 4 }] });
+    expect((await app.request(`/staff/pharmacy/bills/${id}`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await app.request(`/staff/pharmacy/bills/${seedId('d5000000', 999)}`, {}, medical)).status).toBe(404);
+    expect((await app.request('/staff/pharmacy/bills/nope', {}, medical)).status).toBe(404);
+  });
+});
