@@ -1171,4 +1171,28 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC policies_number ON policies (insurer_id, policy_no)',
     ],
   },
+  {
+    // Insurance claims (api-list.md Claim), typed in by hand: there is no insurer or TPA portal link.
+    // insurer_id is copied from the policy for the claims list filter. submitted_at starts the IRDAI timer.
+    id: '0079_claims',
+    statements: () => [
+      ...createTable('claims', [
+        'patient_id uuid NOT NULL',
+        'policy_id uuid NOT NULL',
+        'insurer_id uuid NOT NULL',
+        'admission_id uuid',
+        'kind text NOT NULL',
+        'amount_claimed_paise bigint NOT NULL',
+        'amount_approved_paise bigint',
+        "document_ids text NOT NULL DEFAULT '[]'",
+        'submitted_at timestamptz',
+      ]),
+      'CREATE INDEX ASYNC claims_patient ON claims (patient_id, created_at)',
+      'CREATE INDEX ASYNC claims_status ON claims (status, created_at)',
+      'CREATE INDEX ASYNC claims_created ON claims (created_at)',
+      // Each status change of a claim (api-list.md ClaimEvent); to_status is the claim's new status.
+      ...createTable('claim_events', ['claim_id uuid NOT NULL', 'to_status text NOT NULL', 'note text', 'amount_paise bigint']),
+      'CREATE INDEX ASYNC claim_events_claim ON claim_events (claim_id, created_at)',
+    ],
+  },
 ];

@@ -95,3 +95,27 @@ describe('PATCH /staff/policies/{id}', () => {
     expect((await patch(seedId('9b000000', 999), { version: 1, holderName: 'X' })).status).toBe(404);
   });
 });
+
+const post = (path: string, body: unknown, who = doctor) => app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const ramesh = seedId('9a710000', 1);
+const rameshPolicy = await (async () => {
+  const res = await post(`/staff/patients/${ramesh}/policies`, { insurerId: star, tpaId: mediAssist, policyNo: 'RAM-1', holderName: 'Ramesh', validFrom: '2026-01-01', validTo: '2099-12-31' });
+  return ((await res.json()) as { id: string }).id;
+})();
+
+describe('POST /staff/claims', () => {
+  it('a draft claim on the patient\'s policy', async () => {
+    const res = await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'cashless_preauth', amountClaimedPaise: 5_000_000 });
+    expect(res.status).toBe(201);
+    const claim = (await res.json()) as { dueBy?: string };
+    expect(claim).toMatchObject({ status: 'draft', patientId: ramesh, policyId: rameshPolicy, insurerId: star, kind: 'cashless_preauth', amountClaimedPaise: 5_000_000, events: [], documentIds: [] });
+    expect(claim.dueBy).toBeUndefined();
+  });
+
+  it("422 for another patient's policy or admission; 403 for a nurse; 404 for no patient", async () => {
+    expect((await post('/staff/claims', { patientId: irfan, policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 100 })).status).toBe(422);
+    expect((await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, admissionId: seedId('ad000000', 99), kind: 'reimbursement', amountClaimedPaise: 100 })).status).toBe(422);
+    expect((await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 100 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await post('/staff/claims', { patientId: seedId('9a710000', 999), policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 100 })).status).toBe(404);
+  });
+});

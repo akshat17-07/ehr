@@ -39,6 +39,7 @@ import { recallsRoutes } from './modules/inventory/recalls.routes.js';
 import { depositsRoutes } from './modules/billing/deposits.routes.js';
 import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { policiesRoutes } from './modules/insurance/policies.routes.js';
+import { claimsRoutes } from './modules/insurance/claims.routes.js';
 import { billsRoutes } from './modules/billing/bills.routes.js';
 import { purchaseOrdersRoutes } from './modules/inventory/purchase-orders.routes.js';
 import { registersRoutes } from './modules/pharmacy/registers.routes.js';
@@ -99,6 +100,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Upload
     .route('/deposits', depositsRoutes)
     .route('/reports', reportsRoutes)
     .route('/policies', policiesRoutes)
+    .route('/claims', claimsRoutes)
     .route('/purchase-orders', purchaseOrdersRoutes)
     .route('/registers', registersRoutes)
     .route('/allergies', allergiesRoutes)
