@@ -988,4 +988,23 @@ export const migrations: Migration[] = [
     id: '0064_pharmacy_returns_bill',
     statements: () => ['ALTER TABLE pharmacy_returns ADD COLUMN bill_id uuid'],
   },
+  {
+    // Items used on a patient (api-list.md StockIssue), priced at batch MRP; lines is JSON. bill_id: set when the
+    // patient's bill takes them in (#116).
+    id: '0065_stock_issues',
+    statements: () => [
+      ...createTable('stock_issues', [
+        'patient_id uuid NOT NULL',
+        'encounter_id uuid',
+        'admission_id uuid',
+        'surgery_id uuid',
+        'indent_id uuid',
+        'lines text NOT NULL',
+        'total_paise bigint NOT NULL',
+        'bill_id uuid',
+      ]),
+      'CREATE INDEX ASYNC stock_issues_patient ON stock_issues (patient_id, created_at)',
+      'CREATE INDEX ASYNC stock_issues_created ON stock_issues (created_at)',
+    ],
+  },
 ];

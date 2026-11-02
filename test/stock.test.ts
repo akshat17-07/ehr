@@ -267,3 +267,39 @@ describe('POST /staff/inventory/items', () => {
     expect((await add({ name: 'Cotton', kind: 'consumable', unit: 'roll' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/indents/{id}/issue', () => {
+  const post = (url: string, body: unknown, who = medical) =>
+    app.request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const ramesh = seedId('9a710000', 1);
+  const gz = seedId('ba000000', 99);
+  const indentFor = async (lines: unknown[], patientId: string | undefined = ramesh) =>
+    ((await (await post('/staff/stock/indents', { ward: 'General Ward A', ...(patientId && { patientId }), lines })).json()) as { id: string }).id;
+  const onHand = async () => Number((await db.query('SELECT qty_on_hand FROM batches WHERE id = $1', [gz])).rows[0]?.qty_on_hand);
+
+  it('issues from the chosen batches, priced at MRP; the indent is issued', async () => {
+    const id = await indentFor([{ itemId: gauze, qty: 3 }]);
+    const before = await onHand();
+    const res = await post(`/staff/stock/indents/${id}/issue`, { patientId: ramesh, lines: [{ itemId: gauze, batchId: gz, qty: 2 }] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      indent: { id, status: 'issued' },
+      issue: { patientId: ramesh, indentId: id, totalPaise: 9000, lines: [{ itemId: gauze, batchId: gz, qty: 2, mrpPaise: 4500, gstRate: 12, amountPaise: 9000 }] },
+    });
+    expect(await onHand()).toBe(before - 2);
+    expect(await (await post(`/staff/stock/indents/${id}/issue`, { patientId: ramesh, lines: [{ itemId: gauze, batchId: gz, qty: 1 }] })).json()).toMatchObject({ error: 'not_requested' });
+  });
+
+  it('422 for another patient, an item not asked for, or more than asked; 409 short stock; 404; 403 for a nurse', async () => {
+    const id = await indentFor([{ itemId: gauze, qty: 3 }]);
+    const issue = (body: Record<string, unknown>, who = medical) => post(`/staff/stock/indents/${id}/issue`, { patientId: ramesh, lines: [{ itemId: gauze, batchId: gz, qty: 1 }], ...body }, who);
+    expect((await issue({ patientId: seedId('9a710000', 3) })).status).toBe(422);
+    expect((await issue({ lines: [{ itemId: paracetamol, batchId: seedId('ba000000', 3), qty: 1 }] })).status).toBe(422);
+    expect((await issue({ lines: [{ itemId: gauze, batchId: gz, qty: 2 }, { itemId: gauze, batchId: gz, qty: 2 }] })).status).toBe(422);
+    expect((await issue({ lines: [{ itemId: gauze, batchId: seedId('ba000000', 3), qty: 1 }] })).status).toBe(422);
+    const wardIndent = await indentFor([{ itemId: gauze, qty: 5000 }], undefined);
+    expect(await (await post(`/staff/stock/indents/${wardIndent}/issue`, { patientId: ramesh, lines: [{ itemId: gauze, batchId: gz, qty: 5000 }] })).json()).toMatchObject({ error: 'short_stock' });
+    expect((await post(`/staff/stock/indents/${seedId('17e00000', 999)}/issue`, { patientId: ramesh, lines: [{ itemId: gauze, batchId: gz, qty: 1 }] })).status).toBe(404);
+    expect((await issue({}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

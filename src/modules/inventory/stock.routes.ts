@@ -6,7 +6,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { receiveGoods } from './grn.js';
-import { requestIndent } from './indents.js';
+import { issueIndent, requestIndent } from './indents.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
 import { listStock, STOCK_ALERT_KINDS, stockAlerts } from './stock.js';
@@ -63,6 +63,10 @@ const newQuarantine = z
 
 const alertsQuery = z.object({ kind: z.enum(STOCK_ALERT_KINDS).optional(), withinDays: z.coerce.number().int().min(0).max(730).optional() });
 
+const issueLines = z.array(z.object({ itemId: z.uuid(), batchId: z.uuid(), qty: z.number().int().min(1).max(10_000) }).strict()).min(1).max(50);
+
+const indentIssue = z.object({ patientId: z.uuid(), lines: issueLines }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -86,6 +90,13 @@ export const stockRoutes = new Hono<AuthEnv>()
     const indent = await requestIndent(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { ...(indent.patientId && { patientId: indent.patientId }), recordType: 'indent', recordId: indent.id });
     return c.json(indent, 201);
+  })
+  // #278
+  .post('/indents/:id/issue', requirePermission('stock.issue'), async (c) => {
+    const input = indentIssue.parse(await bodyOf(c));
+    const result = await issueIndent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: result.issue.patientId, recordType: 'stock_issue', recordId: result.issue.id });
+    return c.json(result);
   })
   // #110
   .post('/quarantine', requirePermission('stock.quarantine'), async (c) => {
