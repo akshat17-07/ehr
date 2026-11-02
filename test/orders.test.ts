@@ -99,3 +99,28 @@ describe('POST /staff/orders/{id}/results', () => {
     expect((await orders())[1]).toMatchObject({ status: 'ordered', results: [] });
   });
 });
+
+describe('POST /staff/orders/{id}/cancel', () => {
+  type Order = { id: string; status: string };
+  const orders = async (query = '') => ((await (await app.request(`/staff/orders${query}`, {}, doctor)).json()) as { items: Order[] }).items;
+  const cancel = (id: string, body: unknown, who = doctor) => app.request(`/staff/orders/${id}/cancel`, json(body), who);
+
+  it('cancels with a reason; it stays listed as cancelled; no results after', async () => {
+    const [, xray] = await orders();
+    expect((await cancel(xray!.id, { reason: 'no' })).status).toBe(422);
+    expect((await cancel(xray!.id, { reason: 'machine down' }, nurse)).status).toBe(403);
+    const res = await cancel(xray!.id, { reason: 'machine down, sent to district hospital' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'cancelled', voidReason: 'machine down, sent to district hospital', voidedBy: 'dev-doctor', version: 2 });
+    expect((await orders('?status=cancelled')).map((o) => o.id)).toEqual([xray!.id]);
+    expect(await (await cancel(xray!.id, { reason: 'once more please' })).json()).toMatchObject({ error: 'cancelled' });
+    const late = await app.request(`/staff/orders/${xray!.id}/results`, json({ text: 'Normal' }), doctor);
+    expect(await late.json()).toMatchObject({ error: 'cancelled' });
+  });
+
+  it('409 once resulted; 404 for none', async () => {
+    const [cbc] = await orders();
+    expect(await (await cancel(cbc!.id, { reason: 'not needed now' })).json()).toMatchObject({ error: 'resulted' });
+    expect((await cancel(seedId('0d000000', 999), { reason: 'not needed now' })).status).toBe(404);
+  });
+});

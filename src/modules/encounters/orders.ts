@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
-import { updateRecord } from '../../db/records.js';
+import { updateRecord, voidRecord } from '../../db/records.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
@@ -111,8 +111,9 @@ const DAY_MS = 86_400_000;
 
 /** #59: the work list, oldest first (the order to do them in), each with the patient's summary. */
 export async function listOrders(db: Queryable, query: OrderQuery, now = new Date()): Promise<Page<Order>> {
+  // Cancelled orders are voided rows: they stay listed (status cancelled, with the reason).
   const params: unknown[] = [];
-  const where = ['voided_at IS NULL'];
+  const where: string[] = [];
   if (query.status) where.push(`status = $${params.push(query.status)}`);
   if (query.kind) where.push(`kind = $${params.push(query.kind)}`);
   if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
@@ -164,4 +165,13 @@ export async function addResult(db: Queryable, orderId: string, input: NewResult
     }
     return toResult(rows[0] as Record<string, unknown>);
   });
+}
+
+/** #61: only an order not yet resulted; the reason is kept on it (voidReason). */
+export async function cancelOrder(db: Queryable, id: string, reason: string, by: string): Promise<Order> {
+  const order = await getOrder(db, id);
+  if (order.status === 'cancelled') throw new AppError(409, 'cancelled', 'this order is already cancelled');
+  if (order.status === 'resulted') throw new AppError(409, 'resulted', 'this order has results: it can no longer be cancelled');
+  const cancelled = await voidRecord(db, 'orders', { id, version: order.version, by, reason, status: 'cancelled' });
+  return toOrder(cancelled);
 }

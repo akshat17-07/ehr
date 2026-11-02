@@ -5,7 +5,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addResult, listOrders, ORDER_KINDS, ORDER_STATUSES } from './orders.js';
+import { addResult, cancelOrder, listOrders, ORDER_KINDS, ORDER_STATUSES } from './orders.js';
 
 // Orders across encounters (api-list.md #59-#61), mounted at /staff/orders. Orders are placed in an encounter (#58).
 
@@ -28,6 +28,8 @@ const newResult = z
   .refine((r) => r.value !== undefined || r.text !== undefined, 'give a value or text')
   .refine((r) => r.unit === undefined || r.value !== undefined, { message: 'a unit goes with a value', path: ['unit'] });
 
+const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -42,4 +44,11 @@ export const ordersRoutes = new Hono<AuthEnv>()
     const order = (await db.query('SELECT patient_id FROM orders WHERE id = $1', [result.orderId])).rows[0];
     auditDetails(c, { patientId: String(order?.patient_id), recordType: 'order_result', recordId: result.id });
     return c.json(result, 201);
+  })
+  // #61
+  .post('/:id/cancel', requirePermission('order.write'), async (c) => {
+    const { reason } = reasonBody.parse(await bodyOf(c));
+    const order = await cancelOrder(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
+    auditDetails(c, { patientId: order.patientId, recordType: 'order', recordId: order.id, reason });
+    return c.json(order);
   });
