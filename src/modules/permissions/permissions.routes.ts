@@ -4,7 +4,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { PERMISSIONS } from '../../permissions/catalog.js';
 import { loadPermissions, requirePermission } from '../../permissions/check.js';
-import { bundlesNamed } from '../../permissions/bundles.js';
+import { bundlesNamed, listBundles } from '../../permissions/bundles.js';
 import { checkCustomLists, getCustomPermissions, saveBundles, saveCustomPermissions } from '../../permissions/custom.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { listTypePermissions, saveTypePermissions } from '../../permissions/type-permissions.js';
@@ -42,6 +42,9 @@ const typeChange = z
   .strict();
 
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
+  // #164: every active bundle, by name.
+  .get('/bundles', requirePermission('grant.view'), async (c) => c.json(await listBundles(await dbOf(c))))
+
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.
   .get('/permissions', requirePermission('user.permissions'), (c) => c.json(PERMISSIONS))
 
