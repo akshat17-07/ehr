@@ -45,5 +45,6 @@ describe('local database on disk (npm run dev)', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    // Two opens on disk run every migration twice; with the whole suite running alongside, that passes 5 s.
+  }, 30_000);
 });

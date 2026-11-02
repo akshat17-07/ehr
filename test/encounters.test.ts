@@ -334,3 +334,28 @@ describe('PATCH /staff/notes/{id}', () => {
     expect((await edit(seedId('e0c00000', 999), { version: 1, text: 'x' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/notes/{id}/sign', () => {
+  const sign = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/notes/${id}/sign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('the author signs the draft once; then the encounter can close', async () => {
+    const encounter = await open(seedId('9a710000', 2));
+    const created = await app.request(`/staff/encounters/${encounter}/notes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'procedure', text: 'Dressing done.' }),
+    }, doctor);
+    const id = ((await created.json()) as { id: string }).id;
+    expect(await (await sign(id, { version: 1 }, asStaff('dev-head-doctor', ['head_doctor']))).json()).toMatchObject({ error: 'not_author' });
+    expect((await sign(id, {})).status).toBe(422);
+    const res = await sign(id, { version: 1 });
+    expect(res.status).toBe(200);
+    const note = (await res.json()) as { status: string; signedBy: string; signedAt: string };
+    expect(note).toMatchObject({ status: 'signed', signedBy: 'dev-doctor', version: 2 });
+    expect(await (await sign(id, { version: 2 })).json()).toMatchObject({ error: 'signed' });
+    expect((await app.request(`/staff/encounters/${encounter}/close`, { method: 'POST' }, doctor)).status).toBe(200);
+  });
+
+  it('403 without note.sign', async () => {
+    expect((await sign(seedId('e0c00000', 999), { version: 1 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

@@ -98,3 +98,10 @@ export async function updateNote(db: Queryable, id: string, change: { version: n
   await updateRecord(db, 'notes', { id, version: change.version, by, set: { text: change.text } });
   return getNote(db, id);
 }
+
+/** #47: the author signs the draft; from then on it only takes addenda. */
+export async function signNote(db: Queryable, id: string, version: number, by: string, now = new Date()): Promise<Note> {
+  await draftOf(db, id, by);
+  await updateRecord(db, 'notes', { id, version, by, set: { status: 'signed', signed_at: now, signed_by: by } });
+  return getNote(db, id);
+}
