@@ -156,3 +156,10 @@ export async function fulfilRecordRequest(
   });
   return getRecordRequest(db, request.id);
 }
+
+/** #148: 409 not_pending unless pending. The reason is kept in the request's history. */
+export async function rejectRecordRequest(db: Queryable, id: string, reason: string, by: string): Promise<RecordRequest> {
+  const request = await getRecordRequest(db, id);
+  if (request.status !== 'pending') throw new AppError(409, 'not_pending', `this request is ${request.status}`);
+  return toRecordRequest(await updateRecord(db, 'record_requests', { id: request.id, version: request.version, by, set: { status: 'rejected' }, reason }));
+}

@@ -149,3 +149,27 @@ describe('POST /staff/record-requests/{id}/fulfil', () => {
     expect((await call(`/staff/record-requests/${made.id}/fulfil`, {}, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/record-requests/{id}/reject', () => {
+  const call = (path: string, body: unknown, who = admin) =>
+    app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const newRequest = async () =>
+    ((await (await call('/staff/record-requests', { patientId: ramesh, scope: 'full', email: 'ramesh@example.in' })).json()) as { id: string }).id;
+
+  it('rejects a pending request with a reason kept in its history; only once', async () => {
+    const id = await newRequest();
+    const res = await call(`/staff/record-requests/${id}/reject`, { reason: 'Asked by someone who is not the patient' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, status: 'rejected', updatedBy: 'dev-admin' });
+    const { rows } = await db.query('SELECT reason FROM record_requests_versions WHERE record_id = $1 ORDER BY version DESC LIMIT 1', [id]);
+    expect(rows[0]?.reason).toBe('Asked by someone who is not the patient');
+    expect((await call(`/staff/record-requests/${id}/reject`, { reason: 'again please' })).status).toBe(409);
+  });
+
+  it('422 without a reason; 404 for no request; 403 for a doctor', async () => {
+    const id = await newRequest();
+    expect((await call(`/staff/record-requests/${id}/reject`, {})).status).toBe(422);
+    expect((await call(`/staff/record-requests/${randomUUID()}/reject`, { reason: 'not found' })).status).toBe(404);
+    expect((await call(`/staff/record-requests/${id}/reject`, { reason: 'no access' }, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});
