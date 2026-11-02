@@ -580,4 +580,21 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC problems_patient ON problems (patient_id, created_at)',
     ],
   },
+  {
+    // Lab, imaging and procedure orders (api-list.md Order); status ordered / resulted / cancelled.
+    id: '0039_orders',
+    statements: () => [
+      ...createTable('orders', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'kind text NOT NULL',
+        'code text',
+        'name text NOT NULL',
+        'notes text',
+      ]),
+      'CREATE INDEX ASYNC orders_encounter ON orders (encounter_id)',
+      'CREATE INDEX ASYNC orders_patient ON orders (patient_id, created_at)',
+      'CREATE INDEX ASYNC orders_status ON orders (status, created_at)',
+    ],
+  },
 ];

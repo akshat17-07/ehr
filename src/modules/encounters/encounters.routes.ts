@@ -12,6 +12,7 @@ import { addDiagnosis, DIAGNOSIS_KINDS } from './diagnoses.js';
 import { addNote, addNursingNote, NOTE_KINDS, SHIFTS } from './notes.js';
 import { noteText } from './notes.routes.js';
 import { recordObservation } from './observations.js';
+import { addOrder, ORDER_KINDS } from './orders.js';
 import { recordVital, VITAL_FIELDS, type VitalField } from './vitals.js';
 import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
 
@@ -73,6 +74,14 @@ const newDiagnosis = z
     icd10: z.string().trim().regex(/^[A-Za-z]\d{2}(\.\w{1,4})?$/, 'an ICD-10 code looks like J18.9'),
     text: z.string().trim().min(1).max(500),
     kind: z.enum(DIAGNOSIS_KINDS),
+  })
+  .strict();
+const newOrder = z
+  .object({
+    kind: z.enum(ORDER_KINDS),
+    code: z.string().trim().min(1).max(30).optional(),
+    name: z.string().trim().min(2).max(200),
+    notes: z.string().trim().min(1).max(1000).optional(),
   })
   .strict();
 const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional() }).strict();
@@ -150,4 +159,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const diagnosis = await addDiagnosis(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: diagnosis.patientId, recordType: 'diagnosis', recordId: diagnosis.id });
     return c.json(diagnosis, 201);
+  })
+  // #58
+  .post('/:id/orders', requirePermission('order.write'), async (c) => {
+    const input = newOrder.parse(await bodyOf(c));
+    const order = await addOrder(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: order.patientId, recordType: 'order', recordId: order.id });
+    return c.json(order, 201);
   });
