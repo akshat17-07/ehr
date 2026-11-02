@@ -905,4 +905,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC pharmacy_bills_dispense ON pharmacy_bills (dispense_id)',
     ],
   },
+  {
+    // Inventory items other than drugs (api-list.md Item): consumables, surgical items, implants, lab reagents.
+    // Drugs stay in drugs and show up as items of kind drug with the same id; batches.item_id points at either.
+    id: '0057_items',
+    statements: () => [
+      ...createTable('items', [
+        'name text NOT NULL',
+        'kind text NOT NULL',
+        'unit text NOT NULL',
+        'pack_size integer',
+        'hsn text',
+        'gst_rate integer',
+        'mrp_paise bigint',
+        'active boolean NOT NULL DEFAULT true',
+      ]),
+      'CREATE INDEX ASYNC items_name ON items (name)',
+    ],
+  },
 ];

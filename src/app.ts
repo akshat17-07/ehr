@@ -33,6 +33,7 @@ import { mtpRoutes } from './modules/departments/mtp.routes.js';
 import { documentsRoutes } from './modules/documents/documents.routes.js';
 import { pharmacyRoutes } from './modules/pharmacy/pharmacy.routes.js';
 import { dispensesRoutes } from './modules/pharmacy/dispenses.routes.js';
+import { stockRoutes } from './modules/inventory/stock.routes.js';
 import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
@@ -83,6 +84,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Upload
     .route('/documents', documentsRoutes)
     .route('/pharmacy', pharmacyRoutes)
     .route('/dispenses', dispensesRoutes)
+    .route('/stock', stockRoutes)
     .route('/allergies', allergiesRoutes)
     .route('/problems', problemsRoutes)
     .route('/', referenceRoutes);
