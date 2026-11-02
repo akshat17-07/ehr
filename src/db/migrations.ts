@@ -968,4 +968,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC indents_status ON indents (status, created_at)',
     ],
   },
+  {
+    // Stock set aside (api-list.md Quarantine): it stays on hand but can't be used. recall_id: set by a recall (#112).
+    id: '0062_quarantines',
+    statements: () => [
+      ...createTable('quarantines', ['batch_id uuid NOT NULL', 'item_id uuid NOT NULL', 'qty integer NOT NULL', 'reason text NOT NULL', 'note text', 'recall_id uuid']),
+      'CREATE INDEX ASYNC quarantines_batch ON quarantines (batch_id)',
+    ],
+  },
 ];

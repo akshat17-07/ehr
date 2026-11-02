@@ -129,3 +129,27 @@ describe('POST /staff/stock/indents', () => {
     expect((await indent({ ward: 'ICU', lines: [{ itemId: gauze, qty: 1 }] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/quarantine', () => {
+  const post = (body: unknown, who = medical) =>
+    app.request('/staff/stock/quarantine', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const amx = seedId('ba000000', 4);
+  const row = async () => (await db.query('SELECT qty_on_hand, qty_quarantined FROM batches WHERE id = $1', [amx])).rows[0];
+
+  it('sets stock aside: still on hand, no longer usable', async () => {
+    const before = await row();
+    const res = await post({ batchId: amx, qty: 10, reason: 'damaged', note: 'strips wet in transit' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ batchId: amx, itemId: seedId('d0000000', 3), qty: 10, reason: 'damaged', note: 'strips wet in transit' });
+    expect(await row()).toEqual({ qty_on_hand: before?.qty_on_hand, qty_quarantined: Number(before?.qty_quarantined) + 10 });
+    const [stockRow] = ((await (await app.request(`/staff/stock?itemId=${seedId('d0000000', 3)}`, {}, medical)).json()) as { items: { batches: { id: string; qtyUsable: number }[] }[] }).items;
+    expect(stockRow?.batches.find((b) => b.id === amx)?.qtyUsable).toBe(Number(before?.qty_on_hand) - Number(before?.qty_quarantined) - 10);
+  });
+
+  it('409 for more than is left; 422 for a bad reason; 404 for no batch; 403 for a nurse', async () => {
+    expect(await (await post({ batchId: amx, qty: 100_000, reason: 'damaged' })).json()).toMatchObject({ error: 'short_stock' });
+    expect((await post({ batchId: amx, qty: 1, reason: 'lost' })).status).toBe(422);
+    expect((await post({ batchId: seedId('ba000000', 999), qty: 1, reason: 'other' })).status).toBe(404);
+    expect((await post({ batchId: amx, qty: 1, reason: 'other' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

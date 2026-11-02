@@ -7,6 +7,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { receiveGoods } from './grn.js';
 import { requestIndent } from './indents.js';
+import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
 import { listStock } from './stock.js';
 
@@ -51,6 +52,15 @@ const newIndent = z
   })
   .strict();
 
+const newQuarantine = z
+  .object({
+    batchId: z.uuid(),
+    qty: z.number().int().min(1).max(1_000_000),
+    reason: z.enum(QUARANTINE_REASONS),
+    note: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -74,4 +84,11 @@ export const stockRoutes = new Hono<AuthEnv>()
     const indent = await requestIndent(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { ...(indent.patientId && { patientId: indent.patientId }), recordType: 'indent', recordId: indent.id });
     return c.json(indent, 201);
+  })
+  // #110
+  .post('/quarantine', requirePermission('stock.quarantine'), async (c) => {
+    const input = newQuarantine.parse(await bodyOf(c));
+    const quarantine = await quarantineStock(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'quarantine', recordId: quarantine.id });
+    return c.json(quarantine, 201);
   });
