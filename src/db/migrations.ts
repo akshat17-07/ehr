@@ -1237,4 +1237,23 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC referrals_date ON referrals (referral_date)',
     ],
   },
+  {
+    // A patient's ask for a copy of their record (api-list.md RecordRequest), due within 72 hours. requested_by:
+    // patient (portal) or counter (records desk). encounter_ids is a JSON list (scope encounter). status: pending,
+    // fulfilled or rejected.
+    id: '0083_record_requests',
+    statements: () => [
+      ...createTable('record_requests', [
+        'patient_id uuid NOT NULL',
+        'requested_by text NOT NULL',
+        'scope text NOT NULL',
+        "encounter_ids text NOT NULL DEFAULT '[]'",
+        'include_sensitive boolean NOT NULL',
+        'email text NOT NULL',
+        'share_link_expires_at timestamptz',
+      ]),
+      'CREATE INDEX ASYNC record_requests_status ON record_requests (status, created_at)',
+      'CREATE INDEX ASYNC record_requests_patient ON record_requests (patient_id, created_at)',
+    ],
+  },
 ];
