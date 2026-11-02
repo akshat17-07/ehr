@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
-import type { BaseFields } from '../patients/patients.js';
+import { indiaDayStart } from '../../time/india.js';
+import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 import { assertOpen, getEncounter } from './encounters.js';
 
 // Orders (api-list.md Order): a lab test, imaging or procedure asked for in an encounter. `code` is the hospital's
@@ -23,6 +25,8 @@ export interface Order extends Omit<BaseFields, 'status'> {
   notes?: string;
   // Filled in when results are built (#176).
   results: unknown[];
+  /** In lists (#59), so the lab sees whose sample it is. */
+  patient?: PatientSummary;
 }
 
 export function toOrder(r: Record<string, unknown>): Order {
@@ -56,4 +60,35 @@ export async function addOrder(db: Queryable, encounterId: string, input: NewOrd
     [randomUUID(), by, encounter.id, encounter.patientId, input.kind, input.code ?? null, input.name, input.notes ?? null],
   );
   return toOrder(rows[0] as Record<string, unknown>);
+}
+
+export interface OrderQuery extends PageQuery {
+  status?: OrderStatus;
+  kind?: OrderKind;
+  patientId?: string;
+  /** India date ordered, YYYY-MM-DD. */
+  date?: string;
+}
+
+const DAY_MS = 86_400_000;
+
+/** #59: the work list, oldest first (the order to do them in), each with the patient's summary. */
+export async function listOrders(db: Queryable, query: OrderQuery, now = new Date()): Promise<Page<Order>> {
+  const params: unknown[] = [];
+  const where = ['voided_at IS NULL'];
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  if (query.kind) where.push(`kind = $${params.push(query.kind)}`);
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
+  if (query.date) {
+    const start = indiaDayStart(query.date);
+    where.push(`created_at >= $${params.push(start)}`, `created_at < $${params.push(new Date(start.getTime() + DAY_MS))}`);
+  }
+  const page = await pageRows(
+    db,
+    { select: 'SELECT * FROM orders', where, params, orderBy: ['created_at', 'id'], direction: 'asc' },
+    query,
+    toOrder,
+  );
+  const byId = await patientSummaries(db, page.items.map((o) => o.patientId), now);
+  return { ...page, items: page.items.map((o) => ({ ...o, patient: byId.get(o.patientId) })) };
 }
