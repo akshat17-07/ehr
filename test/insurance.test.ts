@@ -145,3 +145,16 @@ describe('GET /staff/claims', () => {
     expect((await app.request('/staff/claims', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/claims/{id}', () => {
+  it('one claim, audited as a view; 404 for none; 403 for a nurse', async () => {
+    const made = (await (await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 2500 })).json()) as { id: string };
+    const res = await app.request(`/staff/claims/${made.id}`, {}, doctor);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(made);
+    const { rows } = await db.query('SELECT action, patient_id FROM audit_events WHERE record_id = $1 ORDER BY seq DESC LIMIT 1', [made.id]);
+    expect(rows[0]).toMatchObject({ action: 'view', patient_id: ramesh });
+    expect((await app.request(`/staff/claims/${seedId('c1a00000', 999)}`, {}, doctor)).status).toBe(404);
+    expect((await app.request(`/staff/claims/${made.id}`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

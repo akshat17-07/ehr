@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { pageQuery } from '../../db/page.js';
-import { CLAIM_KINDS, CLAIM_STATUSES, createClaim, listClaims } from './claims.js';
+import { CLAIM_KINDS, CLAIM_STATUSES, createClaim, getClaim, listClaims } from './claims.js';
 
 const newClaim = z
   .object({
@@ -38,4 +38,10 @@ export const claimsRoutes = new Hono<AuthEnv>()
     return c.json(claim, 201);
   })
   // #135
-  .get('/', requirePermission('claim.view'), async (c) => c.json(await listClaims(await dbOf(c), claimsQuery.parse(c.req.query()))));
+  .get('/', requirePermission('claim.view'), async (c) => c.json(await listClaims(await dbOf(c), claimsQuery.parse(c.req.query()))))
+  // #136
+  .get('/:id', requirePermission('claim.view'), async (c) => {
+    const claim = await getClaim(await dbOf(c), c.req.param('id'));
+    auditDetails(c, { patientId: claim.patientId, recordType: 'claim', recordId: claim.id });
+    return c.json(claim);
+  });
