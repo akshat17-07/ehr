@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
+import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -114,5 +115,33 @@ describe('GET /staff/prescriptions/{id}', () => {
     expect((await get('nope')).status).toBe(404);
     const id = String((await db.query('SELECT id FROM prescriptions LIMIT 1')).rows[0]?.id);
     expect((await get(id, reception)).status).toBe(403);
+  });
+});
+
+describe('GET /staff/patients/{id}/prescriptions', () => {
+  type Item = { status: string; lines: { drugText: string }[] };
+  const list = async (patient: string, query = '', who = doctor) => {
+    const res = await app.request(`/staff/patients/${patient}/prescriptions${query}`, {}, who);
+    return { status: res.status, body: (await res.json()) as { items: Item[]; nextCursor?: string } };
+  };
+
+  it('lists newest first; filters by status and dates; pages', async () => {
+    const { status, body } = await list(ramesh);
+    expect(status).toBe(200);
+    expect(body.items.map((p) => p.lines[0]?.drugText)).toEqual(['Amoxicillin', 'Paracetamol 500 mg']);
+    expect((await list(ramesh, '?status=confirmed')).body.items).toHaveLength(2);
+    expect((await list(ramesh, '?status=draft')).body.items).toEqual([]);
+    expect((await list(ramesh, `?from=${indiaDate()}&to=${indiaDate()}`)).body.items).toHaveLength(2);
+    expect((await list(ramesh, '?to=2020-01-01')).body.items).toEqual([]);
+    const first = await list(ramesh, '?limit=1');
+    expect(first.body.items.map((p) => p.lines[0]?.drugText)).toEqual(['Amoxicillin']);
+    expect((await list(ramesh, `?limit=1&cursor=${first.body.nextCursor}`)).body.items.map((p) => p.lines[0]?.drugText)).toEqual(['Paracetamol 500 mg']);
+    expect((await list(seedId('9a710000', 3))).body.items).toEqual([]);
+  });
+
+  it('422 for a bad status; 404 for no patient; 403 for reception', async () => {
+    expect((await list(ramesh, '?status=done')).status).toBe(422);
+    expect((await list(seedId('9a710000', 999))).status).toBe(404);
+    expect((await list(ramesh, '', reception)).status).toBe(403);
   });
 });

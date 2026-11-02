@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
+import { indiaDayStart } from '../../time/india.js';
 import { assertOpen, getEncounter } from '../encounters/encounters.js';
 import type { BaseFields } from '../patients/patients.js';
 import { assertAlertsCleared, checkLines, type RxLine } from './rx-checks.js';
@@ -88,4 +90,21 @@ export async function getPrescription(db: Queryable, id: string): Promise<Prescr
   const { rows } = UUID.test(id) ? await db.query('SELECT * FROM prescriptions WHERE id = $1', [id]) : { rows: [] };
   if (!rows[0]) throw new AppError(404, 'not_found', 'no such prescription');
   return toPrescription(rows[0] as Record<string, unknown>);
+}
+
+export interface PrescriptionQuery extends PageQuery {
+  status?: RxStatus;
+  /** India dates (YYYY-MM-DD), both days included. */
+  from?: string;
+  to?: string;
+}
+
+/** #67: newest first; voided ones are listed too (status void, with the reason). */
+export async function patientPrescriptions(db: Queryable, patientId: string, query: PrescriptionQuery): Promise<Page<Prescription>> {
+  const params: unknown[] = [patientId];
+  const where = ['patient_id = $1'];
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  if (query.from) where.push(`created_at >= $${params.push(indiaDayStart(query.from))}`);
+  if (query.to) where.push(`created_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
+  return pageRows(db, { select: 'SELECT * FROM prescriptions', where, params, orderBy: ['created_at', 'id'] }, query, toPrescription);
 }
