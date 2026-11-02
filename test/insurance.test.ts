@@ -119,3 +119,29 @@ describe('POST /staff/claims', () => {
     expect((await post('/staff/claims', { patientId: seedId('9a710000', 999), policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 100 })).status).toBe(404);
   });
 });
+
+describe('GET /staff/claims', () => {
+  const claim = async (kind: string) => ((await (await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind, amountClaimedPaise: 1000 })).json()) as { id: string }).id;
+  const submittedAgo = (id: string, minutes: number) =>
+    db.query(`UPDATE claims SET status = 'submitted', submitted_at = $2 WHERE id = $1`, [id, new Date(Date.now() - minutes * 60_000)]);
+  const list = async (q: string) => ((await (await app.request(`/staff/claims${q}`, {}, doctor)).json()) as { items: { id: string; dueBy?: string }[] }).items;
+
+  it('filters by status, insurer and the IRDAI timers', async () => {
+    const late = await claim('cashless_preauth');
+    const fresh = await claim('cashless_preauth');
+    const discharge = await claim('cashless_final');
+    await submittedAgo(late, 61);
+    await submittedAgo(fresh, 10);
+    await submittedAgo(discharge, 120);
+    const overdue = await list(`?overdue=true&patientId=${ramesh}`);
+    expect(overdue.map((c) => c.id)).toEqual([late]);
+    const notLate = (await list(`?overdue=false&patientId=${ramesh}`)).map((c) => c.id);
+    expect(notLate).toEqual(expect.arrayContaining([fresh, discharge]));
+    expect(notLate).not.toContain(late);
+    const submitted = await list('?status=submitted');
+    expect(submitted.map((c) => c.id).sort()).toEqual([discharge, fresh, late].sort());
+    expect(submitted.find((c) => c.id === fresh)?.dueBy).toBeDefined();
+    expect(await list(`?insurerId=${seedId('1a000000', 2)}`)).toEqual([]);
+    expect((await app.request('/staff/claims', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

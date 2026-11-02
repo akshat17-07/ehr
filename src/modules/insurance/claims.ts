@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertLinks } from '../billing/bills.js';
@@ -110,4 +111,39 @@ export async function createClaim(db: Queryable, input: NewClaim, by: string): P
     [id, by, patient.id, input.policyId, String(policies[0]?.insurer_id), input.admissionId ?? null, input.kind, input.amountClaimedPaise, JSON.stringify(documentIds)],
   );
   return getClaim(db, id);
+}
+
+export interface ClaimQuery extends PageQuery {
+  status?: ClaimStatus;
+  patientId?: string;
+  insurerId?: string;
+  overdue?: 'true' | 'false';
+}
+
+/** The events of several claims, by claim, oldest first. */
+async function eventsOf(db: Queryable, ids: string[]): Promise<Map<string, ClaimEvent[]>> {
+  const byClaim = new Map<string, ClaimEvent[]>(ids.map((id) => [id, []]));
+  if (ids.length === 0) return byClaim;
+  const { rows } = await db.query(`SELECT * FROM claim_events WHERE claim_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')}) ORDER BY created_at, id`, ids);
+  for (const r of rows) byClaim.get(String(r.claim_id))?.push(toClaimEvent(r));
+  return byClaim;
+}
+
+/** #135: newest first. overdue=true: cashless claims still waiting past their IRDAI time; false: all others. */
+export async function listClaims(db: Queryable, query: ClaimQuery, now = new Date()): Promise<Page<Claim>> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
+  if (query.insurerId) where.push(`insurer_id = $${params.push(query.insurerId)}`);
+  if (query.overdue) {
+    const late = Object.entries(CLAIM_HOURS)
+      .map(([kind, hours]) => `(kind = $${params.push(kind)} AND submitted_at < $${params.push(new Date(now.getTime() - hours * 3_600_000))})`)
+      .join(' OR ');
+    const overdue = `(status = 'submitted' AND (${late}))`;
+    where.push(query.overdue === 'true' ? overdue : `NOT ${overdue}`);
+  }
+  const page = await pageRows(db, { select: 'SELECT * FROM claims', where, params, orderBy: ['created_at', 'id'] }, query, (r) => toClaim(r));
+  const events = await eventsOf(db, page.items.map((c) => c.id));
+  return { ...page, items: page.items.map((c) => ({ ...c, events: events.get(c.id) ?? [] })) };
 }
