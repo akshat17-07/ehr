@@ -308,3 +308,28 @@ describe('GET /staff/bills/{id}/versions', () => {
     expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}/versions`, {}, doctor)).status).toBe(404);
   });
 });
+
+describe('GET /staff/bills/{id}/print', () => {
+  it('a printable page in English or Hindi, logged as a print', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }, { text: 'Dressing <b>', qty: 1, unitPaise: 5000 }] })).json()) as Bill & { version: number };
+    const draft = await (await app.request(`/staff/bills/${d.id}/print`, {}, doctor)).text();
+    expect(draft).toContain('DRAFT');
+    expect(draft).toContain('Dressing &#60;b&#62;');
+    await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor);
+    await app.request(`/staff/bills/${d.id}/payments`, json({ amountPaise: 5000, mode: 'upi', reference: 'UPI123' }), doctor);
+    const res = await app.request(`/staff/bills/${d.id}/print`, {}, doctor);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const html = await res.text();
+    expect(html).toContain('Bill of Supply');
+    expect(html).not.toContain('DRAFT');
+    expect(html).toContain('₹150.00');
+    expect(html).toContain('UPI123');
+    const hi = await (await app.request(`/staff/bills/${d.id}/print?lang=hi`, {}, doctor)).text();
+    expect(hi).toContain('आपूर्ति का बिल');
+    const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY seq DESC LIMIT 1`, [d.id]);
+    expect(rows[0]?.action).toBe('print');
+    expect((await app.request(`/staff/bills/${d.id}/print?lang=fr`, {}, doctor)).status).toBe(422);
+    expect((await app.request(`/staff/bills/${d.id}/print`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

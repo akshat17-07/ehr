@@ -10,6 +10,7 @@ import { getPatient } from '../patients/patients.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
 import { billPayments, payBill } from './payments.js';
+import { billHtml, PRINT_LANGUAGES } from './print.js';
 import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, toBill, updateBillLines, voidBill } from './bills.js';
 
 export const lineInput = z
@@ -86,6 +87,15 @@ export const billsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
     return c.json(await listVersions(db, 'bills', bill.id, toBill));
+  })
+  // #125
+  .get('/:id/print', requirePermission('bill.view'), async (c) => {
+    const { lang } = z.object({ lang: z.enum(PRINT_LANGUAGES).default('en') }).parse(c.req.query());
+    const db = await dbOf(c);
+    const bill = await getBill(db, c.req.param('id'));
+    auditDetails(c, { action: 'print', patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
+    return c.html(await billHtml(db, bill, await billPayments(db, bill.id), lang));
   })
   // #119
   .patch('/:id', requirePermission('bill.update'), async (c) => {
