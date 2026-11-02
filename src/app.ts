@@ -26,6 +26,7 @@ import { notesRoutes } from './modules/encounters/notes.routes.js';
 import { diagnosesRoutes } from './modules/encounters/diagnoses.routes.js';
 import { ordersRoutes } from './modules/encounters/orders.routes.js';
 import { prescriptionsRoutes } from './modules/prescriptions/prescriptions.routes.js';
+import { admissionsRoutes } from './modules/admissions/admissions.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
 import { accessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
@@ -66,6 +67,7 @@ export function createApp({ db = getDb, signUrl = signGetUrl, staffAccounts = co
     .route('/diagnoses', diagnosesRoutes)
     .route('/orders', ordersRoutes)
     .route('/prescriptions', prescriptionsRoutes)
+    .route('/admissions', admissionsRoutes)
     .route('/allergies', allergiesRoutes)
     .route('/problems', problemsRoutes)
     .route('/', referenceRoutes);

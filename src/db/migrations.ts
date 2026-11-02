@@ -633,4 +633,28 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC prescriptions_patient ON prescriptions (patient_id, created_at)',
     ],
   },
+  {
+    // IPD admissions (api-list.md Admission). While current, bed_key (ward|bed) and current_patient are set, and their
+    // unique indexes keep one patient per bed and one current admission per patient; discharge clears both.
+    id: '0042_admissions',
+    statements: () => [
+      ...createTable('admissions', [
+        'patient_id uuid NOT NULL',
+        'encounter_id uuid NOT NULL',
+        'department_id uuid NOT NULL',
+        'doctor_id uuid NOT NULL',
+        'ward text NOT NULL',
+        'bed text NOT NULL',
+        'reason text',
+        'admitted_at timestamptz NOT NULL',
+        'discharged_at timestamptz',
+        'bed_key text',
+        'current_patient uuid',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC admissions_bed_key ON admissions (bed_key)',
+      'CREATE UNIQUE INDEX ASYNC admissions_current_patient ON admissions (current_patient)',
+      'CREATE INDEX ASYNC admissions_patient ON admissions (patient_id, admitted_at)',
+      'CREATE INDEX ASYNC admissions_encounter ON admissions (encounter_id)',
+    ],
+  },
 ];
