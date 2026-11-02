@@ -1226,4 +1226,15 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC referrers_reg_no ON referrers (reg_no)',
     ],
   },
+  {
+    // A patient sent by a referrer (api-list.md Referral). status: received, seen, admitted, surgery, discharged.
+    // There are no fee or commission columns.
+    id: '0082_referrals',
+    statements: () => [
+      ...createTable('referrals', ['patient_id uuid NOT NULL', 'referrer_id uuid NOT NULL', 'referral_date date NOT NULL', 'reason text']),
+      'CREATE INDEX ASYNC referrals_referrer ON referrals (referrer_id, referral_date)',
+      'CREATE INDEX ASYNC referrals_patient ON referrals (patient_id, created_at)',
+      'CREATE INDEX ASYNC referrals_date ON referrals (referral_date)',
+    ],
+  },
 ];

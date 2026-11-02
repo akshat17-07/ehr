@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
+import { seedId } from '../src/db/table.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -69,5 +70,30 @@ describe('POST /staff/referrers', () => {
   it('422 for a bad phone; 403 without referrer.create_pseudo', async () => {
     expect((await post('/staff/referrers', { name: 'Dr X', phone: '12345' })).status).toBe(422);
     expect((await post('/staff/referrers', { name: 'Dr X' }, asStaff('dev-medical', ['medical']))).status).toBe(403);
+  });
+});
+
+describe('POST /staff/patients/{id}/referrals', () => {
+  const ramesh = seedId('9a710000', 1);
+  const refer = (patientId: string, body: unknown, who = doctor) => post(`/staff/patients/${patientId}/referrals`, body, who);
+
+  it('records who sent the patient, from today unless dated', async () => {
+    const referrerId = await insertReferrer('Dr Kiran Patel', null, null);
+    const res = await refer(ramesh, { referrerId, reason: 'chest pain' });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { date: string };
+    expect(made).toMatchObject({ status: 'received', patientId: ramesh, referrerId, reason: 'chest pain', createdBy: 'dev-doctor' });
+    expect(made.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(await (await refer(ramesh, { referrerId, date: '2026-01-15' })).json()).toMatchObject({ date: '2026-01-15' });
+  });
+
+  it('422 for an unknown or merged referrer or a future date; 404 for no patient; 403 without referral.record', async () => {
+    const live = await insertReferrer('Dr Live', null, null);
+    const merged = await insertReferrer('Dr Merged', null, null, live);
+    expect((await refer(ramesh, { referrerId: randomUUID() })).status).toBe(422);
+    expect((await refer(ramesh, { referrerId: merged })).status).toBe(422);
+    expect((await refer(ramesh, { referrerId: live, date: '2099-01-01' })).status).toBe(422);
+    expect((await refer(seedId('9a710000', 999), { referrerId: live })).status).toBe(404);
+    expect((await refer(ramesh, { referrerId: live }, asStaff('dev-medical', ['medical']))).status).toBe(403);
   });
 });

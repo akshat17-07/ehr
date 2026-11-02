@@ -31,6 +31,7 @@ import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
 import { addPolicy, patientPolicies } from '../insurance/policies.js';
 import { policyFields } from '../insurance/policies.routes.js';
+import { addReferral } from '../referrals/referrals.js';
 import { linkAgent } from '../insurance/agent-links.js';
 
 // /staff/patients (api-list.md 6.3).
@@ -394,6 +395,16 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const link = await linkAgent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: link.patientId, recordType: 'agent_link', recordId: link.id });
     return c.json(link, 201);
+  })
+  // #143
+  .post('/:id/referrals', requirePermission('referral.record'), async (c) => {
+    const input = z
+      .object({ referrerId: z.uuid(), date: z.iso.date().optional(), reason: z.string().trim().min(1).max(1000).optional() })
+      .strict()
+      .parse(await bodyOf(c));
+    const referral = await addReferral(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: referral.patientId, recordType: 'referral', recordId: referral.id });
+    return c.json(referral, 201);
   })
   // #127
   .get('/:id/deposits', requirePermission('bill.view'), async (c) => {
