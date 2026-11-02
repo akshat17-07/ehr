@@ -72,3 +72,30 @@ describe('GET /staff/orders', () => {
     expect((await list('', reception)).status).toBe(403);
   });
 });
+
+describe('POST /staff/orders/{id}/results', () => {
+  type Order = { id: string; name: string; status: string; version: number; results: { value?: number; unit?: string; text?: string }[] };
+  const orders = async () => ((await (await app.request('/staff/orders', {}, doctor)).json()) as { items: Order[] }).items;
+  const result = (id: string, body: unknown, who = doctor) => app.request(`/staff/orders/${id}/results`, json(body), who);
+
+  it('records a value; the order becomes resulted and lists its results', async () => {
+    const [cbc] = await orders();
+    const res = await result(cbc!.id, { value: 11.2, unit: 'g/dL', text: 'Haemoglobin low' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ orderId: cbc!.id, value: 11.2, unit: 'g/dL', text: 'Haemoglobin low', createdBy: 'dev-doctor' });
+    expect((await result(cbc!.id, { text: 'Corrected: Hb 11.4 g/dL' })).status).toBe(201);
+    const [after] = await orders();
+    expect(after).toMatchObject({ status: 'resulted', version: 2 });
+    expect(after!.results.map((r) => r.text)).toEqual(['Haemoglobin low', 'Corrected: Hb 11.4 g/dL']);
+  });
+
+  it('422 with neither value nor text, a unit alone, or a future time; 404 for none; 403 for a nurse', async () => {
+    const [, xray] = await orders();
+    expect((await result(xray!.id, {})).status).toBe(422);
+    expect((await result(xray!.id, { unit: 'mm' })).status).toBe(422);
+    expect((await result(xray!.id, { text: 'Normal', resultedAt: '2999-01-01T00:00:00Z' })).status).toBe(422);
+    expect((await result(seedId('0d000000', 999), { text: 'Normal' })).status).toBe(404);
+    expect((await result(xray!.id, { text: 'Normal' }, nurse)).status).toBe(403);
+    expect((await orders())[1]).toMatchObject({ status: 'ordered', results: [] });
+  });
+});

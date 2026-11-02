@@ -597,4 +597,20 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC orders_status ON orders (status, created_at)',
     ],
   },
+  {
+    // Results of an order (api-list.md Result): a number with its unit, text, or (later) a scanned report.
+    id: '0040_order_results',
+    statements: () => [
+      ...createTable('order_results', [
+        'order_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'value_num numeric',
+        'unit text',
+        'text text',
+        'document_id uuid',
+        'resulted_at timestamptz NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC order_results_order ON order_results (order_id, resulted_at)',
+    ],
+  },
 ];
