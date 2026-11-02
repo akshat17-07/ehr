@@ -76,6 +76,38 @@ describe('POST /admin/grant-rules', () => {
     expect((await post(good, head)).status).toBe(403);
   });
 
+  describe('PATCH /admin/grant-rules/{id}', () => {
+    const patch = (id: string, body: unknown, who = admin) =>
+      app.request(`/admin/grant-rules/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+    const make = async () =>
+      (await (await post({ grantorUserId: headId, mayGrant: ['document.view'], scope: 'department', departmentId: med, maxDays: 30 })).json()) as { id: string };
+
+    it('changes what may be granted, the scope and length, with a version check', async () => {
+      const { id } = await make();
+      const res = await patch(id, { version: 1, mayGrant: ['mtp.view', 'document.view'], scope: 'all', maxDays: 7, reason: 'covers the whole hospital' });
+      expect(res.status).toBe(200);
+      const rule = (await res.json()) as object;
+      expect(rule).toMatchObject({ mayGrant: ['document.view', 'mtp.view'], scope: 'all', maxDays: 7, active: true, version: 2 });
+      expect(rule).not.toHaveProperty('departmentId');
+      expect((await patch(id, { version: 1, maxDays: 9 })).status).toBe(409);
+    });
+
+    it('ends a rule and starts it again', async () => {
+      const { id } = await make();
+      expect(await (await patch(id, { version: 1, active: false, reason: 'not needed now' })).json()).toMatchObject({ active: false, version: 2 });
+      expect(await (await patch(id, { version: 2, active: true })).json()).toMatchObject({ active: true, version: 3 });
+    });
+
+    it('404 for no rule; 422 for nothing to change or a bad scope; 403 for a Head Doctor', async () => {
+      const { id } = await make();
+      expect((await patch(randomUUID(), { version: 1, maxDays: 9 })).status).toBe(404);
+      expect((await patch(id, { version: 1 })).status).toBe(422);
+      expect((await patch(id, { version: 1, scope: 'department' })).status).toBe(422);
+      expect((await patch(id, { version: 1, mayGrant: ['user.create'] })).status).toBe(422);
+      expect((await patch(id, { version: 1, maxDays: 9 }, head)).status).toBe(403);
+    });
+  });
+
   it('demoting the Head Doctor ends their rules, with the reason kept', async () => {
     accounts.accounts.set('head-doctor@dev.local', { sub: 'dev-head-doctor', name: 'x', groups: ['head_doctor'], enabled: true });
     const res = await app.request(`/admin/users/${headId}/demote-head-doctor`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'stepped down' }) }, admin);
@@ -83,8 +115,8 @@ describe('POST /admin/grant-rules', () => {
     const rules = (await (await app.request(`/admin/grant-rules?grantorUserId=${headId}`, {}, admin)).json()) as { id: string; active: boolean }[];
     expect(rules.length).toBeGreaterThan(0);
     expect(rules.every((r) => !r.active)).toBe(true);
-    // Two were active: the one from the list test and the one added above.
+    // Five were active: the one from the list test, the one added above and the three from the PATCH tests.
     const { rows } = await db.query("SELECT record_id FROM grant_rules_versions WHERE reason = 'stepped down'");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(5);
   });
 });

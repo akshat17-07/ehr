@@ -12,7 +12,7 @@ import { listTypePermissions, saveTypePermissions } from '../../permissions/type
 import { checkBundles, getUser } from '../users/users.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
-import { addGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
+import { addGrantRule, changeGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -59,6 +59,17 @@ const newGrantRule = z
     maxDays: z.number().int().min(1).max(365),
   })
   .strict();
+const grantRuleChange = z
+  .object({
+    version: z.number().int().min(1),
+    mayGrant: z.array(z.string()).min(1).max(100).optional(),
+    scope: z.enum(GRANT_RULE_SCOPES).optional(),
+    departmentId: z.string().uuid().optional(),
+    maxDays: z.number().int().min(1).max(365).optional(),
+    active: z.boolean().optional(),
+    reason: reason.optional(),
+  })
+  .strict();
 
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
   // #164: every active bundle, by name.
@@ -86,6 +97,13 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
     const rule = await addGrantRule(await dbOf(c), body, userOf(c).sub);
     auditDetails(c, { recordType: 'grant_rule', recordId: rule.id });
     return c.json(rule, 201);
+  })
+  // #169 (Admin only)
+  .patch('/grant-rules/:id', requirePermission('grant_rule.manage'), async (c) => {
+    const body = grantRuleChange.parse(await c.req.json().catch(() => undefined));
+    const rule = await changeGrantRule(await dbOf(c), c.req.param('id'), body, userOf(c).sub);
+    auditDetails(c, { recordType: 'grant_rule', recordId: rule.id, ...(body.reason && { reason: body.reason }) });
+    return c.json(rule);
   })
 
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.

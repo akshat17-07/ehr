@@ -84,10 +84,14 @@ export interface NewGrantRule {
   maxDays: number;
 }
 
+async function checkGrantor(db: Queryable, grantorUserId: string): Promise<void> {
+  const { rows } = await db.query('SELECT type, active FROM users WHERE id = $1', [grantorUserId]);
+  if (rows[0]?.type !== 'head_doctor' || rows[0].active !== true) invalid('grantorUserId must be an active Head Doctor');
+}
+
 /** #168: 422 unless the grantor is an active Head Doctor (an Admin needs no rule). */
 export async function addGrantRule(db: Queryable, input: NewGrantRule, by: string): Promise<GrantRule> {
-  const { rows: users } = await db.query('SELECT type, active FROM users WHERE id = $1', [input.grantorUserId]);
-  if (users[0]?.type !== 'head_doctor' || users[0].active !== true) invalid('grantorUserId must be an active Head Doctor');
+  await checkGrantor(db, input.grantorUserId);
   const mayGrant = checkMayGrant(input.mayGrant);
   await checkScope(db, input.scope, input.departmentId);
   const { rows } = await db.query(
@@ -104,4 +108,40 @@ export async function endGrantRules(db: Queryable, grantorUserId: string, by: st
   for (const row of rows) {
     await updateRecord(db, 'grant_rules', { id: String(row.id), version: Number(row.version), by, set: { status: 'ended' }, reason });
   }
+}
+
+export interface GrantRuleChange {
+  version: number;
+  mayGrant?: string[];
+  scope?: GrantRuleScope;
+  departmentId?: string;
+  maxDays?: number;
+  active?: boolean;
+  reason?: string;
+}
+
+/**
+ * #169: 404 for no rule; 422 for nothing to change. Giving a scope or departmentId sets both (scope all drops the
+ * department). Starting an ended rule again needs the grantor to still be an active Head Doctor.
+ */
+export async function changeGrantRule(db: Queryable, id: string, change: GrantRuleChange, by: string): Promise<GrantRule> {
+  if (!UUID.test(id)) throw new AppError(404, 'not_found');
+  const { rows } = await db.query('SELECT * FROM grant_rules WHERE id = $1', [id]);
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const rule = toGrantRule(rows[0] as Record<string, unknown>);
+  const set: Record<string, unknown> = {};
+  if (change.mayGrant) set.may_grant = JSON.stringify(checkMayGrant(change.mayGrant));
+  if (change.scope !== undefined || change.departmentId !== undefined) {
+    const scope = change.scope ?? rule.scope;
+    await checkScope(db, scope, change.departmentId);
+    set.scope = scope;
+    set.department_id = change.departmentId ?? null;
+  }
+  if (change.maxDays !== undefined) set.max_days = change.maxDays;
+  if (change.active !== undefined && change.active !== rule.active) {
+    if (change.active) await checkGrantor(db, rule.grantorUserId);
+    set.status = change.active ? 'active' : 'ended';
+  }
+  if (Object.keys(set).length === 0) invalid('nothing to change');
+  return toGrantRule(await updateRecord(db, 'grant_rules', { id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) }));
 }
