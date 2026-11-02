@@ -249,3 +249,28 @@ describe('POST /staff/encounters/{id}/observations', () => {
     expect((await observe(id, { loinc: '8867-4', name: 'x', value: 1 })).status).toBe(409);
   });
 });
+
+describe('GET /staff/patients/{id}/observations', () => {
+  const kavita = seedId('9a710000', 4);
+  const history = (query = '', who = doctor) => app.request(`/staff/patients/${kavita}/observations${query}`, {}, who);
+
+  it('lists newest first, one measure with loinc, by date range', async () => {
+    const insert = (n: number, loinc: string, at: string, value: number) =>
+      db.query(
+        "INSERT INTO observations (id, status, created_by, updated_by, encounter_id, patient_id, loinc, name, value_num, taken_at) VALUES ($1, 'active', 'x', 'x', $2, $3, $4, 'x', $5, $6)",
+        [seedId('0b5e0000', n), seedId('e0c00000', 60), kavita, loinc, value, at],
+      );
+    await insert(1, '8867-4', '2026-03-01T05:00:00Z', 70);
+    await insert(2, '9279-1', '2026-04-01T05:00:00Z', 18);
+    await insert(3, '8867-4', '2026-05-01T05:00:00Z', 90);
+    type Body = { items: { value: number }[] };
+    expect(((await (await history()).json()) as Body).items.map((o) => o.value)).toEqual([90, 18, 70]);
+    expect(((await (await history('?loinc=8867-4')).json()) as Body).items.map((o) => o.value)).toEqual([90, 70]);
+    expect(((await (await history('?from=2026-04-01&to=2026-04-30')).json()) as Body).items.map((o) => o.value)).toEqual([18]);
+  });
+
+  it('422 for a bad date; 403 for a GP', async () => {
+    expect((await history('?to=soon')).status).toBe(422);
+    expect((await history('', asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});

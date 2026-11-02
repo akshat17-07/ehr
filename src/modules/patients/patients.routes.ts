@@ -18,6 +18,7 @@ import {
   updatePatient,
 } from './patients.js';
 import { CONSENT_KINDS, LANGUAGES, recordConsent } from './consents.js';
+import { patientObservations } from '../encounters/observations.js';
 import { patientVitals } from '../encounters/vitals.js';
 import { addGuardian } from './guardians.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
@@ -103,6 +104,8 @@ const reasonBody = z.object({ reason: z.string().trim().min(3).max(500) }).stric
 
 const rangeQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
 
+const observationsQuery = rangeQuery.extend({ loinc: z.string().trim().min(1).max(20).optional() });
+
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
@@ -178,6 +181,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await patientVitals(db, patient.id, query));
+  })
+  // #44
+  .get('/:id/observations', requirePermission('patient.view'), async (c) => {
+    const query = observationsQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json(await patientObservations(db, patient.id, query));
   })
   // #26
   .post('/:id/guardians', requirePermission('patient.update'), async (c) => {
