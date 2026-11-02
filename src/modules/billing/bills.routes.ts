@@ -11,6 +11,7 @@ import { assertPatientAccess } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
 import { billPayments, payBill } from './payments.js';
 import { billHtml, PRINT_LANGUAGES } from './print.js';
+import { addRefund, billRefunds, REFUND_MODES } from './refunds.js';
 import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, toBill, updateBillLines, voidBill } from './bills.js';
 
 export const lineInput = z
@@ -51,6 +52,16 @@ const newPayment = z
   .strict()
   .refine((p) => p.mode === 'cash' || p.reference, { message: 'the UPI or card reference is needed', path: ['reference'] });
 
+const newRefund = z
+  .object({
+    amountPaise: z.number().int().min(1).max(100_000_000),
+    mode: z.enum(REFUND_MODES),
+    reason: z.string().trim().min(3).max(500),
+    reference: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict()
+  .refine((r) => r.mode === 'cash' || r.reference, { message: 'the UPI, card or bank reference is needed', path: ['reference'] });
+
 const reasonBody = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
 
 const versionOnly = z.object({ version: z.number().int().min(1) }).strict();
@@ -78,7 +89,7 @@ export const billsRoutes = new Hono<AuthEnv>()
     const bill = await getBill(db, c.req.param('id'));
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
-    return c.json({ ...bill, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id) });
+    return c.json({ ...bill, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id), refunds: await billRefunds(db, bill.id) });
   })
   // #124
   .get('/:id/versions', requirePermission('bill.view'), async (c) => {
@@ -124,6 +135,13 @@ export const billsRoutes = new Hono<AuthEnv>()
     const result = await payBill(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: result.bill.patientId, recordType: 'payment', recordId: result.payment.id });
     return c.json(result, 201);
+  })
+  // #129
+  .post('/:id/refunds', requirePermission('refund.create'), async (c) => {
+    const input = newRefund.parse(await bodyOf(c));
+    const refund = await addRefund(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: refund.patientId, recordType: 'refund', recordId: refund.id, reason: input.reason });
+    return c.json(refund, 201);
   })
   // #123
   .post('/:id/void', requirePermission('bill.void'), async (c) => {

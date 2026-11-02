@@ -1132,4 +1132,23 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC deposits_created ON deposits (created_at)',
     ],
   },
+  {
+    // Refunds (api-list.md Refund) of money taken on a bill. status: approved (money off the bill's paid),
+    // pending (over the hospital limit, waiting for #177) or rejected.
+    id: '0077_refunds',
+    statements: () => [
+      ...createTable('refunds', [
+        'bill_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'amount_paise bigint NOT NULL',
+        'mode text NOT NULL',
+        'reason text NOT NULL',
+        'reference text',
+        'approved_by text',
+      ]),
+      'CREATE INDEX ASYNC refunds_bill ON refunds (bill_id)',
+      'CREATE INDEX ASYNC refunds_status ON refunds (status, created_at)',
+      'CREATE INDEX ASYNC refunds_created ON refunds (created_at)',
+    ],
+  },
 ];

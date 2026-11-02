@@ -103,7 +103,7 @@ describe('GET /staff/bills/{id}', () => {
     const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
     const res = await app.request(`/staff/bills/${made.id}`, {}, doctor);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...made, discounts: [], payments: [] });
+    expect(await res.json()).toEqual({ ...made, discounts: [], payments: [], refunds: [] });
     const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY at`, [made.id]);
     expect(rows.map((r) => r.action)).toContain('view');
     expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}`, {}, doctor)).status).toBe(404);
@@ -412,3 +412,41 @@ describe('POST /staff/deposits/{id}/apply', () => {
   });
 });
 
+describe('POST /staff/bills/{id}/refunds', () => {
+  const refund = (id: string, body: unknown, who = doctor) => app.request(`/staff/bills/${id}/refunds`, json(body), who);
+  const paidBill = async (unitPaise: number) => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ text: 'Package', qty: 1, unitPaise }] })).json()) as Bill & { version: number };
+    await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor);
+    await app.request(`/staff/bills/${d.id}/payments`, json({ amountPaise: unitPaise, mode: 'upi', reference: 'UPI-1' }), doctor);
+    return d.id;
+  };
+
+  it('a small refund is approved at once and taken off the paid amount; then the bill can be voided', async () => {
+    const id = await paidBill(50_000);
+    const res = await refund(id, { amountPaise: 50_000, mode: 'cash', reason: 'Test not done' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'approved', amountPaise: 50_000, billId: id, patientId: irfan });
+    const read = (await (await app.request(`/staff/bills/${id}`, {}, doctor)).json()) as Bill & { refunds: { status: string }[] };
+    expect(read).toMatchObject({ status: 'final', paidPaise: 0, duePaise: 50_000 });
+    expect(read.refunds.map((r) => r.status)).toEqual(['approved']);
+    expect((await app.request(`/staff/bills/${id}/void`, json({ reason: 'Test not done' }), doctor)).status).toBe(200);
+  });
+
+  it('over the limit it waits for approval and holds that amount', async () => {
+    const id = await paidBill(500_000);
+    expect(await (await refund(id, { amountPaise: 300_000, mode: 'bank', reason: 'Overcharged', reference: 'NEFT1' })).json()).toMatchObject({ status: 'pending' });
+    const read = (await (await app.request(`/staff/bills/${id}`, {}, doctor)).json()) as Bill;
+    expect(read.paidPaise).toBe(500_000);
+    expect((await refund(id, { amountPaise: 200_001, mode: 'cash', reason: 'Overcharged' })).status).toBe(422);
+    expect(await (await refund(id, { amountPaise: 50_000, mode: 'cash', reason: 'Overcharged' })).json()).toMatchObject({ status: 'approved' });
+  });
+
+  it('422 with nothing paid or no reference; 403 for a nurse; 404 for no bill', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ text: 'Room', qty: 1, unitPaise: 1000 }] })).json()) as Bill;
+    expect((await refund(d.id, { amountPaise: 100, mode: 'cash', reason: 'Not used' })).status).toBe(422);
+    const id = await paidBill(1000);
+    expect((await refund(id, { amountPaise: 100, mode: 'upi', reason: 'Not used' })).status).toBe(422);
+    expect((await refund(id, { amountPaise: 100, mode: 'cash', reason: 'Not used' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await refund(seedId('b1000000', 999), { amountPaise: 100, mode: 'cash', reason: 'Not used' })).status).toBe(404);
+  });
+});
