@@ -73,3 +73,25 @@ describe('POST /staff/patients/{id}/policies', () => {
     expect((await add(kavita, { ...body, policyNo: 'X5' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('PATCH /staff/policies/{id}', () => {
+  const rahul = seedId('9a710000', 5);
+  const patch = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/policies/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('changes the fields given, clears with null, and keeps the old version', async () => {
+    const made = (await (
+      await app.request(`/staff/patients/${rahul}/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ insurerId: star, tpaId: mediAssist, policyNo: 'R-1', holderName: 'Rahul', validFrom: '2026-01-01', validTo: '2026-12-31' }) }, doctor)
+    ).json()) as { id: string; version: number };
+    const res = await patch(made.id, { version: made.version, validTo: '2027-12-31', tpaId: null, memberId: 'MEM-9', reason: 'Renewed' });
+    expect(res.status).toBe(200);
+    const changed = (await res.json()) as { version: number; tpaId?: string };
+    expect(changed).toMatchObject({ validTo: '2027-12-31', memberId: 'MEM-9', policyNo: 'R-1', version: made.version + 1 });
+    expect(changed.tpaId).toBeUndefined();
+    expect(await (await patch(made.id, { version: made.version, holderName: 'Old' })).json()).toMatchObject({ error: 'conflict' });
+    expect((await patch(made.id, { version: changed.version, validFrom: '2028-01-01' })).status).toBe(422);
+    expect((await patch(made.id, { version: changed.version })).status).toBe(422);
+    expect((await patch(made.id, { version: changed.version, holderName: 'X' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await patch(seedId('9b000000', 999), { version: 1, holderName: 'X' })).status).toBe(404);
+  });
+});

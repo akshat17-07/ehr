@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { indiaDate } from '../../time/india.js';
 import { AppError } from '../../middleware/errors.js';
@@ -107,4 +108,55 @@ export async function getPolicy(db: Queryable, id: string): Promise<Policy> {
   const { rows } = UUID.test(id) ? await db.query(`SELECT ${POLICY_COLUMNS} FROM policies WHERE id = $1`, [id]) : { rows: [] };
   if (!rows[0]) throw new AppError(404, 'not_found', 'no such policy');
   return toPolicy(rows[0] as Record<string, unknown>);
+}
+
+export type PolicyChange = { version: number; reason?: string } & Partial<
+  Omit<PolicyFields, 'tpaId' | 'memberId' | 'sumInsuredPaise'> & { tpaId: string | null; memberId: string | null; sumInsuredPaise: number | null }
+>;
+
+const COLUMNS: Record<string, string> = {
+  insurerId: 'insurer_id',
+  tpaId: 'tpa_id',
+  policyNo: 'policy_no',
+  memberId: 'member_id',
+  holderName: 'holder_name',
+  validFrom: 'valid_from',
+  validTo: 'valid_to',
+  sumInsuredPaise: 'sum_insured_paise',
+};
+
+/**
+ * #133: changes the fields given (null clears tpaId, memberId or sumInsuredPaise); the old version is kept.
+ * 404 for no policy; 409 voided; 409 for a stale version; 422 / 409 duplicate as at #132.
+ */
+export async function updatePolicy(db: Queryable, id: string, change: PolicyChange, by: string): Promise<Policy> {
+  const current = await getPolicy(db, id);
+  if (current.status === 'void') throw new AppError(409, 'voided', 'this record is voided');
+  const merged = {
+    insurerId: change.insurerId ?? current.insurerId,
+    tpaId: change.tpaId === null ? undefined : (change.tpaId ?? current.tpaId),
+    validFrom: change.validFrom ?? current.validFrom,
+    validTo: change.validTo ?? current.validTo,
+  };
+  await assertPolicyFields(db, merged);
+  const policyNo = change.policyNo ?? current.policyNo;
+  if (change.insurerId !== undefined || change.policyNo !== undefined) {
+    const { rows: same } = await db.query(
+      'SELECT id FROM policies WHERE insurer_id = $1 AND policy_no = $2 AND patient_id = $3 AND voided_at IS NULL AND id <> $4',
+      [merged.insurerId, policyNo, current.patientId, id],
+    );
+    if (same[0]) throw new AppError(409, 'duplicate', 'this policy is already on file', { policyId: String(same[0].id) });
+  }
+  const set: Record<string, unknown> = {};
+  for (const [field, column] of Object.entries(COLUMNS)) {
+    const value = (change as Record<string, unknown>)[field];
+    if (value !== undefined) set[column] = value;
+  }
+  if (change.documentIds !== undefined) {
+    const documentIds = [...new Set(change.documentIds)];
+    await assertPatientDocuments(db, current.patientId, documentIds, 'documentIds');
+    set.document_ids = JSON.stringify(documentIds);
+  }
+  await updateRecord(db, 'policies', { id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) });
+  return getPolicy(db, id);
 }

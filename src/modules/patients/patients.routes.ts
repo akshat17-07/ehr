@@ -30,6 +30,7 @@ import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
 import { addPolicy, patientPolicies } from '../insurance/policies.js';
+import { policyFields } from '../insurance/policies.routes.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -182,17 +183,6 @@ const timelineQuery = pageQuery.extend({
   kind: z.enum(TIMELINE_KINDS).optional(),
 });
 
-export const policyFields = {
-  insurerId: z.uuid(),
-  tpaId: z.uuid().optional(),
-  policyNo: z.string().trim().min(1).max(60),
-  memberId: z.string().trim().min(1).max(60).optional(),
-  holderName: z.string().trim().min(1).max(200),
-  validFrom: z.iso.date(),
-  validTo: z.iso.date(),
-  sumInsuredPaise: z.number().int().min(0).max(100_000_000_000).optional(),
-  documentIds: z.array(z.uuid()).max(20).optional(),
-};
 const newPolicy = z.object(policyFields).strict();
 
 const newDeposit = z
