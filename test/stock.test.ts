@@ -185,3 +185,36 @@ describe('GET /staff/stock/alerts', () => {
     expect((await app.request('/staff/stock/alerts', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/recalls', () => {
+  const recall = (body: unknown, who = medical) =>
+    app.request('/staff/recalls', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const ors = seedId('d0000000', 2);
+  const batch = async (no: string) => (await db.query('SELECT id, qty_on_hand, qty_quarantined, recalled FROM batches WHERE item_id = $1 AND batch_no = $2', [ors, no])).rows[0];
+
+  it('marks the batches recalled and quarantines their free stock; batch numbers not on file change nothing', async () => {
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'ORSR1', '2030-01-31', 1000, 2200, 40, 5), ($3, 'active', 'x', 'x', $2, 'ORSR2', '2030-01-31', 1000, 2200, 0, 0)`,
+      [seedId('ba000000', 80), ors, seedId('ba000000', 81)],
+    );
+    const res = await recall({ itemId: ors, batchNos: ['ORSR1', 'ORSR2', 'ORS-NEVER'], reference: 'CDSCO alert 2026/114' });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    expect(body).toMatchObject({
+      itemId: ors, batchNos: ['ORSR1', 'ORSR2', 'ORS-NEVER'], reference: 'CDSCO alert 2026/114',
+      batches: [{ batchId: seedId('ba000000', 80), batchNo: 'ORSR1', qtyQuarantined: 35 }, { batchId: seedId('ba000000', 81), batchNo: 'ORSR2', qtyQuarantined: 0 }],
+    });
+    expect(await batch('ORSR1')).toMatchObject({ qty_on_hand: 40, qty_quarantined: 40, recalled: true });
+    expect(await batch('ORSR2')).toMatchObject({ recalled: true });
+    expect((await db.query('SELECT qty, reason, recall_id FROM quarantines WHERE batch_id = $1', [seedId('ba000000', 80)])).rows).toEqual([
+      { qty: 35, reason: 'recalled', recall_id: body.id },
+    ]);
+  });
+
+  it('422 for an unknown item or no batch numbers; 403 for a nurse', async () => {
+    expect((await recall({ itemId: seedId('d0000000', 999), batchNos: ['X'], reference: 'ref-1' })).status).toBe(422);
+    expect((await recall({ itemId: ors, batchNos: [], reference: 'ref-1' })).status).toBe(422);
+    expect((await recall({ itemId: ors, batchNos: ['X'], reference: 'ref-1' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

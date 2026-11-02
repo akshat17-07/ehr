@@ -976,4 +976,11 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC quarantines_batch ON quarantines (batch_id)',
     ],
   },
+  {
+    // A maker's or regulator's recall (api-list.md Recall): batch_nos and batches (what was quarantined) are JSON.
+    id: '0063_recalls',
+    statements: () => [
+      ...createTable('recalls', ['item_id uuid NOT NULL', 'batch_nos text NOT NULL', 'reference text NOT NULL', 'note text', 'batches text NOT NULL']),
+    ],
+  },
 ];
