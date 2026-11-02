@@ -23,7 +23,7 @@ export interface Batch {
   recalled: boolean;
 }
 
-function toBatch(r: Record<string, unknown>, today: string): Batch {
+export function toBatch(r: Record<string, unknown>, today: string): Batch {
   const expiry = String(r.expiry_text);
   const onHand = Number(r.qty_on_hand);
   const quarantined = Number(r.qty_quarantined);
@@ -58,4 +58,16 @@ export async function listDrugBatches(db: Queryable, drugId: string, filter: { i
   );
   const batches = rows.map((r) => toBatch(r, today));
   return filter.inStock === undefined ? batches : batches.filter((b) => b.qtyUsable > 0 === filter.inStock);
+}
+
+/** Batches by id (any order), with the raw rows' versions for updates; unknown ids are left out. */
+export async function batchesByIds(db: Queryable, ids: string[], now = new Date()): Promise<Map<string, Batch>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const { rows } = await db.query(
+    `SELECT batches.*, expiry::text AS expiry_text FROM batches WHERE id IN (${unique.map((_, i) => `$${i + 1}`).join(', ')})`,
+    unique,
+  );
+  const today = indiaDate(now);
+  return new Map(rows.map((r) => [String(r.id), toBatch(r, today)]));
 }

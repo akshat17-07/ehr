@@ -851,4 +851,21 @@ export const migrations: Migration[] = [
     id: '0053_prescriptions_queue',
     statements: () => ['CREATE INDEX ASYNC prescriptions_status_confirmed ON prescriptions (status, confirmed_at)'],
   },
+  {
+    // Medicines handed over against a prescription (api-list.md Dispense). lines is JSON: lineIndex, drugId, batchId,
+    // qty, and the H1/X and NDPS register details. pharmacist_id is the users row (with a pharmacist reg. no.).
+    id: '0054_dispenses',
+    statements: () => [
+      ...createTable('dispenses', [
+        'prescription_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'pharmacist_id uuid NOT NULL',
+        'lines text NOT NULL',
+        'dispensed_at timestamptz NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC dispenses_prescription ON dispenses (prescription_id)',
+      // The H1, X and NDPS registers (#113-115) read dispenses by time.
+      'CREATE INDEX ASYNC dispenses_at ON dispenses (dispensed_at)',
+    ],
+  },
 ];
