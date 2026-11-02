@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { withGapFreeCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
-import { updateRecord } from '../../db/records.js';
+import { updateRecord, voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
@@ -49,6 +49,8 @@ export interface Bill extends Omit<BaseFields, 'status'> {
   paidPaise: number;
   duePaise: number;
   finalisedAt?: string;
+  /** Given when a final bill is voided. */
+  creditNoteNo?: string;
 }
 
 export function toBill(r: Record<string, unknown>): Bill {
@@ -70,6 +72,7 @@ export function toBill(r: Record<string, unknown>): Bill {
     paidPaise,
     duePaise: totalPaise - paidPaise,
     ...(r.finalised_at != null && { finalisedAt: (r.finalised_at as Date).toISOString() }),
+    ...(r.credit_note_no != null && { creditNoteNo: String(r.credit_note_no) }),
   };
 }
 
@@ -257,10 +260,45 @@ export async function finaliseBill(db: Queryable, id: string, input: { version: 
   if (bill.version !== input.version) throw new AppError(409, 'conflict', 'someone else saved this record first');
   const { rows: pending } = await db.query(`SELECT 1 FROM discounts WHERE bill_id = $1 AND status = 'pending' LIMIT 1`, [id]);
   if (pending[0]) throw new AppError(409, 'discount_pending', 'a discount on this bill waits for approval (#179)');
-  const { rows } = await db.query('SELECT invoice_prefix, bill_of_supply_prefix FROM hospital LIMIT 1');
-  const prefix = String((bill.series === 'tax_invoice' ? rows[0]?.invoice_prefix : rows[0]?.bill_of_supply_prefix) ?? (bill.series === 'tax_invoice' ? 'INV' : 'BOS'));
+  const prefix = await prefixOf(db, bill.series);
   const year = financialYear(indiaDate(now));
   return withGapFreeCount(db, `bill-${bill.series}-${year}`, async (tx, n) =>
     toBill(await updateRecord(tx, 'bills', { id, version: input.version, by, set: { status: 'final', number: `${prefix}/${year}/${n}`, finalised_at: now } })),
   );
+}
+
+/** The hospital's prefix for a series; credit notes use the tax invoice prefix with CN. */
+async function prefixOf(db: Queryable, series: BillSeries | 'credit_note'): Promise<string> {
+  const { rows } = await db.query('SELECT invoice_prefix, bill_of_supply_prefix FROM hospital LIMIT 1');
+  if (series === 'bill_of_supply') return String(rows[0]?.bill_of_supply_prefix ?? 'BOS');
+  const invoice = String(rows[0]?.invoice_prefix ?? 'INV');
+  return series === 'credit_note' ? `${invoice}/CN` : invoice;
+}
+
+/**
+ * #123: the bill is voided, never deleted. A final bill gets a credit note number; its own number stays used.
+ * Items taken in from stock issues and pharmacy bills are freed, to go on the corrected bill.
+ * 409 voided if already void; 409 paid if money was taken (refund it first, #129).
+ */
+export async function voidBill(db: Queryable, id: string, input: { reason: string }, by: string, now = new Date()): Promise<Bill> {
+  const bill = await getBill(db, id);
+  if (bill.status === 'void') throw new AppError(409, 'voided', 'this record is already voided');
+  if (bill.paidPaise > 0) throw new AppError(409, 'paid', 'money was taken on this bill; refund it first');
+  const sources = bill.lines.flatMap((l) => (l.source ? [l.source] : []));
+  const ids = [...new Set(sources.map((s) => s.id))];
+  const write = async (tx: Queryable, creditNoteNo?: string) => {
+    let version = bill.version;
+    if (creditNoteNo) version = Number((await updateRecord(tx, 'bills', { id, version, by, set: { credit_note_no: creditNoteNo } })).version);
+    const row = await voidRecord(tx, 'bills', { id, version, by, reason: input.reason, status: 'void', now });
+    for (const sourceId of ids) {
+      const table = sources.find((s) => s.id === sourceId)!.kind === 'stock_issue' ? 'stock_issues' : 'pharmacy_bills';
+      const { rows } = await tx.query(`SELECT version FROM ${table} WHERE id = $1 AND bill_id = $2`, [sourceId, id]);
+      if (rows[0]) await updateRecord(tx, table, { id: sourceId, version: Number(rows[0].version), by, set: { bill_id: null } });
+    }
+    return toBill(row);
+  };
+  if (bill.status === 'draft') return withTransaction(db, (tx) => write(tx));
+  const prefix = await prefixOf(db, 'credit_note');
+  const year = financialYear(indiaDate(now));
+  return withGapFreeCount(db, `credit-note-${year}`, (tx, n) => write(tx, `${prefix}/${year}/${n}`));
 }

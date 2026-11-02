@@ -9,7 +9,7 @@ import { getPatient } from '../patients/patients.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
 import { billPayments, payBill } from './payments.js';
-import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, updateBillLines } from './bills.js';
+import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, updateBillLines, voidBill } from './bills.js';
 
 export const lineInput = z
   .object({
@@ -48,6 +48,8 @@ const newPayment = z
   })
   .strict()
   .refine((p) => p.mode === 'cash' || p.reference, { message: 'the UPI or card reference is needed', path: ['reference'] });
+
+const reasonBody = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
 
 const versionOnly = z.object({ version: z.number().int().min(1) }).strict();
 
@@ -103,4 +105,11 @@ export const billsRoutes = new Hono<AuthEnv>()
     const result = await payBill(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: result.bill.patientId, recordType: 'payment', recordId: result.payment.id });
     return c.json(result, 201);
+  })
+  // #123
+  .post('/:id/void', requirePermission('bill.void'), async (c) => {
+    const input = reasonBody.parse(await bodyOf(c));
+    const bill = await voidBill(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id, reason: input.reason });
+    return c.json(bill);
   });

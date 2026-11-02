@@ -256,3 +256,40 @@ describe('POST /staff/bills/{id}/payments', () => {
     expect((await pay(d.id, { amountPaise: 100, mode: 'cash' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/bills/{id}/void', () => {
+  const voidIt = (id: string, reason = 'Wrong patient selected', who = doctor) => app.request(`/staff/bills/${id}/void`, json({ reason }), who);
+  const year = financialYear(indiaDate());
+
+  it('a draft is voided and its taken-in items can be billed again', async () => {
+    const ramesh = seedId('9a710000', 1);
+    await app.request('/staff/stock/issues', json({ patientId: ramesh, lines: [{ itemId: seedId('d0000000', 1), batchId: seedId('ba000000', 3), qty: 1 }] }), medical);
+    const d = (await (await bill({ patientId: ramesh, lines: [] })).json()) as Bill;
+    expect(d.lines).toHaveLength(1);
+    const res = await voidIt(d.id);
+    expect(res.status).toBe(200);
+    const voided = (await res.json()) as Bill & { creditNoteNo?: string };
+    expect(voided.status).toBe('void');
+    expect(voided.creditNoteNo).toBeUndefined();
+    expect(((await (await bill({ patientId: ramesh, lines: [] })).json()) as Bill).lines).toHaveLength(1);
+    expect(await (await voidIt(d.id)).json()).toMatchObject({ error: 'voided' });
+  });
+
+  it('a final bill gets a credit note and keeps its number; a paid one must be refunded first', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill & { version: number };
+    const f = (await (await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor)).json()) as Bill & { number: string };
+    const voided = (await (await voidIt(f.id)).json()) as Bill & { number: string; creditNoteNo: string };
+    expect(voided).toMatchObject({ status: 'void', number: f.number, creditNoteNo: expect.stringMatching(new RegExp(`^INV/CN/${year}/\\d+$`)) });
+    const p = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill & { version: number };
+    await app.request(`/staff/bills/${p.id}/finalise`, json({ version: p.version }), doctor);
+    await app.request(`/staff/bills/${p.id}/payments`, json({ amountPaise: 100, mode: 'cash' }), doctor);
+    expect(await (await voidIt(p.id)).json()).toMatchObject({ error: 'paid' });
+  });
+
+  it('422 without a reason; 403 for a nurse; 404 for no bill', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
+    expect((await app.request(`/staff/bills/${d.id}/void`, json({}), doctor)).status).toBe(422);
+    expect((await voidIt(d.id, 'Duplicate', asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await voidIt(seedId('b1000000', 999))).status).toBe(404);
+  });
+});

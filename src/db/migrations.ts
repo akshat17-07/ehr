@@ -1110,4 +1110,9 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC payments_created ON payments (created_at)',
     ],
   },
+  {
+    // A final bill that is voided gets a credit note (its own gap-free series); the bill's number stays used.
+    id: '0075_bills_credit_note',
+    statements: () => ['ALTER TABLE bills ADD COLUMN credit_note_no text'],
+  },
 ];
