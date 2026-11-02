@@ -145,3 +145,29 @@ describe('GET /staff/patients/{id}/prescriptions', () => {
     expect((await list(ramesh, '', reception)).status).toBe(403);
   });
 });
+
+describe('POST /staff/prescriptions/{id}/void', () => {
+  const voidIt = (id: string, body: unknown, who = doctor) => app.request(`/staff/prescriptions/${id}/void`, json(body), who);
+  const newest = async () => String((await db.query('SELECT id FROM prescriptions ORDER BY created_at DESC LIMIT 1')).rows[0]?.id);
+
+  it('voids with a reason; it leaves the encounter but stays in the list as void', async () => {
+    const id = await newest();
+    expect((await voidIt(id, { reason: 'no' })).status).toBe(422);
+    expect((await voidIt(id, { reason: 'wrong patient chosen' }, nurse)).status).toBe(403);
+    const res = await voidIt(id, { reason: 'switched to azithromycin' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, status: 'void', voidReason: 'switched to azithromycin', voidedBy: 'dev-doctor', version: 2 });
+    const detail = (await (await app.request(`/staff/encounters/${encounterId}`, {}, doctor)).json()) as { prescriptions: unknown[] };
+    expect(detail.prescriptions).toHaveLength(1);
+    const voided = await app.request(`/staff/patients/${ramesh}/prescriptions?status=void`, {}, doctor);
+    expect(((await voided.json()) as { items: { id: string }[] }).items.map((p) => p.id)).toEqual([id]);
+    expect(await (await voidIt(id, { reason: 'once more please' })).json()).toMatchObject({ error: 'voided' });
+  });
+
+  it('409 once dispensed; 404 for none', async () => {
+    const id = String((await db.query("SELECT id FROM prescriptions WHERE status = 'confirmed' LIMIT 1")).rows[0]?.id);
+    await db.query("UPDATE prescriptions SET status = 'dispensed' WHERE id = $1", [id]); // dispensing (#217) is not built yet
+    expect(await (await voidIt(id, { reason: 'too late for this' })).json()).toMatchObject({ error: 'dispensed' });
+    expect((await voidIt(seedId('9c000000', 999), { reason: 'not real one' })).status).toBe(404);
+  });
+});

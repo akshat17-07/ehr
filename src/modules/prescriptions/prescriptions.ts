@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDayStart } from '../../time/india.js';
@@ -107,4 +108,11 @@ export async function patientPrescriptions(db: Queryable, patientId: string, que
   if (query.from) where.push(`created_at >= $${params.push(indiaDayStart(query.from))}`);
   if (query.to) where.push(`created_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
   return pageRows(db, { select: 'SELECT * FROM prescriptions', where, params, orderBy: ['created_at', 'id'] }, query, toPrescription);
+}
+
+/** #68: a wrong prescription, with the reason; 409 once the pharmacy has dispensed it. */
+export async function voidPrescription(db: Queryable, id: string, reason: string, by: string): Promise<Prescription> {
+  const prescription = await getPrescription(db, id);
+  if (prescription.status === 'dispensed') throw new AppError(409, 'dispensed', 'already dispensed: it can no longer be voided');
+  return toPrescription(await voidRecord(db, 'prescriptions', { id, version: prescription.version, by, reason, status: 'void' }));
 }

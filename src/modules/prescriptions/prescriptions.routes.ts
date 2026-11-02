@@ -6,7 +6,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { getPrescription } from './prescriptions.js';
+import { getPrescription, voidPrescription } from './prescriptions.js';
 import { checkLines } from './rx-checks.js';
 
 // Prescriptions by id (api-list.md #64-#68), mounted at /staff/prescriptions. They are written in an encounter (#62).
@@ -30,6 +30,7 @@ export const rxLine = z
 export const rxLines = z.array(rxLine).min(1).max(30);
 export const acknowledgedAlerts = z.array(z.string().max(40)).max(100).optional();
 
+const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
 const checkBody = z.object({ patientId: z.uuid(), lines: rxLines }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
@@ -50,5 +51,12 @@ export const prescriptionsRoutes = new Hono<AuthEnv>()
     const prescription = await getPrescription(db, c.req.param('id'));
     auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, prescription.patientId));
+    return c.json(prescription);
+  })
+  // #68
+  .post('/:id/void', requirePermission('rx.write'), async (c) => {
+    const { reason } = reasonBody.parse(await bodyOf(c));
+    const prescription = await voidPrescription(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
+    auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id, reason });
     return c.json(prescription);
   });
