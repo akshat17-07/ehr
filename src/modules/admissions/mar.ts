@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import type { BaseFields } from '../patients/patients.js';
 import { toPrescription } from '../prescriptions/prescriptions.js';
@@ -61,4 +63,34 @@ export async function marDay(db: Queryable, admission: Admission, date?: string,
     [admission.id, start, new Date(start.getTime() + 86_400_000)],
   );
   return { schedule: await marSchedule(db, admission), entries: rows.map(toMarEntry) };
+}
+
+export interface NewMarEntry {
+  prescriptionId: string;
+  lineIndex: number;
+  at?: string;
+  outcome: MarOutcome;
+  dose?: string;
+  note?: string;
+}
+
+/** #73: only while admitted, against a line on the schedule, at a time during the stay. */
+export async function recordMar(db: Queryable, admission: Admission, input: NewMarEntry, by: string, now = new Date()): Promise<MarEntry> {
+  if (admission.status !== 'current') throw new AppError(409, 'discharged', 'this patient has been discharged');
+  const schedule = await marSchedule(db, admission);
+  if (!schedule.some((l) => l.prescriptionId === input.prescriptionId && l.lineIndex === input.lineIndex)) {
+    throw new AppError(422, 'invalid_input', "prescriptionId / lineIndex: not a line of this stay's prescriptions");
+  }
+  const at = input.at ? new Date(input.at) : now;
+  if (at.getTime() > now.getTime() + 5 * 60_000) throw new AppError(422, 'invalid_input', 'at: this time has not come yet');
+  if (at < new Date(admission.admittedAt)) throw new AppError(422, 'invalid_input', 'at: before the admission');
+  const { rows } = await db.query(
+    `INSERT INTO mar_entries (id, status, created_by, updated_by, admission_id, patient_id, prescription_id, line_index, at, outcome, dose, note)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [
+      randomUUID(), by, admission.id, admission.patientId, input.prescriptionId, input.lineIndex, at, input.outcome,
+      input.dose ?? null, input.note ?? null,
+    ],
+  );
+  return toMarEntry(rows[0] as Record<string, unknown>);
 }

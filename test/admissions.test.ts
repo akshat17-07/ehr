@@ -130,3 +130,34 @@ describe('GET /staff/admissions/{id}/mar', () => {
     expect((await mar(id, '', asStaff('dev-gp', ['gp']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/admissions/{id}/mar', () => {
+  const stay = async () => {
+    const { id } = (await db.query('SELECT id FROM admissions WHERE current_patient = $1', [irfan])).rows[0] as { id: string };
+    const rx = (await db.query("SELECT p.id FROM prescriptions p JOIN admissions a ON a.encounter_id = p.encounter_id WHERE a.id = $1", [id])).rows[0];
+    return { id, prescriptionId: String(rx?.id) };
+  };
+  const record = (id: string, body: unknown, who = nurse) => app.request(`/staff/admissions/${id}/mar`, json(body), who);
+
+  it('records doses given and held; they show on the day', async () => {
+    const { id, prescriptionId } = await stay();
+    const given = await record(id, { prescriptionId, lineIndex: 0, outcome: 'given', dose: '1 g IV' });
+    expect(given.status).toBe(201);
+    expect(await given.json()).toMatchObject({ admissionId: id, prescriptionId, lineIndex: 0, outcome: 'given', dose: '1 g IV', createdBy: 'dev-nurse' });
+    expect((await record(id, { prescriptionId, lineIndex: 1, outcome: 'held', note: 'no fever, 98.6 F', at: new Date(Date.now() + 1000).toISOString() })).status).toBe(201);
+    const day = (await (await app.request(`/staff/admissions/${id}/mar`, {}, nurse)).json()) as { entries: { outcome: string }[] };
+    expect(day.entries.map((e) => e.outcome)).toEqual(['given', 'held']);
+    expect((await (await app.request(`/staff/admissions/${id}/mar?date=2020-01-01`, {}, nurse)).json()) as { entries: unknown[] }).toMatchObject({ entries: [] });
+  });
+
+  it('422 for held without a note, a line not on the schedule, a future time or before admission; 403 for reception', async () => {
+    const { id, prescriptionId } = await stay();
+    expect((await record(id, { prescriptionId, lineIndex: 1, outcome: 'refused' })).status).toBe(422);
+    expect((await record(id, { prescriptionId, lineIndex: 2, outcome: 'given' })).status).toBe(422);
+    expect((await record(id, { prescriptionId: seedId('9c000000', 1), lineIndex: 0, outcome: 'given' })).status).toBe(422);
+    expect((await record(id, { prescriptionId, lineIndex: 0, outcome: 'given', at: '2999-01-01T00:00:00Z' })).status).toBe(422);
+    expect((await record(id, { prescriptionId, lineIndex: 0, outcome: 'given', at: '2020-01-01T00:00:00Z' })).status).toBe(422);
+    expect((await record(id, { prescriptionId, lineIndex: 0, outcome: 'given' }, asStaff('dev-reception', ['staff']))).status).toBe(403);
+    expect((await record(seedId('ad000000', 999), { prescriptionId, lineIndex: 0, outcome: 'given' })).status).toBe(404);
+  });
+});

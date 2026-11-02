@@ -8,7 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
 import { admit, getAdmission, listAdmissions, transfer } from './admissions.js';
-import { marDay } from './mar.js';
+import { MAR_OUTCOMES, marDay, recordMar } from './mar.js';
 
 // Admissions (api-list.md #69-#73), mounted at /staff/admissions.
 
@@ -33,6 +33,18 @@ const listQuery = pageQuery.extend({
 });
 
 const marQuery = z.object({ date: z.iso.date().optional() });
+
+const newMarEntry = z
+  .object({
+    prescriptionId: z.uuid(),
+    lineIndex: z.number().int().min(0).max(29),
+    at: z.iso.datetime({ offset: true }).optional(),
+    outcome: z.enum(MAR_OUTCOMES),
+    dose: z.string().trim().min(1).max(50).optional(),
+    note: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict()
+  .refine((e) => e.outcome === 'given' || e.note !== undefined, { message: 'say why it was held or refused', path: ['note'] });
 
 const transferBody = z
   .object({ version: z.number().int().min(1), ward, bed, reason: z.string().trim().min(1).max(500).optional() })
@@ -68,4 +80,13 @@ export const admissionsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: admission.patientId, recordType: 'admission', recordId: admission.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, admission.patientId));
     return c.json(await marDay(db, admission, date));
+  })
+  // #73
+  .post('/:id/mar', requirePermission('mar.record'), async (c) => {
+    const input = newMarEntry.parse(await bodyOf(c));
+    const db = await dbOf(c);
+    const admission = await getAdmission(db, c.req.param('id'));
+    const entry = await recordMar(db, admission, input, userOf(c).sub);
+    auditDetails(c, { patientId: admission.patientId, recordType: 'mar_entry', recordId: entry.id });
+    return c.json(entry, 201);
   });
