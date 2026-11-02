@@ -238,3 +238,20 @@ describe('POST /staff/patients/{id}/agent-links', () => {
     expect((await link(seedId('9a710000', 999), { agentUserId: agent })).status).toBe(404);
   });
 });
+
+describe('POST /staff/agent-links/{id}/end', () => {
+  it('ends the link today with a reason; then the agent can be linked again', async () => {
+    const agent = seedId('a0000000', 9);
+    const made = (await (await post(`/staff/patients/${ramesh}/agent-links`, { agentUserId: agent })).json()) as { id: string };
+    const res = await post(`/staff/agent-links/${made.id}/end`, { reason: 'Policy moved to another agent' });
+    expect(res.status).toBe(200);
+    const ended = (await res.json()) as { status: string; to: string; from: string };
+    expect(ended).toMatchObject({ status: 'ended' });
+    expect(ended.to).toBe(ended.from);
+    expect(await (await post(`/staff/agent-links/${made.id}/end`, { reason: 'Again' })).json()).toMatchObject({ error: 'ended' });
+    expect((await post(`/staff/agent-links/${made.id}/end`, {})).status).toBe(422);
+    expect((await post(`/staff/patients/${ramesh}/agent-links`, { agentUserId: agent })).status).toBe(201);
+    expect((await post(`/staff/agent-links/${made.id}/end`, { reason: 'Nurse' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await post(`/staff/agent-links/${seedId('a9e00000', 999)}/end`, { reason: 'None' })).status).toBe(404);
+  });
+});

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -58,5 +59,15 @@ export async function linkAgent(db: Queryable, patientId: string, input: { agent
     `INSERT INTO agent_links (id, status, created_by, updated_by, patient_id, agent_user_id, from_date, to_date) VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
     [id, by, patient.id, input.agentUserId, today, input.to ?? null],
   );
+  return getAgentLink(db, id);
+}
+
+/** #140: ends the link today, with a reason; the agent loses access from tomorrow. 409 ended if already ended. */
+export async function endAgentLink(db: Queryable, id: string, reason: string, by: string, now = new Date()): Promise<AgentLink> {
+  const link = await getAgentLink(db, id);
+  if (link.status === 'ended') throw new AppError(409, 'ended', 'this link has already ended');
+  const today = indiaDate(now);
+  const to = link.to && link.to < today ? link.to : today;
+  await updateRecord(db, 'agent_links', { id, version: link.version, by, reason, set: { status: 'ended', to_date: to } });
   return getAgentLink(db, id);
 }
