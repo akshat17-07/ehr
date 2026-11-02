@@ -7,6 +7,7 @@ import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { ITEMS } from '../inventory/items.js';
+import { UUID } from '../users/users.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { gstInside } from '../pharmacy/bills.js';
 
@@ -210,4 +211,11 @@ export async function listBills(db: Queryable, query: BillQuery): Promise<Page<B
   if (from) where.push(`created_at >= $${params.push(indiaDayStart(from))}`);
   if (to) where.push(`created_at < $${params.push(new Date(indiaDayStart(to).getTime() + 86_400_000))}`);
   return pageRows(db, { select: 'SELECT * FROM bills', where, params, orderBy: ['created_at', 'id'] }, query, toBill);
+}
+
+/** #118: one bill; 404 if there is none. */
+export async function getBill(db: Queryable, id: string): Promise<Bill> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM bills WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return toBill(rows[0]);
 }

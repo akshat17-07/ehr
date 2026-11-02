@@ -95,3 +95,23 @@ describe('GET /staff/bills', () => {
     expect((await app.request('/staff/bills', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/bills/{id}', () => {
+  it('one bill, audited as a view; 404 for none; 403 for a nurse', async () => {
+    const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
+    const res = await app.request(`/staff/bills/${made.id}`, {}, doctor);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(made);
+    const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY at`, [made.id]);
+    expect(rows.map((r) => r.action)).toContain('view');
+    expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}`, {}, doctor)).status).toBe(404);
+    expect((await app.request('/staff/bills/nope', {}, doctor)).status).toBe(404);
+    expect((await app.request(`/staff/bills/${made.id}`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+
+  it("an inactive patient's bill needs approved access", async () => {
+    const sita = seedId('9a710000', 2);
+    const made = (await (await bill({ patientId: sita, lines: [{ tariffId: tariff(5), qty: 1 }] }, asStaff('dev-admin', ['admin']))).json()) as Bill;
+    expect((await app.request(`/staff/bills/${made.id}`, {}, doctor)).status).toBe(403);
+  });
+});

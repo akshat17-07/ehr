@@ -5,7 +5,9 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { BILL_STATUSES, createBill, listBills } from './bills.js';
+import { getPatient } from '../patients/patients.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { BILL_STATUSES, createBill, getBill, listBills } from './bills.js';
 
 export const lineInput = z
   .object({
@@ -47,4 +49,12 @@ export const billsRoutes = new Hono<AuthEnv>()
   .get('/', requirePermission('bill.view'), async (c) => {
     const query = billsQuery.parse(c.req.query());
     return c.json(await listBills(await dbOf(c), query));
+  })
+  // #118
+  .get('/:id', requirePermission('bill.view'), async (c) => {
+    const db = await dbOf(c);
+    const bill = await getBill(db, c.req.param('id'));
+    auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
+    return c.json(bill);
   });
