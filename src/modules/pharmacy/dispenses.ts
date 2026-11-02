@@ -4,8 +4,7 @@ import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
-import { indiaDate } from '../../time/india.js';
-import { batchesByIds } from '../inventory/batches.js';
+import { applyStockTake, batchesByIds, checkStockTake } from '../inventory/batches.js';
 import { UUID } from '../users/users.js';
 import type { BaseFields } from '../patients/patients.js';
 import { getPrescription } from '../prescriptions/prescriptions.js';
@@ -92,20 +91,7 @@ export async function dispense(db: Queryable, input: { prescriptionId: string; l
     if (schedule === 'NDPS' && !line.ndps) throw invalid(`lines[${i}].ndps: the patient's ID proof and address are needed for an NDPS drug`);
   });
 
-  const batches = await batchesByIds(db, input.lines.map((l) => l.batchId), now);
-  const today = indiaDate(now);
-  const taking = new Map<string, number>();
-  input.lines.forEach((line, i) => {
-    const batch = batches.get(line.batchId);
-    if (!batch || batch.itemId !== line.drugId) throw invalid(`lines[${i}].batchId: not a batch of this drug`);
-    if (batch.recalled) throw new AppError(409, 'recalled', `batch ${batch.batchNo} is recalled`);
-    if (batch.expiry < today) throw new AppError(409, 'expired', `batch ${batch.batchNo} expired on ${batch.expiry}`);
-    taking.set(batch.id, (taking.get(batch.id) ?? 0) + line.qty);
-  });
-  for (const [id, qty] of taking) {
-    const batch = batches.get(id)!;
-    if (qty > batch.qtyUsable) throw new AppError(409, 'short_stock', `batch ${batch.batchNo} has ${batch.qtyUsable} usable, ${qty} asked`);
-  }
+  const stock = await checkStockTake(db, input.lines, now);
 
   const given = await givenSoFar(db, prescription.id);
   for (const line of input.lines) given.set(line.lineIndex, (given.get(line.lineIndex) ?? 0) + line.qty);
@@ -121,10 +107,7 @@ export async function dispense(db: Queryable, input: { prescriptionId: string; l
        VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [randomUUID(), sub, prescription.id, prescription.patientId, String(pharmacist.id), JSON.stringify(input.lines), now],
     );
-    for (const [id, qty] of taking) {
-      const batch = batches.get(id)!;
-      await updateRecord(tx, 'batches', { id, version: batch.version, by: sub, set: { qty_on_hand: batch.qtyOnHand - qty } });
-    }
+    await applyStockTake(tx, stock, sub);
     if (fullyGiven(prescription.lines, given)) {
       await updateRecord(tx, 'prescriptions', { id: prescription.id, version: prescription.version, by: sub, set: { status: 'dispensed' } });
     }

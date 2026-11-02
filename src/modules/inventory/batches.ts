@@ -1,4 +1,5 @@
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
 import { UUID } from '../users/users.js';
@@ -70,4 +71,40 @@ export async function batchesByIds(db: Queryable, ids: string[], now = new Date(
   );
   const today = indiaDate(now);
   return new Map(rows.map((r) => [String(r.id), toBatch(r, today)]));
+}
+
+/** Stock to take out: the batches read, and how much leaves each one. */
+export interface StockTake {
+  batches: Map<string, Batch>;
+  taking: Map<string, number>;
+}
+
+/**
+ * Checks lines taken from batches: each batch must be of the line's drug (422), not recalled or expired (409), and
+ * hold enough usable stock for all the lines that take from it (409 short_stock).
+ */
+export async function checkStockTake(db: Queryable, lines: { drugId: string; batchId: string; qty: number }[], now = new Date()): Promise<StockTake> {
+  const batches = await batchesByIds(db, lines.map((l) => l.batchId), now);
+  const today = indiaDate(now);
+  const taking = new Map<string, number>();
+  lines.forEach((line, i) => {
+    const batch = batches.get(line.batchId);
+    if (!batch || batch.itemId !== line.drugId) throw new AppError(422, 'validation_failed', `lines[${i}].batchId: not a batch of this drug`);
+    if (batch.recalled) throw new AppError(409, 'recalled', `batch ${batch.batchNo} is recalled`);
+    if (batch.expiry < today) throw new AppError(409, 'expired', `batch ${batch.batchNo} expired on ${batch.expiry}`);
+    taking.set(batch.id, (taking.get(batch.id) ?? 0) + line.qty);
+  });
+  for (const [id, qty] of taking) {
+    const batch = batches.get(id)!;
+    if (qty > batch.qtyUsable) throw new AppError(409, 'short_stock', `batch ${batch.batchNo} has ${batch.qtyUsable} usable, ${qty} asked`);
+  }
+  return { batches, taking };
+}
+
+/** Takes checked stock out of its batches (inside the caller's transaction); a batch changed meanwhile gives 409. */
+export async function applyStockTake(tx: Queryable, { batches, taking }: StockTake, by: string): Promise<void> {
+  for (const [id, qty] of taking) {
+    const batch = batches.get(id)!;
+    await updateRecord(tx, 'batches', { id, version: batch.version, by, set: { qty_on_hand: batch.qtyOnHand - qty } });
+  }
 }

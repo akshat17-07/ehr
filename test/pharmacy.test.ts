@@ -4,6 +4,7 @@ import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
 import { indiaDate } from '../src/time/india.js';
+import { financialYear } from '../src/modules/pharmacy/bills.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -166,5 +167,68 @@ describe('POST /staff/dispenses/{id}/return', () => {
     expect((await back(id, { lines: [{ lineIndex: 0, qty: 1 }] })).status).toBe(422);
     expect((await back(id, { lines: [{ lineIndex: 0, qty: 1 }], reason: 'not needed' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
     expect((await back(seedId('d5000000', 999), { lines: [{ lineIndex: 0, qty: 1 }], reason: 'not needed' })).status).toBe(404);
+  });
+});
+
+describe('POST /staff/pharmacy/bills', () => {
+  const bill = (body: unknown, who = medical) => app.request('/staff/pharmacy/bills', json(body), who);
+  const batch = (n: number) => seedId('ba000000', n);
+  const onHand = async (n: number) => Number((await db.query('SELECT qty_on_hand FROM batches WHERE id = $1', [batch(n)])).rows[0]?.qty_on_hand);
+  const dispensed = async () => {
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [paracetamol] }), doctor)).json()) as { id: string }).id;
+    const lines = [{ lineIndex: 0, drugId: paracetamol.drugId, batchId: batch(3), qty: 6 }, { lineIndex: 0, drugId: paracetamol.drugId, batchId: batch(2), qty: 3 }];
+    return ((await (await app.request('/staff/dispenses', json({ prescriptionId: rx, lines }), medical)).json()) as { id: string }).id;
+  };
+  type Bill = { number?: string; totalPaise: number; gstPaise: number; lines: { qty: number; amountPaise: number }[] };
+
+  it('bills a dispense at the batch MRP (GST inside), less returns; OPD gets the next invoice number', async () => {
+    const dispenseId = await dispensed();
+    await app.request(`/staff/dispenses/${dispenseId}/return`, json({ lines: [{ lineIndex: 0, qty: 1 }], reason: 'one strip extra' }), medical);
+    const res = await bill({ patientId: irfan, dispenseId, setting: 'opd' });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Bill;
+    const year = financialYear(indiaDate());
+    expect(body).toMatchObject({
+      patientId: irfan, dispenseId, setting: 'opd', paidPaise: 0, number: `INV/PH/${year}/1`,
+      lines: [
+        { drugId: paracetamol.drugId, batchId: batch(3), qty: 5, mrpPaise: 2100, gstRate: 5, amountPaise: 10_500 },
+        { batchId: batch(2), qty: 3, mrpPaise: 2000, amountPaise: 6000 },
+      ],
+      totalPaise: 16_500,
+      gstPaise: 500 + 286,
+    });
+    expect(await (await bill({ patientId: irfan, dispenseId, setting: 'opd' })).json()).toMatchObject({ error: 'already_billed' });
+    const next = (await (await bill({ patientId: irfan, dispenseId: await dispensed(), setting: 'opd' })).json()) as Bill;
+    expect(next.number).toBe(`INV/PH/${year}/2`);
+    const ipd = (await (await bill({ patientId: irfan, dispenseId: await dispensed(), setting: 'ipd' })).json()) as Bill;
+    expect(ipd.number).toBeUndefined();
+  });
+
+  it('sells OTC medicines over the counter, taking the stock; prescription drugs need a dispense', async () => {
+    const before = await onHand(3);
+    const res = await bill({ patientId: rahul, setting: 'opd', lines: [{ drugId: paracetamol.drugId, batchId: batch(3), qty: 2 }] });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ totalPaise: 4200, lines: [{ qty: 2 }] });
+    expect(await onHand(3)).toBe(before - 2);
+    const amox = await bill({ patientId: rahul, setting: 'opd', lines: [{ drugId: seedId('d0000000', 3), batchId: batch(4), qty: 1 }] });
+    expect(await amox.json()).toMatchObject({ error: 'prescription_needed' });
+    expect(await (await bill({ patientId: rahul, setting: 'opd', lines: [{ drugId: paracetamol.drugId, batchId: batch(1), qty: 1 }] })).json()).toMatchObject({ error: 'expired' });
+  });
+
+  it("422 for another patient's dispense, lines with a dispense, or nothing to bill; 403 for a nurse; 404 for no patient", async () => {
+    const dispenseId = await dispensed();
+    expect((await bill({ patientId: rahul, dispenseId, setting: 'opd' })).status).toBe(422);
+    expect((await bill({ patientId: irfan, dispenseId, setting: 'opd', lines: [{ drugId: paracetamol.drugId, batchId: batch(3), qty: 1 }] })).status).toBe(422);
+    expect((await bill({ patientId: irfan, setting: 'opd' })).status).toBe(422);
+    expect((await bill({ patientId: irfan, dispenseId, setting: 'opd' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await bill({ patientId: seedId('9a710000', 999), dispenseId, setting: 'opd' })).status).toBe(404);
+  });
+});
+
+describe('financialYear', () => {
+  it('runs April to March', () => {
+    expect(financialYear('2026-03-31')).toBe('25-26');
+    expect(financialYear('2026-04-01')).toBe('26-27');
+    expect(financialYear('2099-12-31')).toBe('99-00');
   });
 });

@@ -885,4 +885,24 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC pharmacy_returns_created ON pharmacy_returns (created_at)',
     ],
   },
+  {
+    // Pharmacy bills (api-list.md PharmacyBill). lines is JSON. MRP includes GST: gst_paise is the GST inside the
+    // total. number: the OPD tax invoice number (none for IPD, which goes on the ward bill).
+    id: '0056_pharmacy_bills',
+    statements: () => [
+      ...createTable('pharmacy_bills', [
+        'patient_id uuid NOT NULL',
+        'dispense_id uuid',
+        'setting text NOT NULL',
+        'number text',
+        'lines text NOT NULL',
+        'total_paise bigint NOT NULL',
+        'gst_paise bigint NOT NULL',
+        'paid_paise bigint NOT NULL DEFAULT 0',
+      ]),
+      'CREATE INDEX ASYNC pharmacy_bills_created ON pharmacy_bills (created_at)',
+      'CREATE INDEX ASYNC pharmacy_bills_patient ON pharmacy_bills (patient_id, created_at)',
+      'CREATE INDEX ASYNC pharmacy_bills_dispense ON pharmacy_bills (dispense_id)',
+    ],
+  },
 ];
