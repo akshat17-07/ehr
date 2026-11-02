@@ -102,3 +102,37 @@ describe('GET /staff/mtp-register', () => {
     expect(second.items.map((e) => e.admissionDate)).toEqual(['2026-09-10']);
   });
 });
+
+describe('POST /staff/mtp-register', () => {
+  const add = (body: unknown, who = doctor) => app.request('/staff/mtp-register', json(body), who);
+  const doctorId = seedId('a0000000', 3);
+  const entry = { patientId: kavita, admissionDate: '2026-10-20', gestationWeeks: 8, indication: 'Contraceptive failure', opinionDoctorIds: [doctorId] };
+
+  it('403 without an mtp.write grant for all or this patient', async () => {
+    expect((await add(entry)).status).toBe(403);
+  });
+
+  it('adds the entry and the mtp label, once', async () => {
+    await createGrant(db, { userId: 'dev-doctor', permission: 'mtp.write', scope: 'patient', scopeId: kavita, end: inAMonth(), grantorId: 'dev-admin', reason: 'Her MTP' });
+    const res = await add({ ...entry, procedureDate: '2026-10-21' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: kavita, admissionDate: '2026-10-20', procedureDate: '2026-10-21', gestationWeeks: 8, opinionDoctorIds: [doctorId], version: 1 });
+    const labels = async () => JSON.parse(String((await db.query('SELECT labels FROM patients WHERE id = $1', [kavita])).rows[0]?.labels)) as string[];
+    expect(await labels()).toEqual(['mtp']);
+    expect((await add({ ...entry, admissionDate: '2026-10-25' })).status).toBe(201);
+    expect(await labels()).toEqual(['mtp']);
+  });
+
+  it("422 after 20 weeks with one opinion, for a non-doctor, a male patient or bad dates", async () => {
+    expect((await add({ ...entry, gestationWeeks: 22 })).status).toBe(422);
+    expect((await add({ ...entry, gestationWeeks: 22, opinionDoctorIds: [doctorId, doctorId] })).status).toBe(422);
+    expect((await add({ ...entry, gestationWeeks: 22, opinionDoctorIds: [doctorId, seedId('a0000000', 2)] })).status).toBe(201);
+    expect((await add({ ...entry, opinionDoctorIds: [seedId('a0000000', 5)] })).status).toBe(422);
+    expect((await add({ ...entry, admissionDate: '2099-01-01' })).status).toBe(422);
+    expect((await add({ ...entry, procedureDate: '2026-10-01' })).status).toBe(422);
+    expect((await add({ ...entry, fetalSex: 'x' })).status).toBe(422);
+    await createGrant(db, { userId: 'dev-doctor', permission: 'mtp.write', scope: 'all', end: inAMonth(), grantorId: 'dev-admin', reason: 'MTP register keeper' });
+    expect((await add({ ...entry, patientId: seedId('9a710000', 5) })).status).toBe(422);
+    expect((await add({ ...entry, patientId: seedId('9a710000', 999) })).status).toBe(404);
+  });
+});
