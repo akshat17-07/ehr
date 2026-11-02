@@ -29,6 +29,7 @@ import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescription
 import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
+import { patientPolicies } from '../insurance/policies.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -366,6 +367,14 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const consent = await recordConsent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: consent.patientId, recordType: 'consent', recordId: consent.id });
     return c.json(consent, 201);
+  })
+  // #131
+  .get('/:id/policies', requirePermission('insurance.policy'), async (c) => {
+    const query = z.object({ active: z.enum(['true', 'false']).optional() }).parse(c.req.query());
+    const id = c.req.param('id');
+    const policies = await patientPolicies(await dbOf(c), id, query);
+    auditDetails(c, { patientId: id, recordType: 'patient', recordId: id });
+    return c.json(policies);
   })
   // #127
   .get('/:id/deposits', requirePermission('bill.view'), async (c) => {

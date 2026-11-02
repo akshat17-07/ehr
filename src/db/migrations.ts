@@ -1151,4 +1151,24 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC refunds_created ON refunds (created_at)',
     ],
   },
+  {
+    // Insurance policies on file (api-list.md Policy). document_ids is a JSON list of the patient's documents.
+    id: '0078_policies',
+    statements: () => [
+      ...createTable('policies', [
+        'patient_id uuid NOT NULL',
+        'insurer_id uuid NOT NULL',
+        'tpa_id uuid',
+        'policy_no text NOT NULL',
+        'member_id text',
+        'holder_name text NOT NULL',
+        'valid_from date NOT NULL',
+        'valid_to date NOT NULL',
+        'sum_insured_paise bigint',
+        "document_ids text NOT NULL DEFAULT '[]'",
+      ]),
+      'CREATE INDEX ASYNC policies_patient ON policies (patient_id, created_at)',
+      'CREATE INDEX ASYNC policies_number ON policies (insurer_id, policy_no)',
+    ],
+  },
 ];
