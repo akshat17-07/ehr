@@ -135,3 +135,36 @@ describe('GET /staff/dispenses/{id}', () => {
     expect((await read('nope')).status).toBe(404);
   });
 });
+
+describe('POST /staff/dispenses/{id}/return', () => {
+  const back = (id: string, body: unknown, who = medical) => app.request(`/staff/dispenses/${id}/return`, json(body), who);
+  const onHand = async (n: number) => Number((await db.query('SELECT qty_on_hand FROM batches WHERE id = $1', [seedId('ba000000', n)])).rows[0]?.qty_on_hand);
+  const given = async () => {
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [paracetamol] }), doctor)).json()) as { id: string }).id;
+    const lines = [{ lineIndex: 0, drugId: paracetamol.drugId, batchId: seedId('ba000000', 3), qty: 5 }, { lineIndex: 0, drugId: paracetamol.drugId, batchId: seedId('ba000000', 2), qty: 4 }];
+    return { rx, id: ((await (await app.request('/staff/dispenses', json({ prescriptionId: rx, lines }), medical)).json()) as { id: string }).id };
+  };
+
+  it('puts the stock back and refunds at the batch MRP; the prescription stays dispensed', async () => {
+    const { rx, id } = await given();
+    const [three, two] = [await onHand(3), await onHand(2)];
+    const res = await back(id, { lines: [{ lineIndex: 0, qty: 2 }, { lineIndex: 1, qty: 4 }], reason: 'stopped by the doctor', refundMode: 'upi' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ refundPaise: 2 * 2100 + 4 * 2000, dispense: { id, version: 2, lines: [{ qty: 5, returnedQty: 2 }, { qty: 4, returnedQty: 4 }] } });
+    expect([await onHand(3), await onHand(2)]).toEqual([three + 2, two + 4]);
+    expect((await db.query('SELECT refund_paise, refund_mode, reason FROM pharmacy_returns WHERE dispense_id = $1', [id])).rows).toEqual([
+      { refund_paise: 12_200, refund_mode: 'upi', reason: 'stopped by the doctor' },
+    ]);
+    expect((await db.query('SELECT status FROM prescriptions WHERE id = $1', [rx])).rows[0]?.status).toBe('dispensed');
+  });
+
+  it('409 for more than is left to return; 422 for a missing line or reason; 403 for a nurse; 404 for none', async () => {
+    const { id } = await given();
+    expect((await back(id, { lines: [{ lineIndex: 0, qty: 3 }], reason: 'not needed' })).status).toBe(201);
+    expect(await (await back(id, { lines: [{ lineIndex: 0, qty: 3 }], reason: 'not needed' })).json()).toMatchObject({ error: 'more_than_given' });
+    expect((await back(id, { lines: [{ lineIndex: 2, qty: 1 }], reason: 'not needed' })).status).toBe(422);
+    expect((await back(id, { lines: [{ lineIndex: 0, qty: 1 }] })).status).toBe(422);
+    expect((await back(id, { lines: [{ lineIndex: 0, qty: 1 }], reason: 'not needed' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await back(seedId('d5000000', 999), { lines: [{ lineIndex: 0, qty: 1 }], reason: 'not needed' })).status).toBe(404);
+  });
+});

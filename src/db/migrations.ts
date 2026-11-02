@@ -868,4 +868,21 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC dispenses_at ON dispenses (dispensed_at)',
     ],
   },
+  {
+    // Medicines a patient brought back (#103): lines is JSON (dispense line index, qty, batchId, refund). The ledger
+    // (#347) reads the refunds from here.
+    id: '0055_pharmacy_returns',
+    statements: () => [
+      ...createTable('pharmacy_returns', [
+        'dispense_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'lines text NOT NULL',
+        'reason text NOT NULL',
+        'refund_paise bigint NOT NULL',
+        'refund_mode text NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC pharmacy_returns_dispense ON pharmacy_returns (dispense_id)',
+      'CREATE INDEX ASYNC pharmacy_returns_created ON pharmacy_returns (created_at)',
+    ],
+  },
 ];

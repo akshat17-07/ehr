@@ -19,6 +19,8 @@ export interface DispenseLine {
   drugId: string;
   batchId: string;
   qty: number;
+  /** Brought back by the patient (#103). */
+  returnedQty?: number;
   /** Schedule H1 and X register: who prescribed it. */
   h1?: { prescriberName: string; prescriberRegNo: string };
   /** NDPS register: the patient's ID proof and address. */
@@ -51,7 +53,7 @@ async function givenSoFar(db: Queryable, prescriptionId: string): Promise<Map<nu
   const { rows } = await db.query('SELECT lines FROM dispenses WHERE prescription_id = $1 AND voided_at IS NULL', [prescriptionId]);
   const given = new Map<number, number>();
   for (const row of rows) {
-    for (const line of JSON.parse(String(row.lines)) as (DispenseLine & { returnedQty?: number })[]) {
+    for (const line of JSON.parse(String(row.lines)) as DispenseLine[]) {
       given.set(line.lineIndex, (given.get(line.lineIndex) ?? 0) + line.qty - (line.returnedQty ?? 0));
     }
   }
@@ -135,4 +137,51 @@ export async function getDispense(db: Queryable, id: string): Promise<Dispense> 
   const { rows } = UUID.test(id) ? await db.query('SELECT * FROM dispenses WHERE id = $1', [id]) : { rows: [] };
   if (!rows[0]) throw new AppError(404, 'not_found', 'no such dispense');
   return toDispense(rows[0] as Record<string, unknown>);
+}
+
+export const REFUND_MODES = ['cash', 'upi', 'card', 'credit_note'] as const;
+export type RefundMode = (typeof REFUND_MODES)[number];
+
+/**
+ * #103: medicines brought back. lineIndex is the position in the dispense's lines; at most what was given (less
+ * earlier returns), else 409. The stock goes back to its batch and the refund is at the batch MRP. The prescription
+ * is left as it is: a return doesn't put it back in the queue.
+ */
+export async function returnDispense(
+  db: Queryable,
+  id: string,
+  input: { lines: { lineIndex: number; qty: number }[]; reason: string; refundMode?: RefundMode },
+  by: string,
+  now = new Date(),
+): Promise<{ dispense: Dispense; refundPaise: number }> {
+  const given = await getDispense(db, id);
+  const lines = given.lines.map((l) => ({ ...l }));
+  const back = new Map<string, number>();
+  input.lines.forEach((r, i) => {
+    const line = lines[r.lineIndex];
+    if (!line) throw invalid(`lines[${i}].lineIndex: the dispense has no line ${r.lineIndex}`);
+    line.returnedQty = (line.returnedQty ?? 0) + r.qty;
+    if (line.returnedQty > line.qty) throw new AppError(409, 'more_than_given', `line ${r.lineIndex}: only ${line.qty - (line.returnedQty - r.qty)} left to return`);
+    back.set(line.batchId, (back.get(line.batchId) ?? 0) + r.qty);
+  });
+  const batches = await batchesByIds(db, [...back.keys()], now);
+  const returned = input.lines.map((r) => {
+    const line = lines[r.lineIndex]!;
+    return { lineIndex: r.lineIndex, batchId: line.batchId, qty: r.qty, refundPaise: r.qty * batches.get(line.batchId)!.mrpPaise };
+  });
+  const refundPaise = returned.reduce((sum, r) => sum + r.refundPaise, 0);
+
+  return withTransaction(db, async (tx) => {
+    const row = await updateRecord(tx, 'dispenses', { id, version: given.version, by, reason: input.reason, set: { lines: JSON.stringify(lines) } });
+    for (const [batchId, qty] of back) {
+      const batch = batches.get(batchId)!;
+      await updateRecord(tx, 'batches', { id: batchId, version: batch.version, by, set: { qty_on_hand: batch.qtyOnHand + qty } });
+    }
+    await tx.query(
+      `INSERT INTO pharmacy_returns (id, status, created_by, updated_by, dispense_id, patient_id, lines, reason, refund_paise, refund_mode)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8)`,
+      [randomUUID(), by, id, given.patientId, JSON.stringify(returned), input.reason, refundPaise, input.refundMode ?? 'cash'],
+    );
+    return { dispense: toDispense(row), refundPaise };
+  });
 }

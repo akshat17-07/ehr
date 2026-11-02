@@ -6,7 +6,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { dispense, getDispense } from './dispenses.js';
+import { dispense, getDispense, REFUND_MODES, returnDispense } from './dispenses.js';
 
 const text = (min: number, max: number) => z.string().trim().min(min).max(max);
 
@@ -31,6 +31,17 @@ const newDispense = z
   })
   .strict();
 
+const newReturn = z
+  .object({
+    lines: z
+      .array(z.object({ lineIndex: z.number().int().min(0).max(29), qty: z.number().int().min(1).max(10_000) }).strict())
+      .min(1)
+      .max(30),
+    reason: text(3, 500),
+    refundMode: z.enum(REFUND_MODES).optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -50,4 +61,11 @@ export const dispensesRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: given.patientId, recordType: 'dispense', recordId: given.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, given.patientId));
     return c.json(given);
+  })
+  // #103
+  .post('/:id/return', requirePermission('pharmacy_refund.create'), async (c) => {
+    const input = newReturn.parse(await bodyOf(c));
+    const result = await returnDispense(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: result.dispense.patientId, recordType: 'dispense', recordId: result.dispense.id, reason: input.reason });
+    return c.json(result, 201);
   });
