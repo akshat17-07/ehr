@@ -105,3 +105,12 @@ export async function signNote(db: Queryable, id: string, version: number, by: s
   await updateRecord(db, 'notes', { id, version, by, set: { status: 'signed', signed_at: now, signed_by: by } });
   return getNote(db, id);
 }
+
+/** #48: adds to a signed note (even in a closed encounter). The note itself is never rewritten. */
+export async function addAddendum(db: Queryable, id: string, text: string, by: string, now = new Date()): Promise<Note> {
+  const note = await getNote(db, id);
+  if (note.status !== 'signed') throw new AppError(409, 'not_signed', 'this note is a draft: edit it instead');
+  const addenda: Addendum[] = [...note.addenda, { text, by, at: now.toISOString() }];
+  await updateRecord(db, 'notes', { id, version: note.version, by, set: { addenda: JSON.stringify(addenda) } });
+  return getNote(db, id);
+}

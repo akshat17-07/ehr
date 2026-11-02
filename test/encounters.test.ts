@@ -359,3 +359,34 @@ describe('POST /staff/notes/{id}/sign', () => {
     expect((await sign(seedId('e0c00000', 999), { version: 1 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/notes/{id}/addenda', () => {
+  const addend = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/notes/${id}/addenda`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const newNote = async () => {
+    const encounter = await open(seedId('9a710000', 2));
+    const created = await app.request(`/staff/encounters/${encounter}/notes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'progress', text: 'Seen.' }),
+    }, doctor);
+    return { encounter, id: ((await created.json()) as { id: string }).id };
+  };
+
+  it('adds to a signed note, after the encounter has closed too, keeping the note text', async () => {
+    const { encounter, id } = await newNote();
+    expect(await (await addend(id, { text: 'too early' })).json()).toMatchObject({ error: 'not_signed' });
+    await app.request(`/staff/notes/${id}/sign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"version":1}' }, doctor);
+    await app.request(`/staff/encounters/${encounter}/close`, { method: 'POST' }, doctor);
+    const res = await addend(id, { text: 'CBC normal.' }, asStaff('dev-head-doctor', ['head_doctor']));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ text: 'Seen.', status: 'signed', addenda: [{ text: 'CBC normal.', by: 'dev-head-doctor' }] });
+    const again = (await (await addend(id, { text: 'Reviewed.' })).json()) as { addenda: { text: string }[] };
+    expect(again.addenda.map((a) => a.text)).toEqual(['CBC normal.', 'Reviewed.']);
+  });
+
+  it('422 for empty text; 404 for none; 403 without note.addend', async () => {
+    const { id } = await newNote();
+    expect((await addend(id, { text: '' })).status).toBe(422);
+    expect((await addend(seedId('e0c00000', 999), { text: 'x' })).status).toBe(404);
+    expect((await addend(id, { text: 'x' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
