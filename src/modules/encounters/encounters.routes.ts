@@ -11,7 +11,7 @@ import { summaryFields } from '../admissions/discharge.routes.js';
 import { checkIn } from '../appointments/appointments.js';
 import { assertNoFetalSex, getFormF, writeFormF } from '../departments/form-f.js';
 import { getPatient } from '../patients/patients.js';
-import { writePrescription } from '../prescriptions/prescriptions.js';
+import { uploadPrescription, writePrescription } from '../prescriptions/prescriptions.js';
 import { acknowledgedAlerts, rxLines } from '../prescriptions/prescriptions.routes.js';
 import { addDiagnosis, DIAGNOSIS_KINDS } from './diagnoses.js';
 import { addNote, addNursingNote, NOTE_KINDS, SHIFTS } from './notes.js';
@@ -95,6 +95,8 @@ const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
+const uploadedPrescription = z.object({ documentId: z.uuid(), lines: rxLines.optional() }).strict();
+
 // documentId: the signed paper form, uploaded first (#94).
 const newFormF = z
   .object({
@@ -188,6 +190,13 @@ export const encountersRoutes = new Hono<AuthEnv>()
   .post('/:id/prescriptions', requirePermission('rx.write'), async (c) => {
     const input = newPrescription.parse(await bodyOf(c));
     const prescription = await writePrescription(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
+    return c.json(prescription, 201);
+  })
+  // #63
+  .post('/:id/prescriptions/upload', requirePermission('rx.upload'), async (c) => {
+    const input = uploadedPrescription.parse(await bodyOf(c));
+    const prescription = await uploadPrescription(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
     return c.json(prescription, 201);
   })

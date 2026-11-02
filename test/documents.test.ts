@@ -160,3 +160,36 @@ describe('documentId links from other records', () => {
     expect((await app.request(`/staff/surgeries/${surgery.id}/implants`, json({ ...implant, stickerDocumentId: await readyDoc(kavita) }), doctor)).status).toBe(422);
   });
 });
+
+describe('POST /staff/encounters/{id}/prescriptions/upload', () => {
+  const irfan = seedId('9a710000', 3);
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const photo = async (patientId: string) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key, uploaded_at)
+       VALUES (gen_random_uuid(), 'ready', 'x', 'x', $1, 'prescription', 'rx.jpg', 'image/jpeg', 90000, md5(random()::text), 'k', now()) RETURNING id`,
+      [patientId],
+    )).rows[0]?.id);
+  const openFor = async (patientId: string) =>
+    ((await (await app.request('/staff/encounters', json({ patientId, type: 'OPD', departmentId: seedId('de000000', 1), doctorId: seedId('a0000000', 3) }), doctor)).json()) as { id: string }).id;
+  const upload = (encounterId: string, body: unknown, who = doctor) => app.request(`/staff/encounters/${encounterId}/prescriptions/upload`, json(body), who);
+  const line = { drugId: seedId('d0000000', 3), drugText: 'Amoxicillin 500 mg', dose: '1 cap', frequency: 'TDS', days: 5 };
+
+  it('saves a draft with the photo, and any lines typed so far; no alerts yet', async () => {
+    const encounterId = await openFor(irfan);
+    const documentId = await photo(irfan);
+    const res = await upload(encounterId, { documentId });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'draft', source: 'uploaded', documentId, lines: [], patientId: irfan, encounterId });
+    const withLines = await upload(encounterId, { documentId, lines: [line] });
+    expect(await withLines.json()).toMatchObject({ status: 'draft', lines: [line] });
+  });
+
+  it("422 for another patient's document or an unknown drug; 403 for a nurse; 404 for no encounter", async () => {
+    const encounterId = await openFor(irfan);
+    expect((await upload(encounterId, { documentId: await photo(ramesh) })).status).toBe(422);
+    expect((await upload(encounterId, { documentId: await photo(irfan), lines: [{ ...line, drugId: seedId('d0000000', 999) }] })).status).toBe(422);
+    expect((await upload(encounterId, { documentId: await photo(irfan) }, nurse)).status).toBe(403);
+    expect((await upload(seedId('e0000000', 999), { documentId: await photo(irfan) })).status).toBe(404);
+  });
+});

@@ -4,6 +4,7 @@ import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { indiaDayStart } from '../../time/india.js';
 import { assertOpen, getEncounter } from '../encounters/encounters.js';
 import type { BaseFields } from '../patients/patients.js';
@@ -72,6 +73,31 @@ export async function writePrescription(db: Queryable, encounterId: string, inpu
       randomUUID(), by, encounter.id, encounter.patientId, await prescriberId(db, by),
       JSON.stringify(input.lines), JSON.stringify(acknowledged), now,
     ],
+  );
+  return toPrescription(rows[0] as Record<string, unknown>);
+}
+
+/**
+ * #63: a paper prescription, photographed or scanned (the document is uploaded first, #94). It stays a draft, with
+ * any lines typed from it so far, until a doctor confirms it (#64); only then do the alert checks run.
+ */
+export async function uploadPrescription(
+  db: Queryable,
+  encounterId: string,
+  input: { documentId: string; lines?: RxLine[] },
+  by: string,
+): Promise<Prescription> {
+  const encounter = await getEncounter(db, encounterId);
+  assertOpen(encounter);
+  await assertPatientDocuments(db, encounter.patientId, [input.documentId], 'documentId');
+  const lines = input.lines ?? [];
+  // Unknown or inactive drugs are refused now; the alerts wait for the confirm.
+  if (lines.length > 0) await checkLines(db, encounter.patientId, lines);
+  const { rows } = await db.query(
+    `INSERT INTO prescriptions (id, status, created_by, updated_by, encounter_id, patient_id, doctor_id, source, document_id, lines,
+       acknowledged_alerts)
+     VALUES ($1, 'draft', $2, $2, $3, $4, $5, 'uploaded', $6, $7, '[]') RETURNING *`,
+    [randomUUID(), by, encounter.id, encounter.patientId, await prescriberId(db, by), input.documentId, JSON.stringify(lines)],
   );
   return toPrescription(rows[0] as Record<string, unknown>);
 }

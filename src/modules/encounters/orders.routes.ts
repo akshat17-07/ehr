@@ -16,7 +16,7 @@ const listQuery = pageQuery.extend({
   date: z.iso.date().optional(),
 });
 
-// documentId (a scanned report) is accepted once documents are built (#211); order_results.document_id exists.
+// documentId: a scanned report, uploaded first (#94); it can stand in for value and text.
 const newResult = z
   .object({
     value: z.number().finite().optional(),
