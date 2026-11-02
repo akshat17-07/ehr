@@ -70,3 +70,28 @@ describe('POST /staff/bills', () => {
     expect((await bill({ patientId: irfan, lines: [{ tariffId: tariff(1), qty: 1 }] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/bills', () => {
+  type Page = { items: Bill[]; nextCursor?: string };
+  const list = async (query = '', who = doctor) => (await (await app.request(`/staff/bills${query}`, {}, who)).json()) as Page;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+  it('newest first; filters by patient, day, period and status; pages', async () => {
+    const made = (await (await bill({ patientId: rahul, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
+    const all = (await list('?limit=100')).items;
+    expect(all[0]?.id).toBe(made.id);
+    expect((await list(`?patientId=${rahul}`)).items.map((b) => b.id)).toEqual([made.id]);
+    expect((await list(`?date=${today}&status=draft&limit=100`)).items).toHaveLength(all.length);
+    expect((await list(`?from=${today}&to=${today}&limit=100`)).items).toHaveLength(all.length);
+    expect((await list('?date=2020-01-01')).items).toEqual([]);
+    expect((await list('?status=final')).items).toEqual([]);
+    const first = await list('?limit=1');
+    expect((await list(`?limit=1&cursor=${first.nextCursor}`)).items[0]?.id).toBe(all[1]?.id);
+  });
+
+  it('422 for date with from, or a bad status; 403 for a nurse', async () => {
+    expect((await app.request(`/staff/bills?date=${today}&from=${today}`, {}, doctor)).status).toBe(422);
+    expect((await app.request('/staff/bills?status=open', {}, doctor)).status).toBe(422);
+    expect((await app.request('/staff/bills', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

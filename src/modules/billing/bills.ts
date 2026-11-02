@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
-import { indiaDate } from '../../time/india.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { ITEMS } from '../inventory/items.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { gstInside } from '../pharmacy/bills.js';
@@ -185,4 +186,28 @@ export async function createBill(
     );
     return toBill(rows[0] as Record<string, unknown>);
   });
+}
+
+export interface BillQuery extends PageQuery {
+  patientId?: string;
+  /** One IST day; or from/to, both IST days, inclusive. */
+  date?: string;
+  from?: string;
+  to?: string;
+  status?: BillStatus;
+  number?: string;
+}
+
+/** #117: bills newest first. */
+export async function listBills(db: Queryable, query: BillQuery): Promise<Page<Bill>> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  if (query.number) where.push(`number = $${params.push(query.number)}`);
+  const from = query.date ?? query.from;
+  const to = query.date ?? query.to;
+  if (from) where.push(`created_at >= $${params.push(indiaDayStart(from))}`);
+  if (to) where.push(`created_at < $${params.push(new Date(indiaDayStart(to).getTime() + 86_400_000))}`);
+  return pageRows(db, { select: 'SELECT * FROM bills', where, params, orderBy: ['created_at', 'id'] }, query, toBill);
 }

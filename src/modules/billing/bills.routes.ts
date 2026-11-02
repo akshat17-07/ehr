@@ -1,10 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createBill } from './bills.js';
+import { BILL_STATUSES, createBill, listBills } from './bills.js';
 
 export const lineInput = z
   .object({
@@ -19,6 +20,17 @@ const newBill = z
   .object({ patientId: z.uuid(), encounterId: z.uuid().optional(), admissionId: z.uuid().optional(), lines: z.array(lineInput).max(200) })
   .strict();
 
+const billsQuery = pageQuery
+  .extend({
+    patientId: z.uuid().optional(),
+    date: z.iso.date().optional(),
+    from: z.iso.date().optional(),
+    to: z.iso.date().optional(),
+    status: z.enum(BILL_STATUSES).optional(),
+    number: z.string().trim().min(1).max(50).optional(),
+  })
+  .refine((q) => !q.date || (!q.from && !q.to), { message: 'date or from/to, not both', path: ['date'] });
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -30,4 +42,9 @@ export const billsRoutes = new Hono<AuthEnv>()
     const bill = await createBill(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     return c.json(bill, 201);
+  })
+  // #117
+  .get('/', requirePermission('bill.view'), async (c) => {
+    const query = billsQuery.parse(c.req.query());
+    return c.json(await listBills(await dbOf(c), query));
   });
