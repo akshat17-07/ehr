@@ -361,3 +361,20 @@ describe('POST /staff/patients/{id}/deposits', () => {
     expect((await deposit(seedId('9a710000', 999), { amountPaise: 1000, mode: 'cash' })).status).toBe(404);
   });
 });
+
+describe('GET /staff/patients/{id}/deposits', () => {
+  it("the patient's deposits, newest first", async () => {
+    const sita = seedId('9a710000', 2);
+    const take = async (amountPaise: number) =>
+      ((await (await app.request(`/staff/patients/${sita}/deposits`, json({ amountPaise, mode: 'cash' }), doctor)).json()) as { id: string }).id;
+    const first = await take(1000);
+    const second = await take(2000);
+    const res = await app.request(`/staff/patients/${sita}/deposits`, {}, doctor);
+    expect(res.status).toBe(200);
+    const list = (await res.json()) as { id: string; balancePaise: number }[];
+    expect(list.map((d) => d.id)).toEqual([second, first]);
+    expect(list[0]?.balancePaise).toBe(2000);
+    expect((await app.request(`/staff/patients/${sita}/deposits`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/deposits`, {}, doctor)).status).toBe(404);
+  });
+});

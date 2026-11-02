@@ -28,7 +28,7 @@ import { addDentalEntries, dentalChart, FDI_TOOTH, TOOTH_SURFACES } from '../dep
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
 import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
-import { DEPOSIT_MODES, takeDeposit } from '../billing/deposits.js';
+import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -366,6 +366,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const consent = await recordConsent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: consent.patientId, recordType: 'consent', recordId: consent.id });
     return c.json(consent, 201);
+  })
+  // #127
+  .get('/:id/deposits', requirePermission('bill.view'), async (c) => {
+    const id = c.req.param('id');
+    const deposits = await patientDeposits(await dbOf(c), id);
+    auditDetails(c, { patientId: id, recordType: 'patient', recordId: id });
+    return c.json(deposits);
   })
   // #126
   .post('/:id/deposits', requirePermission('deposit.create'), async (c) => {

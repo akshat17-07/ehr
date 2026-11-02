@@ -57,3 +57,10 @@ export async function takeDeposit(
     return toDeposit(rows[0] as Record<string, unknown>);
   });
 }
+
+/** #127: the patient's deposits, newest first (404 for no patient). */
+export async function patientDeposits(db: Queryable, patientId: string): Promise<Deposit[]> {
+  const patient = await getPatient(db, patientId);
+  const { rows } = await db.query('SELECT * FROM deposits WHERE patient_id = $1 ORDER BY created_at DESC, id DESC', [patient.id]);
+  return rows.map(toDeposit);
+}
