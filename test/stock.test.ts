@@ -61,3 +61,50 @@ describe('GET /staff/stock', () => {
     expect((await app.request('/staff/stock', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/grn', () => {
+  const supplier = seedId('5a000000', 1);
+  const receive = (body: unknown, who = medical) =>
+    app.request('/staff/stock/grn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const line = (more: Record<string, unknown> = {}) => ({ itemId: seedId('d0000000', 2), batchNo: 'ORS2601', expiry: '2029-08-31', qty: 100, costPaise: 1500, mrpPaise: 2200, ...more });
+  const batch = async (itemId: string, batchNo: string) =>
+    (await db.query('SELECT id, qty_on_hand, supplier_id, cost_paise FROM batches WHERE item_id = $1 AND batch_no = $2', [itemId, batchNo])).rows[0];
+  let invoice = 0;
+  const grn = (lines: unknown[], more: Record<string, unknown> = {}) => ({ supplierId: supplier, invoiceNo: `NPD/${++invoice}`, invoiceDate: '2026-10-30', lines, ...more });
+
+  it('a new batch number becomes a batch; free quantity counts as stock', async () => {
+    const res = await receive(grn([line({ freeQty: 10 }), line({ itemId: gauze, batchNo: 'GZ02', expiry: '2031-01-31', qty: 20, costPaise: 3000, mrpPaise: 4500 })]));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { lines: { batchId: string }[] };
+    expect(body).toMatchObject({ supplierId: supplier, invoiceNo: `NPD/${invoice}`, invoiceDate: '2026-10-30', receivedBy: 'dev-medical', lines: [{ batchNo: 'ORS2601', freeQty: 10 }, { batchNo: 'GZ02' }] });
+    expect(await batch(seedId('d0000000', 2), 'ORS2601')).toEqual({ id: body.lines[0]?.batchId, qty_on_hand: 110, supplier_id: supplier, cost_paise: 1500 });
+    expect((await batch(gauze, 'GZ02'))?.qty_on_hand).toBe(20);
+  });
+
+  it('a batch on file gets the stock added (lines of one batch together); expiry and MRP must match', async () => {
+    const before = Number((await batch(seedId('d0000000', 1), 'PCM2503'))?.qty_on_hand);
+    const pcm = line({ itemId: seedId('d0000000', 1), batchNo: 'PCM2503', expiry: '2031-01-31', qty: 30, costPaise: 1300, mrpPaise: 2100 });
+    expect((await receive(grn([pcm, { ...pcm, qty: 20 }]))).status).toBe(201);
+    expect((await batch(seedId('d0000000', 1), 'PCM2503'))?.qty_on_hand).toBe(before + 50);
+    expect((await receive(grn([{ ...pcm, expiry: '2031-02-28' }]))).status).toBe(422);
+    expect((await receive(grn([line({ batchNo: 'ORS2602' }), line({ batchNo: 'ORS2602', mrpPaise: 2100 })]))).status).toBe(422);
+  });
+
+  it('422 for an expired batch, an MRP above the NPPA ceiling or below cost, an unknown item or supplier, or a future invoice', async () => {
+    const error = async (body: unknown) => ((await (await receive(body)).json()) as { message: string }).message;
+    expect(await error(grn([line({ expiry: '2020-01-31' })]))).toMatch(/expired/);
+    expect(await error(grn([line({ itemId: seedId('d0000000', 1), batchNo: 'PCM9', mrpPaise: 2600 })]))).toMatch(/NPPA ceiling of 2500/);
+    expect(await error(grn([line({ costPaise: 2300 })]))).toMatch(/above the MRP/);
+    expect((await receive(grn([line({ itemId: seedId('d0000000', 999) })]))).status).toBe(422);
+    expect((await receive(grn([line()], { supplierId: seedId('5a000000', 999) }))).status).toBe(422);
+    expect((await receive(grn([line()], { invoiceDate: '2099-01-01' }))).status).toBe(422);
+    expect((await receive(grn([]))).status).toBe(422);
+  });
+
+  it('409 for the same supplier invoice twice; 403 for a nurse', async () => {
+    const body = grn([line({ batchNo: 'ORS2610' })]);
+    expect((await receive(body)).status).toBe(201);
+    expect(await (await receive(body)).json()).toMatchObject({ error: 'duplicate_invoice' });
+    expect((await receive(grn([line()]), asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

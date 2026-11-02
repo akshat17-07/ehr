@@ -923,4 +923,41 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC items_name ON items (name)',
     ],
   },
+  {
+    // Suppliers (api-list.md Supplier); address is JSON. Managed at #292-294.
+    id: '0058_suppliers',
+    statements: () => [
+      ...createTable('suppliers', [
+        'name text NOT NULL',
+        'gstin text',
+        'drug_licence_no text',
+        'phone text',
+        'email text',
+        'address text',
+        'active boolean NOT NULL DEFAULT true',
+      ]),
+    ],
+  },
+  {
+    // The NPPA ceiling price (DPCO) of a scheduled formulation, per unit; a GRN can't bring in a batch above it.
+    id: '0059_drugs_ceiling',
+    statements: () => ['ALTER TABLE drugs ADD COLUMN ceiling_paise bigint'],
+  },
+  {
+    // Goods received (api-list.md Grn): one supplier invoice; lines is JSON with the batch each line went into.
+    id: '0060_grns',
+    statements: () => [
+      ...createTable('grns', [
+        'supplier_id uuid NOT NULL',
+        'purchase_order_id uuid',
+        'invoice_no text NOT NULL',
+        'invoice_date date NOT NULL',
+        'lines text NOT NULL',
+        'received_by text NOT NULL',
+      ]),
+      // One entry per supplier invoice.
+      'CREATE UNIQUE INDEX ASYNC grns_supplier_invoice ON grns (supplier_id, invoice_no)',
+      'CREATE INDEX ASYNC grns_created ON grns (created_at)',
+    ],
+  },
 ];

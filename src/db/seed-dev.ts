@@ -72,6 +72,12 @@ const DEV_BATCHES = [
   ['Amoxicillin', 'AMX2499', '2029-12-31', 58, 95, 60, 60, true],
 ] as const;
 
+/** name, GSTIN, drug licence no. */
+const DEV_SUPPLIERS = [
+  ['Narmada Pharma Distributors', '23AABCN1234M1Z2', 'MP/BPL/20B/2101'],
+  ['Upper Lake Surgicals', '23AACCU5678K1Z9', 'MP/BPL/21B/3302'],
+] as const;
+
 const DEV_PARTNER_HOSPITALS = ['AIIMS Bhopal', 'Hamidia Hospital, Bhopal', 'Bansal Hospital, Bhopal'];
 
 const DEV_INSURERS = [['Star Health and Allied Insurance', 'STAR'], ['ICICI Lombard General Insurance', 'ICICI'], ['The New India Assurance', 'NIA'], ['Care Health Insurance', 'CARE']] as const;
@@ -140,6 +146,11 @@ export function devSeedStatements(): string[] {
       }),
     ),
     ...DEV_PARTNER_HOSPITALS.map((name, i) => seedInsert('partner_hospitals', seedId('9a000000', i + 1), { name })),
+    ...DEV_SUPPLIERS.map(([name, gstin, licence], i) =>
+      seedInsert('suppliers', seedId('5a000000', i + 1), { name, gstin, drug_licence_no: licence, active: true }),
+    ),
+    // An NPPA ceiling for one drug, so the GRN check has something to meet.
+    `UPDATE drugs SET ceiling_paise = 2500 WHERE id = '${seedId('d0000000', 1)}' AND ceiling_paise IS NULL`,
     ...DEV_INSURERS.map(([name, code], i) => seedInsert('insurers', seedId('1a000000', i + 1), { name, code, active: true })),
     ...DEV_TPAS.map(([name, code], i) => seedInsert('tpas', seedId('1b000000', i + 1), { name, code, active: true })),
     ...DEV_ICD10.map(([code, text], i) => seedInsert('codes', seedId('c0de1000', i + 1), { system: 'icd10', code, text })),
