@@ -1287,4 +1287,19 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC exports_created ON exports (created_at)',
     ],
   },
+  {
+    // What a Head Doctor may grant (api-list.md GrantRule). status: active or ended (never removed).
+    // grantor_id is users.id; may_grant is a JSON list of permission keys.
+    id: '0086_grant_rules',
+    statements: () => [
+      ...createTable('grant_rules', [
+        'grantor_id uuid NOT NULL',
+        'may_grant text NOT NULL',
+        'scope text NOT NULL',
+        'department_id uuid',
+        'max_days integer NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC grant_rules_grantor ON grant_rules (grantor_id)',
+    ],
+  },
 ];

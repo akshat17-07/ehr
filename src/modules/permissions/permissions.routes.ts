@@ -12,6 +12,7 @@ import { listTypePermissions, saveTypePermissions } from '../../permissions/type
 import { checkBundles, getUser } from '../users/users.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
+import { listGrantRules } from './grant-rules.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -66,6 +67,9 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
     auditDetails(c, { recordType: 'bundle', recordId: bundle.id, ...(body.reason && { reason: body.reason }) });
     return c.json(bundle);
   })
+
+  // #167
+  .get('/grant-rules', requirePermission('grant.view'), async (c) => c.json(await listGrantRules(await dbOf(c), c.req.query('grantorUserId'))))
 
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.
   .get('/permissions', requirePermission('user.permissions'), (c) => c.json(PERMISSIONS))
