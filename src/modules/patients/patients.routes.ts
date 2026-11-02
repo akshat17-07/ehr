@@ -28,6 +28,7 @@ import { addDentalEntries, dentalChart, FDI_TOOTH, TOOTH_SURFACES } from '../dep
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
 import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
+import { DEPOSIT_MODES, takeDeposit } from '../billing/deposits.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -179,6 +180,15 @@ const timelineQuery = pageQuery.extend({
   to: z.iso.date().optional(),
   kind: z.enum(TIMELINE_KINDS).optional(),
 });
+
+const newDeposit = z
+  .object({
+    amountPaise: z.number().int().min(100).max(100_000_000),
+    mode: z.enum(DEPOSIT_MODES),
+    reference: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict()
+  .refine((d) => d.mode === 'cash' || d.reference, { message: 'the UPI or card reference is needed', path: ['reference'] });
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -356,6 +366,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const consent = await recordConsent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: consent.patientId, recordType: 'consent', recordId: consent.id });
     return c.json(consent, 201);
+  })
+  // #126
+  .post('/:id/deposits', requirePermission('deposit.create'), async (c) => {
+    const input = newDeposit.parse(await bodyOf(c));
+    const deposit = await takeDeposit(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: deposit.patientId, recordType: 'deposit', recordId: deposit.id });
+    return c.json(deposit, 201);
   })
   // #30
   .post('/:id/break-glass', requirePermission('breakglass.invoke'), async (c) => {

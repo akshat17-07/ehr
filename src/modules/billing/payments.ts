@@ -50,15 +50,21 @@ export async function billPayments(db: Queryable, billId: string): Promise<Payme
 /** Sum of a query's amount_paise. */
 const sum = async (db: Queryable, sql: string, params: unknown[]) => Number((await db.query(sql, params)).rows[0]?.sum ?? 0);
 
-/** 422 cash_limit if this cash would bring the patient's cash for the day, or for the bill, to ₹2,00,000. */
-async function assertCashLimit(db: Queryable, bill: Bill, amountPaise: number, now: Date) {
+/**
+ * 422 cash_limit if this cash would bring the patient's cash for the day (bill payments and deposits),
+ * or for the bill, to ₹2,00,000.
+ */
+export async function assertCashLimit(db: Queryable, patientId: string, billId: string | undefined, amountPaise: number, now: Date) {
   const dayStart = indiaDayStart(indiaDate(now));
-  const today = await sum(
-    db,
-    `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM payments WHERE patient_id = $1 AND mode = 'cash' AND voided_at IS NULL AND created_at >= $2`,
-    [bill.patientId, dayStart],
-  );
-  const onBill = await sum(db, `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM payments WHERE bill_id = $1 AND mode = 'cash' AND voided_at IS NULL`, [bill.id]);
+  const cashSince = (table: string) =>
+    sum(db, `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM ${table} WHERE patient_id = $1 AND mode = 'cash' AND voided_at IS NULL AND created_at >= $2`, [
+      patientId,
+      dayStart,
+    ]);
+  const today = (await cashSince('payments')) + (await cashSince('deposits'));
+  const onBill = billId
+    ? await sum(db, `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM payments WHERE bill_id = $1 AND mode = 'cash' AND voided_at IS NULL`, [billId])
+    : 0;
   if (Math.max(today, onBill) + amountPaise >= CASH_LIMIT_PAISE) {
     throw new AppError(422, 'cash_limit', 'cash of ₹2,00,000 or more from one person in a day or for one bill is not allowed (sec 269ST); take UPI or card');
   }
@@ -97,6 +103,6 @@ export async function payBill(
   const bill = await getBill(db, billId);
   if (bill.status !== 'final' && bill.status !== 'part_paid') throw new AppError(409, 'not_payable', 'a bill is paid once final; this one is ' + bill.status);
   if (input.amountPaise > bill.duePaise) throw new AppError(422, 'validation_failed', `amountPaise: more than the ${bill.duePaise} due`);
-  if (input.mode === 'cash') await assertCashLimit(db, bill, input.amountPaise, now);
+  if (input.mode === 'cash') await assertCashLimit(db, bill.patientId, bill.id, input.amountPaise, now);
   return withTransaction(db, (tx) => addPayment(tx, bill, input, by));
 }

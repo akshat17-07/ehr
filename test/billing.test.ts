@@ -333,3 +333,31 @@ describe('GET /staff/bills/{id}/print', () => {
     expect((await app.request(`/staff/bills/${d.id}/print`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/patients/{id}/deposits', () => {
+  const deposit = (patientId: string, body: unknown, who = doctor) => app.request(`/staff/patients/${patientId}/deposits`, json(body), who);
+  const year = financialYear(indiaDate());
+
+  it('gives a receipt with the next number and the full balance', async () => {
+    const res = await deposit(irfan, { amountPaise: 500_000, mode: 'upi', reference: 'UPI9' });
+    expect(res.status).toBe(201);
+    const a = (await res.json()) as { receiptNo: string; balancePaise: number; receivedBy: string };
+    expect(a).toMatchObject({ amountPaise: 500_000, balancePaise: 500_000, mode: 'upi', receivedBy: 'dev-doctor' });
+    const n = Number(a.receiptNo.split('/').at(-1));
+    expect(a.receiptNo).toBe(`DEP/${year}/${n}`);
+    const b = (await (await deposit(irfan, { amountPaise: 100, mode: 'cash' })).json()) as { receiptNo: string };
+    expect(b.receiptNo).toBe(`DEP/${year}/${n + 1}`);
+  });
+
+  it('cash deposits count toward the ₹2,00,000 a day cash limit', async () => {
+    expect((await deposit(rahul, { amountPaise: 19_000_000, mode: 'cash' })).status).toBe(201);
+    expect(await (await deposit(rahul, { amountPaise: 1_000_000, mode: 'cash' })).json()).toMatchObject({ error: 'cash_limit' });
+    expect((await deposit(rahul, { amountPaise: 1_000_000, mode: 'card', reference: 'CARD1' })).status).toBe(201);
+  });
+
+  it('422 for a UPI deposit with no reference; 403 for a nurse; 404 for no patient', async () => {
+    expect((await deposit(irfan, { amountPaise: 1000, mode: 'upi' })).status).toBe(422);
+    expect((await deposit(irfan, { amountPaise: 1000, mode: 'cash' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await deposit(seedId('9a710000', 999), { amountPaise: 1000, mode: 'cash' })).status).toBe(404);
+  });
+});

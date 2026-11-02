@@ -1115,4 +1115,21 @@ export const migrations: Migration[] = [
     id: '0075_bills_credit_note',
     statements: () => ['ALTER TABLE bills ADD COLUMN credit_note_no text'],
   },
+  {
+    // Advance deposits (api-list.md Deposit). receipt_no is gap-free per financial year; balance_paise goes down
+    // as the deposit is used on bills (#128) or refunded.
+    id: '0076_deposits',
+    statements: () => [
+      ...createTable('deposits', [
+        'patient_id uuid NOT NULL',
+        'receipt_no text NOT NULL',
+        'amount_paise bigint NOT NULL',
+        'balance_paise bigint NOT NULL',
+        'mode text NOT NULL',
+        'reference text',
+      ]),
+      'CREATE INDEX ASYNC deposits_patient ON deposits (patient_id, created_at)',
+      'CREATE INDEX ASYNC deposits_created ON deposits (created_at)',
+    ],
+  },
 ];
