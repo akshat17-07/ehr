@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../db/migrate.js';
+import { updateRecord } from '../db/records.js';
 import { AppError } from '../middleware/errors.js';
 import { seedId, seedInsert } from '../db/table.js';
 import { isPermission, PERMISSIONS, type Permission } from './catalog.js';
@@ -95,4 +96,31 @@ export async function addBundle(db: Queryable, input: { name: string; permission
     [randomUUID(), by, input.name, JSON.stringify(permissions)],
   );
   return fromRow(rows[0] as Record<string, unknown>);
+}
+
+/**
+ * #166: 404 for no bundle; 409 built_in for a built-in one; 409 duplicate for a taken name; 409 in_use to rename a
+ * bundle users hold (users keep bundles by name). New permissions reach every holder at once.
+ */
+export async function changeBundle(
+  db: Queryable,
+  id: string,
+  change: { version: number; name?: string; permissions?: string[]; reason?: string },
+  by: string,
+): Promise<Bundle> {
+  const { rows } = await db.query("SELECT id, version, name, permissions, built_in FROM bundles WHERE id::text = $1 AND status = 'active'", [id]);
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such bundle');
+  const bundle = fromRow(rows[0] as Record<string, unknown>);
+  if (bundle.builtIn) throw new AppError(409, 'built_in', 'built-in bundles cannot be changed');
+  const set: Record<string, unknown> = {};
+  if (change.permissions) set.permissions = JSON.stringify(checkBundlePermissions(change.permissions));
+  if (change.name !== undefined && change.name !== bundle.name) {
+    const { rows: taken } = await db.query('SELECT id FROM bundles WHERE name = $1', [change.name]);
+    if (taken[0]) throw new AppError(409, 'duplicate', 'a bundle with this name exists', { bundleId: String(taken[0].id) });
+    const { rows: holders } = await db.query('SELECT user_id FROM user_permissions WHERE bundles LIKE $1', [`%${JSON.stringify(bundle.name)}%`]);
+    if (holders.length > 0) throw new AppError(409, 'in_use', 'users hold this bundle; take it off them before renaming', { users: holders.length });
+    set.name = change.name;
+  }
+  if (Object.keys(set).length === 0) throw new AppError(422, 'invalid_input', 'nothing to change');
+  return fromRow(await updateRecord(db, 'bundles', { id: bundle.id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) }));
 }
