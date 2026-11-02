@@ -613,4 +613,24 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC order_results_order ON order_results (order_id, resulted_at)',
     ],
   },
+  {
+    // Prescriptions (api-list.md Prescription): typed, or an uploaded photo/PDF whose lines the doctor confirms.
+    // lines and acknowledged_alerts are JSON text. status: draft / confirmed / dispensed / void.
+    id: '0041_prescriptions',
+    statements: () => [
+      ...createTable('prescriptions', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'doctor_id uuid NOT NULL',
+        'source text NOT NULL',
+        'document_id uuid',
+        'lines text NOT NULL',
+        'acknowledged_alerts text',
+        'confirmed_at timestamptz',
+        'confirmed_by text',
+      ]),
+      'CREATE INDEX ASYNC prescriptions_encounter ON prescriptions (encounter_id)',
+      'CREATE INDEX ASYNC prescriptions_patient ON prescriptions (patient_id, created_at)',
+    ],
+  },
 ];

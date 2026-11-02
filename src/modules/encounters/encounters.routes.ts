@@ -8,6 +8,8 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
+import { writePrescription } from '../prescriptions/prescriptions.js';
+import { acknowledgedAlerts, rxLines } from '../prescriptions/prescriptions.routes.js';
 import { addDiagnosis, DIAGNOSIS_KINDS } from './diagnoses.js';
 import { addNote, addNursingNote, NOTE_KINDS, SHIFTS } from './notes.js';
 import { noteText } from './notes.routes.js';
@@ -84,6 +86,7 @@ const newOrder = z
     notes: z.string().trim().min(1).max(1000).optional(),
   })
   .strict();
+const newPrescription = z.object({ lines: rxLines, acknowledgedAlerts }).strict();
 const newNursingNote = z.object({ text: noteText, shift: z.enum(SHIFTS).optional() }).strict();
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
@@ -166,4 +169,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const order = await addOrder(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: order.patientId, recordType: 'order', recordId: order.id });
     return c.json(order, 201);
+  })
+  // #62
+  .post('/:id/prescriptions', requirePermission('rx.write'), async (c) => {
+    const input = newPrescription.parse(await bodyOf(c));
+    const prescription = await writePrescription(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
+    return c.json(prescription, 201);
   });

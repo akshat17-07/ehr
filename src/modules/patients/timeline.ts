@@ -33,6 +33,12 @@ export const TIMELINE_SOURCES: TimelineSource[] = [
     title: "type || ' visit: ' || coalesce((SELECT name_en FROM departments WHERE departments.id = encounters.department_id), '')",
   },
   { kind: 'note', table: 'notes', at: 'created_at', title: "initcap(kind) || ' note'" },
+  {
+    kind: 'prescription',
+    table: 'prescriptions',
+    at: 'created_at',
+    title: "CASE WHEN source = 'uploaded' THEN 'Prescription (uploaded)' ELSE 'Prescription' END",
+  },
 ];
 
 const NAME = /^[a-z][a-z0-9_]*$/;
