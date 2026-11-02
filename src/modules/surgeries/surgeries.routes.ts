@@ -4,8 +4,10 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addImplant } from '../departments/implants.js';
-import { listSurgeries, planSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { addImplant, surgeryImplants } from '../departments/implants.js';
+import { getPatient } from '../patients/patients.js';
+import { getSurgery, listSurgeries, planSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
 
 const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
@@ -51,6 +53,14 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     const surgery = await planSurgery(await dbOf(c), newSurgery.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery, 201);
+  })
+  // #88: a clinical read, so the inactive-patient rule applies. Venue payments join at #92.
+  .get('/:id', requirePermission('surgery.view'), async (c) => {
+    const db = await dbOf(c);
+    const surgery = await getSurgery(db, c.req.param('id'));
+    auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, surgery.patientId));
+    return c.json({ ...surgery, implants: await surgeryImplants(db, surgery.id) });
   })
   // #85
   .post('/:id/implants', requirePermission('dept.ortho'), async (c) => {

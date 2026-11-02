@@ -106,3 +106,23 @@ describe('POST /staff/surgeries/{id}/implants', () => {
     expect((await add(id, implant, nurse)).status).toBe(403);
   });
 });
+
+describe('GET /staff/surgeries/{id}', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const get = (id: string, who = doctor) => app.request(`/staff/surgeries/${id}`, {}, who);
+
+  it('returns the surgery with its implants', async () => {
+    const planned = await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Total knee replacement', side: 'right', surgeonId, scheduledAt: new Date(Date.now() + 86_400_000).toISOString(), venue: 'own', chargesPaise: 15000000 }), doctor);
+    const { id } = (await planned.json()) as { id: string };
+    expect(await (await get(id)).json()).toMatchObject({ id, procedure: 'Total knee replacement', implants: [] });
+    await app.request(`/staff/surgeries/${id}/implants`, json({ name: 'Knee prosthesis', batchNo: 'TK-77', mrpPaise: 9000000 }), doctor);
+    expect(await (await get(id)).json()).toMatchObject({ implants: [{ name: 'Knee prosthesis', batchNo: 'TK-77', surgeryId: id }] });
+  });
+
+  it('404 for none; 403 for a nurse', async () => {
+    expect((await get(seedId('5e000000', 999))).status).toBe(404);
+    expect((await get('nope')).status).toBe(404);
+    const { id } = (await db.query('SELECT id FROM surgeries LIMIT 1')).rows[0] as { id: string };
+    expect((await get(id, nurse)).status).toBe(403);
+  });
+});
