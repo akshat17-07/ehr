@@ -9,6 +9,7 @@ import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
 import { addNote, NOTE_KINDS } from './notes.js';
+import { noteText } from './notes.routes.js';
 import { recordObservation } from './observations.js';
 import { recordVital, VITAL_FIELDS, type VitalField } from './vitals.js';
 import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
@@ -66,7 +67,6 @@ const newObservation = z
   })
   .strict();
 
-const noteText = z.string().trim().min(1).max(20_000);
 const newNote = z.object({ kind: z.enum(NOTE_KINDS).exclude(['nursing']), text: noteText }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */

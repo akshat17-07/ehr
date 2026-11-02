@@ -303,3 +303,34 @@ describe('POST /staff/encounters/{id}/notes', () => {
     expect((await note(id, { kind: 'progress', text: 'x' })).status).toBe(409);
   });
 });
+
+describe('PATCH /staff/notes/{id}', () => {
+  const draft = async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await app.request(`/staff/encounters/${id}/notes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'consult', text: 'first draft' }),
+    }, doctor);
+    return ((await res.json()) as { id: string }).id;
+  };
+  const edit = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/notes/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('the author rewrites a draft; the old text is kept as a version', async () => {
+    const id = await draft();
+    const res = await edit(id, { version: 1, text: 'second draft' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ text: 'second draft', version: 2, status: 'draft' });
+    expect((await edit(id, { version: 1, text: 'stale' })).status).toBe(409);
+    const old = await db.query("SELECT data::text FROM notes_versions WHERE record_id = $1", [id]);
+    expect(String(old.rows[0]?.data)).toContain('first draft');
+  });
+
+  it('403 for another doctor; 409 once signed; 422 for empty text; 404 for none', async () => {
+    const id = await draft();
+    expect(await (await edit(id, { version: 1, text: 'x' }, asStaff('dev-head-doctor', ['head_doctor']))).json()).toMatchObject({ error: 'not_author' });
+    expect((await edit(id, { version: 1, text: ' ' })).status).toBe(422);
+    await db.query("UPDATE notes SET status = 'signed' WHERE id = $1", [id]);
+    expect(await (await edit(id, { version: 1, text: 'x' })).json()).toMatchObject({ error: 'signed' });
+    expect((await edit(seedId('e0c00000', 999), { version: 1, text: 'x' })).status).toBe(404);
+  });
+});

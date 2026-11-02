@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { AppError } from '../../middleware/errors.js';
 import type { BaseFields } from '../patients/patients.js';
 import { assertOpen, getEncounter } from './encounters.js';
 
@@ -72,4 +74,27 @@ export async function draftNoteCount(db: Queryable, encounterId: string): Promis
     [encounterId],
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function getNote(db: Queryable, id: string): Promise<Note> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM notes WHERE id = $1 AND voided_at IS NULL', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such note');
+  return toNote(rows[0] as Record<string, unknown>);
+}
+
+/** A draft is its author's until signed: 409 once signed, 403 for anyone else. */
+async function draftOf(db: Queryable, id: string, by: string): Promise<Note> {
+  const note = await getNote(db, id);
+  if (note.status !== 'draft') throw new AppError(409, 'signed', 'this note is signed: add an addendum instead');
+  if (note.createdBy !== by) throw new AppError(403, 'not_author', 'only the author changes a draft note');
+  return note;
+}
+
+/** #46: rewrites a draft note (each save keeps the old text as a version). */
+export async function updateNote(db: Queryable, id: string, change: { version: number; text: string }, by: string): Promise<Note> {
+  await draftOf(db, id, by);
+  await updateRecord(db, 'notes', { id, version: change.version, by, set: { text: change.text } });
+  return getNote(db, id);
 }
