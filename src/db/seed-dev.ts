@@ -155,6 +155,9 @@ export function devSeedStatements(): string[] {
       const last = Math.max(...DEV_PATIENTS.filter(([uhid]) => uhid.slice(1, 3) === year).map(([uhid]) => Number(uhid.slice(3))));
       return seedInsert('counters', seedId('c0c00000', Number(year)), { name: `uhid-${year}`, value: String(last) });
     }),
+    seedInsert('allergies', seedId('a1e70000', 1), {
+      patient_id: seedId('9a710000', 1), substance: 'Penicillin', reaction: 'Rash', severity: 'moderate', status: 'active',
+    }),
     ...DEV_APPOINTMENTS.map(([patient, doctor, dept, time, minutes], i) => {
       const at = new Date(`${indiaDate()}T${time}:00+05:30`);
       return seedInsert('appointments', seedId('a9900000', i + 1), {

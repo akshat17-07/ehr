@@ -20,6 +20,7 @@ import {
 import { CONSENT_KINDS, LANGUAGES, recordConsent } from './consents.js';
 import { patientObservations } from '../encounters/observations.js';
 import { patientVitals } from '../encounters/vitals.js';
+import { listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
@@ -106,6 +107,8 @@ const rangeQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.d
 
 const observationsQuery = rangeQuery.extend({ loinc: z.string().trim().min(1).max(20).optional() });
 
+const allergiesQuery = z.object({ includeVoid: z.enum(['true', 'false']).optional() });
+
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
@@ -190,6 +193,14 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await patientObservations(db, patient.id, query));
+  })
+  // #52: allergies are safety information, so the inactive-patient rule does not hide them.
+  .get('/:id/allergies', requirePermission('patient.view'), async (c) => {
+    const { includeVoid } = allergiesQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json(await listAllergies(db, patient.id, includeVoid === 'true'));
   })
   // #26
   .post('/:id/guardians', requirePermission('patient.update'), async (c) => {
