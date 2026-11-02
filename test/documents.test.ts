@@ -16,7 +16,7 @@ const uploads: FileUploads = {
   signPut: vi.fn(async (bucket: string, key: string) => ({ url: `https://s3.test/${bucket}/${key}?put`, headers: { 'x-test': '1' } })),
   head: async (_bucket, key) => stored.get(key),
 };
-const app = createApp({ db: async () => db, uploads });
+const app = createApp({ db: async () => db, uploads, signUrl: async (bucket, key, seconds) => `https://s3.test/${bucket}/${key}?get=${seconds}` });
 
 const asStaff = (sub: string, groups: string[]) =>
   ({ event: { requestContext: { authorizer: { jwt: { claims: { sub, 'cognito:groups': `[${groups.join(' ')}]` } } } } } }) as never;
@@ -263,5 +263,34 @@ describe('GET /staff/patients/{id}/documents', () => {
     expect((await list('?type=selfie')).status).toBe(422);
     expect((await list('', reception)).status).toBe(403);
     expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/documents`, {}, doctor)).status).toBe(404);
+  });
+});
+
+describe('GET /staff/documents/{id}/view-url', () => {
+  const view = (id: string, who = doctor) => app.request(`/staff/documents/${id}/view-url`, {}, who);
+  const add = async (status: string, patientId = ramesh) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key)
+       VALUES (gen_random_uuid(), $1, 'x', 'x', $2, 'lab_report', 'f.pdf', 'application/pdf', 1000, md5(random()::text), 'patients/p/d') RETURNING id`,
+      [status, patientId],
+    )).rows[0]?.id);
+
+  it('gives a 10-minute link, logged as a view of the document', async () => {
+    const id = await add('ready');
+    const res = await view(id);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string; expiresAt: string };
+    expect(body.url).toBe('https://s3.test/files-test/patients/p/d?get=600');
+    expect(Date.parse(body.expiresAt) - Date.now()).toBeGreaterThan(590_000);
+    const { rows } = await db.query("SELECT action, patient_id, record_type FROM audit_events WHERE record_id = $1", [id]);
+    expect(rows).toEqual([{ action: 'view', patient_id: ramesh, record_type: 'document' }]);
+    expect((await view(await add('misfiled'))).status).toBe(200);
+  });
+
+  it('409 while uploading; 403 for reception or an inactive patient; 404 for none', async () => {
+    expect(await (await view(await add('pending'))).json()).toMatchObject({ error: 'not_uploaded' });
+    expect((await view(await add('ready'), reception)).status).toBe(403);
+    expect((await view(await add('ready', seedId('9a710000', 2)))).status).toBe(403);
+    expect((await view(seedId('d0c00000', 999))).status).toBe(404);
   });
 });

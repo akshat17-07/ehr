@@ -3,9 +3,11 @@ import { z } from 'zod';
 import { requireEnv } from '../../config/env.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, uploadsOf, userOf } from '../../middleware/context.js';
+import { dbOf, signerOf, uploadsOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, startUpload } from './documents.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { getPatient } from '../patients/patients.js';
+import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, documentViewUrl, MAX_DOCUMENT_BYTES, startUpload } from './documents.js';
 
 const newUpload = z
   .object({
@@ -35,4 +37,12 @@ export const documentsRoutes = new Hono<AuthEnv>()
     const document = await completeUpload(await dbOf(c), uploadsOf(c), requireEnv('FILES_BUCKET'), c.req.param('id'), userOf(c).sub);
     auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
     return c.json(document);
+  })
+  // #97: audited as a view of the document; a clinical read, so the inactive-patient rule applies.
+  .get('/:id/view-url', requirePermission('document.view'), async (c) => {
+    const db = await dbOf(c);
+    const { document, ...link } = await documentViewUrl(db, signerOf(c), requireEnv('FILES_BUCKET'), c.req.param('id'));
+    auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, document.patientId));
+    return c.json(link);
   });

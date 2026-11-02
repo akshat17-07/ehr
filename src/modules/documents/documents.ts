@@ -3,6 +3,7 @@ import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { LINK_SECONDS, type SignGetUrl } from '../../files/signed-url.js';
 import { UPLOAD_SECONDS, type FileUploads } from '../../files/uploads.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDayStart } from '../../time/india.js';
@@ -150,4 +151,22 @@ export async function patientDocuments(db: Queryable, patientId: string, query: 
   if (query.from) where.push(`created_at >= $${params.push(indiaDayStart(query.from))}`);
   if (query.to) where.push(`created_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
   return pageRows(db, { select: 'SELECT * FROM documents', where, params, orderBy: ['created_at', 'id'] }, query, toDocument);
+}
+
+/** #97: a 10-minute link to open the file (misfiled ones too, so they can be checked); 409 while still uploading. */
+export async function documentViewUrl(
+  db: Queryable,
+  sign: SignGetUrl,
+  bucket: string,
+  id: string,
+  now = new Date(),
+): Promise<{ document: Document; url: string; expiresAt: string }> {
+  const row = await documentRow(db, id);
+  const document = toDocument(row);
+  if (document.status === 'pending') throw new AppError(409, 'not_uploaded', 'the upload is not complete yet');
+  return {
+    document,
+    url: await sign(bucket, String(row.s3_key), LINK_SECONDS),
+    expiresAt: new Date(now.getTime() + LINK_SECONDS * 1000).toISOString(),
+  };
 }
