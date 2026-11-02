@@ -46,6 +46,29 @@ export function toBatch(r: Record<string, unknown>, today: string): Batch {
   return batch;
 }
 
+/** The batches still holding stock for these items, first to expire first (FEFO), by item id. */
+export async function stockByItem(db: Queryable, ids: string[], now = new Date()): Promise<Map<string, Batch[]>> {
+  const byItem = new Map<string, Batch[]>();
+  if (ids.length === 0) return byItem;
+  const { rows } = await db.query(
+    `SELECT batches.*, expiry::text AS expiry_text FROM batches WHERE qty_on_hand > 0 AND item_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})
+     ORDER BY expiry, batch_no, id`,
+    ids,
+  );
+  const today = indiaDate(now);
+  for (const row of rows) {
+    const batch = toBatch(row, today);
+    byItem.set(batch.itemId, [...(byItem.get(batch.itemId) ?? []), batch]);
+  }
+  return byItem;
+}
+
+/** Totals over some batches. */
+export const stockTotals = (batches: Batch[]) => ({
+  qtyOnHand: batches.reduce((sum, b) => sum + b.qtyOnHand, 0),
+  qtyUsable: batches.reduce((sum, b) => sum + b.qtyUsable, 0),
+});
+
 /** #13: a drug's batches, first to expire first (FEFO). `inStock` keeps only batches with usable stock. 404 for an unknown drug. */
 export async function listDrugBatches(db: Queryable, drugId: string, filter: { inStock?: boolean } = {}, now = new Date()): Promise<Batch[]> {
   const drug = UUID.test(drugId) ? (await db.query('SELECT id FROM drugs WHERE id = $1', [drugId])).rows[0] : undefined;

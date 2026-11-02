@@ -1,3 +1,7 @@
+import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { stockByItem, stockTotals } from './batches.js';
+
 // Inventory items (api-list.md Item). Drugs are items too (kind drug, same id, unit from the form); the rest live
 // in items. ITEMS reads both as one list.
 
@@ -41,4 +45,23 @@ export function toItem(r: Record<string, unknown>, qty: { qtyOnHand: number; qty
     active: r.active === true,
     ...qty,
   };
+}
+
+/** A LIKE pattern matching text anywhere in a name. */
+export const nameLike = (q: string) => `%${q.toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
+
+/** #276: items by name with their stock totals. */
+export async function listItems(
+  db: Queryable,
+  query: PageQuery & { q?: string; kind?: ItemKind; active?: boolean },
+  now = new Date(),
+): Promise<Page<Item>> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.kind) where.push(`i.kind = $${params.push(query.kind)}`);
+  if (query.active !== undefined) where.push(`i.active = $${params.push(query.active)}`);
+  if (query.q) where.push(`lower(i.name) LIKE $${params.push(nameLike(query.q))}`);
+  const page = await pageRows(db, { select: ITEMS, where, params, orderBy: ['name', 'id'], direction: 'asc' }, query, (r) => r);
+  const byItem = await stockByItem(db, page.items.map((r) => String(r.id)), now);
+  return { ...page, items: page.items.map((r) => toItem(r, stockTotals(byItem.get(String(r.id)) ?? []))) };
 }

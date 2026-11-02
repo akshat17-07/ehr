@@ -218,3 +218,26 @@ describe('POST /staff/recalls', () => {
     expect((await recall({ itemId: ors, batchNos: ['X'], reference: 'ref-1' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/inventory/items', () => {
+  type Items = { items: { id: string; name: string; kind: string; active: boolean; qtyOnHand: number; qtyUsable: number }[]; nextCursor?: string };
+  const list = async (query = '', who = medical) => (await (await app.request(`/staff/inventory/items${query}`, {}, who)).json()) as Items;
+
+  it('drugs and other items by name, with stock totals; filters by kind, name and active', async () => {
+    const gauzeRow = (await list('?kind=consumable')).items.find((i) => i.id === gauze);
+    expect(gauzeRow).toMatchObject({ name: 'Gauze roll 10 cm', kind: 'consumable', unit: 'roll', packSize: 12, active: true, qtyOnHand: expect.any(Number) });
+    expect((await list('?kind=consumable')).items.every((i) => i.kind === 'consumable')).toBe(true);
+    expect((await list('?q=PARACET')).items.map((i) => [i.id, i.kind])).toEqual([[paracetamol, 'drug']]);
+    expect((await list('?active=false')).items.every((i) => !i.active)).toBe(true);
+    const all = await list('?limit=100');
+    expect(all.items.map((i) => i.name)).toEqual([...all.items.map((i) => i.name)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    const first = await list('?limit=2');
+    expect(first.items).toHaveLength(2);
+    expect((await list(`?limit=2&cursor=${first.nextCursor}`)).items[0]?.id).toBe(all.items[2]?.id);
+  });
+
+  it('422 for a bad kind; 403 for reception', async () => {
+    expect((await app.request('/staff/inventory/items?kind=food', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/inventory/items', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});
