@@ -9,7 +9,7 @@ import { receiveGoods } from './grn.js';
 import { requestIndent } from './indents.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
-import { listStock } from './stock.js';
+import { listStock, STOCK_ALERT_KINDS, stockAlerts } from './stock.js';
 
 const stockQuery = pageQuery.extend({
   itemId: z.uuid().optional(),
@@ -61,6 +61,8 @@ const newQuarantine = z
   })
   .strict();
 
+const alertsQuery = z.object({ kind: z.enum(STOCK_ALERT_KINDS).optional(), withinDays: z.coerce.number().int().min(0).max(730).optional() });
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -91,4 +93,9 @@ export const stockRoutes = new Hono<AuthEnv>()
     const quarantine = await quarantineStock(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { recordType: 'quarantine', recordId: quarantine.id });
     return c.json(quarantine, 201);
+  })
+  // #111
+  .get('/alerts', requirePermission('stock.view'), async (c) => {
+    const query = alertsQuery.parse(c.req.query());
+    return c.json(await stockAlerts(await dbOf(c), query));
   });

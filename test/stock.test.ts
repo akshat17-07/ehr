@@ -153,3 +153,35 @@ describe('POST /staff/stock/quarantine', () => {
     expect((await post({ batchId: amx, qty: 1, reason: 'other' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/stock/alerts', () => {
+  type Alert = { kind: string; item: { name: string }; batch: { batchNo: string }; message: string };
+  const alerts = async (query = '') => (await (await app.request(`/staff/stock/alerts${query}`, {}, medical)).json()) as Alert[];
+  const soon = new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10);
+
+  it('expired and soon-to-expire stock not set aside, and recalled stock not quarantined', async () => {
+    await db.query(
+      `INSERT INTO batches (id, status, created_by, updated_by, item_id, batch_no, expiry, cost_paise, mrp_paise, qty_on_hand, qty_quarantined)
+       VALUES ($1, 'active', 'x', 'x', $2, 'PCMSOON', $3, 1000, 2000, 30, 0), ($4, 'active', 'x', 'x', $2, 'PCMSET', $3, 1000, 2000, 30, 30)`,
+      [seedId('ba000000', 90), paracetamol, soon, seedId('ba000000', 91)],
+    );
+    const all = await alerts();
+    expect(all.map((a) => [a.kind, a.batch.batchNo])).toEqual([
+      ['expiry', 'PCM2401'],
+      ['expiry', 'PCMSOON'],
+    ]);
+    expect(all[0]?.message).toBe('Paracetamol batch PCM2401 expired on 2025-12-31: quarantine 40');
+    expect(all[1]?.message).toMatch(/^Paracetamol batch PCMSOON expires on .*: 30 in stock$/);
+    expect((await alerts('?withinDays=5')).map((a) => a.batch.batchNo)).toEqual(['PCM2401']);
+    // The seed's recalled batch is fully quarantined: nothing to do. Release some and it shows.
+    await db.query('UPDATE batches SET qty_quarantined = 50 WHERE id = $1', [seedId('ba000000', 5)]);
+    expect((await alerts('?kind=recall')).map((a) => [a.kind, a.batch.batchNo, a.message])).toEqual([
+      ['recall', 'AMX2499', 'Amoxicillin batch AMX2499 is recalled: quarantine 10 still in stock'],
+    ]);
+  });
+
+  it('422 for a bad kind; 403 for a nurse', async () => {
+    expect((await app.request('/staff/stock/alerts?kind=low', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/stock/alerts', {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

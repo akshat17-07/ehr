@@ -1,6 +1,6 @@
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
-import { indiaDate } from '../../time/india.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { toBatch, type Batch } from './batches.js';
 import { ITEMS, toItem, type Item, type ItemKind } from './items.js';
 
@@ -52,4 +52,51 @@ export async function listStock(db: Queryable, query: StockQuery, now = new Date
       return { item: toItem(r, qty), ...qty, batches };
     }),
   };
+}
+
+export const STOCK_ALERT_KINDS = ['expiry', 'recall'] as const;
+export type StockAlertKind = (typeof STOCK_ALERT_KINDS)[number];
+
+export interface StockAlert {
+  kind: StockAlertKind;
+  item: Item;
+  batch: Batch;
+  message: string;
+}
+
+/**
+ * #111: batches that need action, first to expire first. expiry: stock not set aside that expires within withinDays
+ * (or already has); recall: a recalled batch with stock not yet quarantined. Low stock is #287.
+ */
+export async function stockAlerts(db: Queryable, query: { kind?: StockAlertKind; withinDays?: number }, now = new Date()): Promise<StockAlert[]> {
+  const today = indiaDate(now);
+  const until = indiaDate(new Date(indiaDayStart(today).getTime() + (query.withinDays ?? 90) * 86_400_000));
+  const kinds = query.kind ? [query.kind] : STOCK_ALERT_KINDS;
+  const when = [
+    ...(kinds.includes('expiry') ? ['(NOT recalled AND expiry <= $1)'] : []),
+    ...(kinds.includes('recall') ? ['recalled'] : []),
+  ];
+  const { rows } = await db.query(
+    `SELECT batches.*, expiry::text AS expiry_text FROM batches WHERE qty_on_hand > qty_quarantined AND (${when.join(' OR ')})
+     ORDER BY expiry, batch_no, id`,
+    kinds.includes('expiry') ? [until] : [],
+  );
+  if (rows.length === 0) return [];
+  const ids = [...new Set(rows.map((r) => String(r.item_id)))];
+  const { rows: itemRows } = await db.query(`${ITEMS} WHERE i.id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
+  const items = new Map(itemRows.map((r) => [String(r.id), r]));
+  return rows.flatMap((r) => {
+    const itemRow = items.get(String(r.item_id));
+    if (!itemRow) return [];
+    const batch = toBatch(r, today);
+    const free = batch.qtyOnHand - batch.qtyQuarantined;
+    const item = toItem(itemRow, { qtyOnHand: batch.qtyOnHand, qtyUsable: batch.qtyUsable });
+    const kind: StockAlertKind = batch.recalled ? 'recall' : 'expiry';
+    const message = batch.recalled
+      ? `${item.name} batch ${batch.batchNo} is recalled: quarantine ${free} still in stock`
+      : batch.expiry < today
+        ? `${item.name} batch ${batch.batchNo} expired on ${batch.expiry}: quarantine ${free}`
+        : `${item.name} batch ${batch.batchNo} expires on ${batch.expiry}: ${free} in stock`;
+    return [{ kind, item, batch, message }];
+  });
 }
