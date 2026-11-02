@@ -5,7 +5,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, uploadsOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { DOCUMENT_MIMES, DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, startUpload } from './documents.js';
+import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, startUpload } from './documents.js';
 
 const newUpload = z
   .object({
@@ -29,4 +29,10 @@ export const documentsRoutes = new Hono<AuthEnv>()
     const started = await startUpload(await dbOf(c), uploadsOf(c), requireEnv('FILES_BUCKET'), input, userOf(c).sub);
     auditDetails(c, { patientId: started.document.patientId, recordType: 'document', recordId: started.document.id });
     return c.json(started, 'duplicate' in started ? 200 : 201);
+  })
+  // #95
+  .post('/:id/complete', requirePermission('document.upload'), async (c) => {
+    const document = await completeUpload(await dbOf(c), uploadsOf(c), requireEnv('FILES_BUCKET'), c.req.param('id'), userOf(c).sub);
+    auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
+    return c.json(document);
   });

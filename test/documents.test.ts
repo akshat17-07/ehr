@@ -57,3 +57,36 @@ describe('POST /staff/documents/upload-url', () => {
     expect((await start(file('b2'.repeat(32)), reception)).status).toBe(403);
   });
 });
+
+describe('POST /staff/documents/{id}/complete', () => {
+  const start = async (sha: string) => ((await (await app.request('/staff/documents/upload-url', json(file(sha)), doctor)).json()) as { document: { id: string; version: number } }).document;
+  const complete = (id: string, who = doctor) => app.request(`/staff/documents/${id}/complete`, { method: 'POST' }, who);
+  const keyOf = (id: string) => `patients/${ramesh}/${id}`;
+
+  it('marks the document ready once the stored file matches; again just returns it', async () => {
+    const doc = await start('c3'.repeat(32));
+    expect(await (await complete(doc.id)).json()).toMatchObject({ error: 'not_uploaded' });
+    stored.set(keyOf(doc.id), { sizeBytes: 182_000, sha256: 'c3'.repeat(32) });
+    const res = await complete(doc.id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: doc.id, status: 'ready', uploadedAt: expect.any(String), version: doc.version + 1 });
+    expect(await (await complete(doc.id)).json()).toMatchObject({ status: 'ready', version: doc.version + 1 });
+  });
+
+  it('422 file_mismatch for another size or hash; the document stays pending', async () => {
+    const doc = await start('d4'.repeat(32));
+    stored.set(keyOf(doc.id), { sizeBytes: 182_001, sha256: 'd4'.repeat(32) });
+    expect(await (await complete(doc.id)).json()).toMatchObject({ error: 'file_mismatch' });
+    stored.set(keyOf(doc.id), { sizeBytes: 182_000, sha256: 'ee'.repeat(32) });
+    expect(await (await complete(doc.id)).json()).toMatchObject({ error: 'file_mismatch' });
+    stored.set(keyOf(doc.id), { sizeBytes: 182_000 });
+    expect((await complete(doc.id)).status).toBe(422);
+    expect((await db.query('SELECT status FROM documents WHERE id = $1', [doc.id])).rows[0]).toEqual({ status: 'pending' });
+  });
+
+  it('404 for none; 403 for reception', async () => {
+    expect((await complete(seedId('d0c00000', 999))).status).toBe(404);
+    expect((await complete('nope')).status).toBe(404);
+    expect((await complete((await start('f5'.repeat(32))).id, reception)).status).toBe(403);
+  });
+});
