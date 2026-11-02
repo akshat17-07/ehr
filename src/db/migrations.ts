@@ -657,4 +657,21 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC admissions_encounter ON admissions (encounter_id)',
     ],
   },
+  {
+    // Medication administration record (api-list.md MarEntry): each dose given, held or refused on the ward.
+    id: '0043_mar_entries',
+    statements: () => [
+      ...createTable('mar_entries', [
+        'admission_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'prescription_id uuid NOT NULL',
+        'line_index integer NOT NULL',
+        'at timestamptz NOT NULL',
+        'outcome text NOT NULL',
+        'dose text',
+        'note text',
+      ]),
+      'CREATE INDEX ASYNC mar_entries_admission ON mar_entries (admission_id, at)',
+    ],
+  },
 ];

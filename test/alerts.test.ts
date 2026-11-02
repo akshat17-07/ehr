@@ -16,7 +16,9 @@ const page = async (path: string, sub?: string) => (await (await call(path, sub)
 describe('GET /staff/me/alerts', () => {
   it('lists only the caller alerts, newest first, page by page', async () => {
     for (const n of [1, 2, 3]) {
-      await createAlert(db, { userId: 'nurse-1', kind: 'expiry', title: `Batch ${n} expires`, body: 'In 30 days', link: '/stock', by: 'stock_scan' });
+      const alert = await createAlert(db, { userId: 'nurse-1', kind: 'expiry', title: `Batch ${n} expires`, body: 'In 30 days', link: '/stock', by: 'stock_scan' });
+      // A second apart: the local database clock is per millisecond, and same-time rows sort by random id.
+      await db.query("UPDATE alerts SET created_at = now() - make_interval(secs => $2) WHERE id = $1", [alert.id, 10 - n]);
     }
     await createAlert(db, { userId: 'doc-1', kind: 'breakglass', title: 'Not yours', body: 'x', by: 'u' });
 

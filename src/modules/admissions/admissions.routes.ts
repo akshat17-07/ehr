@@ -5,7 +5,10 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { admit, listAdmissions, transfer } from './admissions.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { getPatient } from '../patients/patients.js';
+import { admit, getAdmission, listAdmissions, transfer } from './admissions.js';
+import { marDay } from './mar.js';
 
 // Admissions (api-list.md #69-#73), mounted at /staff/admissions.
 
@@ -28,6 +31,8 @@ const listQuery = pageQuery.extend({
   doctorId: z.uuid().optional(),
   current: z.enum(['true', 'false']).optional(),
 });
+
+const marQuery = z.object({ date: z.iso.date().optional() });
 
 const transferBody = z
   .object({ version: z.number().int().min(1), ward, bed, reason: z.string().trim().min(1).max(500).optional() })
@@ -54,4 +59,13 @@ export const admissionsRoutes = new Hono<AuthEnv>()
     const admission = await transfer(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: admission.patientId, recordType: 'admission', recordId: admission.id, ...(input.reason && { reason: input.reason }) });
     return c.json(admission);
+  })
+  // #72: a clinical read, so the inactive-patient rule applies.
+  .get('/:id/mar', requirePermission('patient.view'), async (c) => {
+    const { date } = marQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const admission = await getAdmission(db, c.req.param('id'));
+    auditDetails(c, { patientId: admission.patientId, recordType: 'admission', recordId: admission.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, admission.patientId));
+    return c.json(await marDay(db, admission, date));
   });

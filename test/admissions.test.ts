@@ -100,3 +100,33 @@ describe('POST /staff/admissions/{id}/transfer', () => {
     expect((await move(id, { version, ward: 'ICU', bed: '5' }, nurse)).status).toBe(403);
   });
 });
+
+describe('GET /staff/admissions/{id}/mar', () => {
+  const admissionOf = async (patientId: string) =>
+    (await db.query('SELECT id, encounter_id FROM admissions WHERE current_patient = $1', [patientId])).rows[0] as { id: string; encounter_id: string };
+  const mar = (id: string, query = '', who = doctor) => app.request(`/staff/admissions/${id}/mar${query}`, {}, who);
+
+  it("lists the stay's confirmed prescription lines as the schedule; no entries yet", async () => {
+    const { id, encounter_id } = await admissionOf(irfan);
+    const lines = [
+      { drugId: seedId('d0000000', 9), drugText: 'Ceftriaxone 1 g', dose: '1 g IV', frequency: 'twice a day', days: 5 },
+      { drugText: 'Paracetamol 500 mg', dose: '1 tablet', frequency: 'when fever over 100 F', days: 3 },
+    ];
+    expect((await app.request(`/staff/encounters/${encounter_id}/prescriptions`, json({ lines, acknowledgedAlerts: [] }), doctor)).status).toBe(201);
+    const res = await mar(id, '', nurse);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { schedule: { lineIndex: number; drugText: string; frequency: string }[]; entries: unknown[] };
+    expect(body.schedule).toMatchObject([
+      { lineIndex: 0, drugText: 'Ceftriaxone 1 g', dose: '1 g IV', frequency: 'twice a day' },
+      { lineIndex: 1, drugText: 'Paracetamol 500 mg' },
+    ]);
+    expect(body.entries).toEqual([]);
+  });
+
+  it('422 for a bad date; 404 for none; 403 for a GP', async () => {
+    const { id } = await admissionOf(irfan);
+    expect((await mar(id, '?date=yesterday')).status).toBe(422);
+    expect((await mar(seedId('ad000000', 999))).status).toBe(404);
+    expect((await mar(id, '', asStaff('dev-gp', ['gp']))).status).toBe(403);
+  });
+});
