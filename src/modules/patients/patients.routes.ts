@@ -20,7 +20,7 @@ import {
 import { CONSENT_KINDS, LANGUAGES, recordConsent } from './consents.js';
 import { patientObservations } from '../encounters/observations.js';
 import { patientVitals } from '../encounters/vitals.js';
-import { listAllergies } from './allergies.js';
+import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
@@ -108,6 +108,14 @@ const rangeQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.d
 const observationsQuery = rangeQuery.extend({ loinc: z.string().trim().min(1).max(20).optional() });
 
 const allergiesQuery = z.object({ includeVoid: z.enum(['true', 'false']).optional() });
+const newAllergy = z
+  .object({
+    substance: z.string().trim().min(2).max(100),
+    drugId: z.uuid().optional(),
+    reaction: z.string().trim().min(1).max(200).optional(),
+    severity: z.enum(ALLERGY_SEVERITIES),
+  })
+  .strict();
 
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
@@ -201,6 +209,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const patient = await getPatient(db, c.req.param('id'));
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json(await listAllergies(db, patient.id, includeVoid === 'true'));
+  })
+  // #53
+  .post('/:id/allergies', requirePermission('allergy.write'), async (c) => {
+    const input = newAllergy.parse(await bodyOf(c));
+    const allergy = await addAllergy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: allergy.patientId, recordType: 'allergy', recordId: allergy.id });
+    return c.json(allergy, 201);
   })
   // #26
   .post('/:id/guardians', requirePermission('patient.update'), async (c) => {

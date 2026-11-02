@@ -19,6 +19,11 @@ const list = async (patient: string, query = '', who = doctor) => {
   const res = await app.request(`/staff/patients/${patient}/allergies${query}`, {}, who);
   return { status: res.status, body: (await res.json()) as { substance: string; status: string }[] };
 };
+const add = (patient: string, body: unknown, who = doctor) =>
+  app.request(`/staff/patients/${patient}/allergies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const banner = async (patient: string) =>
+  ((await (await app.request(`/staff/patients/${patient}`, {}, doctor)).json()) as { allergies: string[] }).allergies;
+
 describe('GET /staff/patients/{id}/allergies', () => {
   it("lists the patient's allergies", async () => {
     const { status, body } = await list(ramesh);
@@ -34,3 +39,20 @@ describe('GET /staff/patients/{id}/allergies', () => {
   });
 });
 
+describe('POST /staff/patients/{id}/allergies', () => {
+  it('records an allergy, linked to a drug, and adds it to the banner list', async () => {
+    const drugId = seedId('d0000000', 1);
+    const res = await add(irfan, { substance: 'Sulfa drugs', drugId, reaction: 'Hives', severity: 'severe' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: irfan, substance: 'Sulfa drugs', drugId, severity: 'severe', createdBy: 'dev-doctor' });
+    expect(await banner(irfan)).toEqual(['Sulfa drugs']);
+  });
+
+  it('409 for the same substance again; 422 for an unknown drug or severity; 403 for a nurse', async () => {
+    expect(await (await add(ramesh, { substance: 'penicillin', severity: 'mild' })).json()).toMatchObject({ error: 'already_recorded' });
+    expect((await add(ramesh, { substance: 'Peanuts', drugId: seedId('d0000000', 999), severity: 'mild' })).status).toBe(422);
+    expect((await add(ramesh, { substance: 'Peanuts', severity: 'awful' })).status).toBe(422);
+    expect((await add(ramesh, { substance: 'Peanuts', severity: 'mild' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect(await banner(ramesh)).toEqual(['Penicillin']);
+  });
+});
