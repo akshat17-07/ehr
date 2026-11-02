@@ -7,7 +7,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
-import { getSurgery, listSurgeries, planSurgery, updateSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
+import { CHECKLIST_ITEMS, getSurgery, listSurgeries, planSurgery, recordChecklist, updateSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
 
 const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
@@ -56,6 +56,14 @@ const surgeryChange = z
   .strict()
   .refine((b) => Object.keys(b).some((k) => k !== 'version' && k !== 'reason'), 'change at least one field');
 
+/** Every item of the phase, yes or no. */
+const phase = (items: readonly string[]) => z.object(Object.fromEntries(items.map((k) => [k, z.boolean()]))).strict();
+const checklist = z
+  .object({ signIn: phase(CHECKLIST_ITEMS.signIn), timeOut: phase(CHECKLIST_ITEMS.timeOut), signOut: phase(CHECKLIST_ITEMS.signOut) })
+  .partial()
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, 'record at least one phase');
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -80,6 +88,12 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
   // #89
   .patch('/:id', requirePermission('surgery.update'), async (c) => {
     const surgery = await updateSurgery(await dbOf(c), c.req.param('id'), surgeryChange.parse(await bodyOf(c)), userOf(c).sub);
+    auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
+    return c.json(surgery);
+  })
+  // #90
+  .post('/:id/checklist', requirePermission('surgery.update'), async (c) => {
+    const surgery = await recordChecklist(await dbOf(c), c.req.param('id'), checklist.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery);
   })

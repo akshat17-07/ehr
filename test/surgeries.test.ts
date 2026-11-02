@@ -166,3 +166,34 @@ describe('PATCH /staff/surgeries/{id}', () => {
     expect((await patch(seedId('5e000000', 999), { version: 1, chargesPaise: 1 })).status).toBe(404);
   });
 });
+
+describe('POST /staff/surgeries/{id}/checklist', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const record = (id: string, body: unknown, who = doctor) => app.request(`/staff/surgeries/${id}/checklist`, json(body), who);
+  const yes = (items: readonly string[]) => Object.fromEntries(items.map((k) => [k, true]));
+  const signIn = { ...yes(['identity', 'site', 'consent', 'siteMarked', 'anaesthesiaCheck', 'pulseOximeter', 'airwayRisk']), allergies: false, bloodLossRisk: false };
+  const timeOut = yes(['teamIntroduced', 'patientSiteProcedureConfirmed', 'antibioticProphylaxis', 'criticalEventsReviewed', 'imagingDisplayed']);
+  const signOut = yes(['procedureRecorded', 'countsCorrect', 'specimenLabelled', 'equipmentProblems', 'recoveryConcerns']);
+  const planned = async () =>
+    ((await (await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Hernia repair', surgeonId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), venue: 'own', chargesPaise: 3000000 }), doctor)).json()) as { id: string }).id;
+
+  it('records the phases in order, each with who and when', async () => {
+    const id = await planned();
+    const first = await record(id, { signIn });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ checklist: { signIn: { ...signIn, by: 'dev-doctor', at: expect.any(String) } }, version: 2 });
+    const all = (await (await record(id, { timeOut, signOut })).json()) as { checklist: Record<string, unknown> };
+    expect(Object.keys(all.checklist)).toEqual(['signIn', 'timeOut', 'signOut']);
+  });
+
+  it('422 out of order, for a missing or unknown item, or nothing; 409 when cancelled; 403 for a nurse', async () => {
+    const id = await planned();
+    expect((await record(id, { timeOut })).status).toBe(422);
+    expect((await record(id, { signIn: { ...signIn, identity: undefined } })).status).toBe(422);
+    expect((await record(id, { signIn: { ...signIn, extra: true } })).status).toBe(422);
+    expect((await record(id, {})).status).toBe(422);
+    expect((await record(id, { signIn }, nurse)).status).toBe(403);
+    await db.query("UPDATE surgeries SET status = 'cancelled' WHERE id = $1", [id]);
+    expect(await (await record(id, { signIn })).json()).toMatchObject({ error: 'cancelled' });
+  });
+});

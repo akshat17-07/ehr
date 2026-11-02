@@ -208,3 +208,38 @@ export async function updateSurgery(db: Queryable, id: string, change: SurgeryCh
   await updateRecord(db, 'surgeries', { id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) });
   return getSurgery(db, id);
 }
+
+/** WHO surgical safety checklist: each phase's yes/no items. */
+export const CHECKLIST_ITEMS = {
+  signIn: ['identity', 'site', 'consent', 'siteMarked', 'anaesthesiaCheck', 'pulseOximeter', 'allergies', 'airwayRisk', 'bloodLossRisk'],
+  timeOut: ['teamIntroduced', 'patientSiteProcedureConfirmed', 'antibioticProphylaxis', 'criticalEventsReviewed', 'imagingDisplayed'],
+  signOut: ['procedureRecorded', 'countsCorrect', 'specimenLabelled', 'equipmentProblems', 'recoveryConcerns'],
+} as const;
+export type ChecklistPhase = keyof typeof CHECKLIST_ITEMS;
+const PHASES = Object.keys(CHECKLIST_ITEMS) as ChecklistPhase[];
+
+/**
+ * #90: records one or more phases, each with who and when. A phase needs the one before it (time out after sign in,
+ * sign out after time out). Recording a phase again replaces it; the old answers stay in the history.
+ */
+export async function recordChecklist(
+  db: Queryable,
+  id: string,
+  phases: Partial<Record<ChecklistPhase, Record<string, boolean>>>,
+  by: string,
+  now = new Date(),
+): Promise<Surgery> {
+  const surgery = await getSurgery(db, id);
+  assertNotCancelled(surgery);
+  if (surgery.status === 'done') throw new AppError(409, 'done', 'this surgery is done');
+  const checklist: Record<string, unknown> = { ...surgery.checklist };
+  PHASES.forEach((phase, i) => {
+    const answers = phases[phase];
+    if (!answers) return;
+    const before = PHASES[i - 1];
+    if (before && !checklist[before]) invalid(`${phase}: record ${before} first`);
+    checklist[phase] = { ...answers, by, at: now.toISOString() };
+  });
+  await updateRecord(db, 'surgeries', { id, version: surgery.version, by, set: { checklist: JSON.stringify(checklist) } });
+  return getSurgery(db, id);
+}
