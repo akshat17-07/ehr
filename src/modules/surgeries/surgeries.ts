@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDayStart } from '../../time/india.js';
-import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
+import { getPatient, patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // Surgeries (api-list.md Surgery): planned here or at a partner hospital (then we pay the venue, #92).
 
@@ -77,4 +78,70 @@ export async function listSurgeries(db: Queryable, query: SurgeryQuery, now = ne
   const surgeries = rows.map(toSurgery);
   const byId = await patientSummaries(db, surgeries.map((s) => s.patientId), now);
   return surgeries.map((s) => ({ ...s, patient: byId.get(s.patientId) }));
+}
+
+function invalid(message: string): never {
+  throw new AppError(422, 'invalid_input', message);
+}
+
+/** 422 unless every id is an active user, of one of `types` if given. */
+export async function assertActiveUsers(db: Queryable, field: string, ids: string[], types?: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const params: unknown[] = [...ids];
+  const typeFilter = types ? ` AND type IN (${types.map((t) => `$${params.push(t)}`).join(', ')})` : '';
+  const { rows } = await db.query(
+    `SELECT id FROM users WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')}) AND active${typeFilter}`,
+    params,
+  );
+  if (rows.length !== new Set(ids).size) invalid(`${field}: each must be an active ${types ? types.join(' or ') : 'user'}`);
+}
+
+/** 422 unless the partner hospital is on the list. */
+export async function assertPartnerHospital(db: Queryable, id: string): Promise<void> {
+  const { rows } = await db.query('SELECT id FROM partner_hospitals WHERE id = $1 AND voided_at IS NULL', [id]);
+  if (!rows[0]) invalid('partnerHospitalId: no such partner hospital');
+}
+
+export const SURGEONS = ['doctor', 'head_doctor'] as const;
+
+export interface NewSurgery {
+  patientId: string;
+  procedure: string;
+  site?: string;
+  side?: Surgery['side'];
+  surgeonId: string;
+  teamIds?: string[];
+  scheduledAt: Date;
+  venue: Surgery['venue'];
+  partnerHospitalId?: string;
+  chargesPaise: number;
+  instructions?: string;
+}
+
+/** An emergency done overnight can be entered next morning; nothing earlier, nor over a year ahead. */
+const PAST_GRACE_MS = DAY_MS;
+const MAX_AHEAD_MS = 365 * DAY_MS;
+
+/** #87: a partner venue needs its hospital, and only then. The surgeon is not repeated in the team. */
+export async function planSurgery(db: Queryable, input: NewSurgery, by: string, now = new Date()): Promise<Surgery> {
+  if ((input.venue === 'partner') !== (input.partnerHospitalId !== undefined)) {
+    invalid('partnerHospitalId: needed for a partner venue, and only then');
+  }
+  const at = input.scheduledAt.getTime();
+  if (at < now.getTime() - PAST_GRACE_MS || at > now.getTime() + MAX_AHEAD_MS) invalid('scheduledAt: from yesterday to a year ahead');
+  const patient = await getPatient(db, input.patientId, now);
+  await assertActiveUsers(db, 'surgeonId', [input.surgeonId], SURGEONS);
+  const teamIds = [...new Set(input.teamIds ?? [])].filter((id) => id !== input.surgeonId);
+  await assertActiveUsers(db, 'teamIds', teamIds);
+  if (input.partnerHospitalId) await assertPartnerHospital(db, input.partnerHospitalId);
+  const { rows } = await db.query(
+    `INSERT INTO surgeries (id, status, created_by, updated_by, patient_id, procedure, site, side, surgeon_id, team_ids, scheduled_at, venue,
+       partner_hospital_id, charges_paise, consent_document_ids, instructions)
+     VALUES ($1, 'scheduled', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '[]', $13) RETURNING *`,
+    [
+      randomUUID(), by, patient.id, input.procedure, input.site ?? null, input.side ?? null, input.surgeonId, JSON.stringify(teamIds),
+      input.scheduledAt, input.venue, input.partnerHospitalId ?? null, input.chargesPaise, input.instructions ?? null,
+    ],
+  );
+  return toSurgery(rows[0] as Record<string, unknown>);
 }

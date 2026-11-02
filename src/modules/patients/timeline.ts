@@ -40,6 +40,7 @@ export const TIMELINE_SOURCES: TimelineSource[] = [
     title: "CASE WHEN source = 'uploaded' THEN 'Prescription (uploaded)' ELSE 'Prescription' END",
   },
   { kind: 'admission', table: 'admissions', at: 'admitted_at', title: "'Admitted: ' || ward || ', bed ' || bed" },
+  { kind: 'surgery', table: 'surgeries', at: 'scheduled_at', title: "'Surgery: ' || procedure" },
 ];
 
 const NAME = /^[a-z][a-z0-9_]*$/;
