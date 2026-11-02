@@ -6,6 +6,7 @@ import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
 import { batchesByIds } from '../inventory/batches.js';
+import { UUID } from '../users/users.js';
 import type { BaseFields } from '../patients/patients.js';
 import { getPrescription } from '../prescriptions/prescriptions.js';
 import type { RxLine } from '../prescriptions/rx-checks.js';
@@ -127,4 +128,11 @@ export async function dispense(db: Queryable, input: { prescriptionId: string; l
     }
     return toDispense(rows[0] as Record<string, unknown>);
   });
+}
+
+/** #102: one dispense; 404 if there is none. */
+export async function getDispense(db: Queryable, id: string): Promise<Dispense> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM dispenses WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such dispense');
+  return toDispense(rows[0] as Record<string, unknown>);
 }

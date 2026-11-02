@@ -4,7 +4,9 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { dispense } from './dispenses.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { getPatient } from '../patients/patients.js';
+import { dispense, getDispense } from './dispenses.js';
 
 const text = (min: number, max: number) => z.string().trim().min(min).max(max);
 
@@ -40,4 +42,12 @@ export const dispensesRoutes = new Hono<AuthEnv>()
     const given = await dispense(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: given.patientId, recordType: 'dispense', recordId: given.id });
     return c.json(given, 201);
+  })
+  // #102: a clinical read, so the inactive-patient rule applies.
+  .get('/:id', requirePermission('dispense.view'), async (c) => {
+    const db = await dbOf(c);
+    const given = await getDispense(db, c.req.param('id'));
+    auditDetails(c, { patientId: given.patientId, recordType: 'dispense', recordId: given.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, given.patientId));
+    return c.json(given);
   });

@@ -120,3 +120,18 @@ describe('POST /staff/dispenses', () => {
     expect((await give({ ...body, prescriptionId: seedId('d5000000', 999) })).status).toBe(404);
   });
 });
+
+describe('GET /staff/dispenses/{id}', () => {
+  const read = (id: string, who = medical) => app.request(`/staff/dispenses/${id}`, {}, who);
+
+  it('returns the dispense; 403 for a nurse; 404 for none', async () => {
+    const rx = ((await (await app.request(`/staff/encounters/${opdEncounter}/prescriptions`, json({ lines: [paracetamol] }), doctor)).json()) as { id: string }).id;
+    const given = (await (await app.request('/staff/dispenses', json({ prescriptionId: rx, lines: [{ lineIndex: 0, drugId: paracetamol.drugId, batchId: seedId('ba000000', 3), qty: 9 }] }), medical)).json()) as { id: string };
+    const res = await read(given.id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: given.id, prescriptionId: rx, patientId: irfan, lines: [{ qty: 9 }] });
+    expect((await read(given.id, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await read(seedId('d5000000', 999))).status).toBe(404);
+    expect((await read('nope')).status).toBe(404);
+  });
+});
