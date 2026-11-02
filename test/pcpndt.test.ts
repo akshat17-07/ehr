@@ -74,3 +74,31 @@ describe('POST /staff/encounters/{id}/form-f', () => {
     expect((await write(seedId('e0000000', 999), form)).status).toBe(404);
   });
 });
+
+describe('GET /staff/mtp-register', () => {
+  const list = (query = '', who = doctor) => app.request(`/staff/mtp-register${query}`, {}, who);
+  const add = (patientId: string, admissionDate: string) =>
+    db.query(
+      `INSERT INTO mtp_register (id, status, created_by, updated_by, patient_id, admission_date, gestation_weeks, indication, opinion_doctor_ids)
+       VALUES (gen_random_uuid(), 'active', 'x', 'x', $1, $2, 9, 'Contraceptive failure', $3)`,
+      [patientId, admissionDate, JSON.stringify([seedId('a0000000', 3)])],
+    );
+
+  it('403 without an mtp.view grant for all', async () => {
+    expect((await list()).status).toBe(403);
+  });
+
+  it('newest admission first, with the patient, filtered by admission date', async () => {
+    await createGrant(db, { userId: 'dev-doctor', permission: 'mtp.view', scope: 'all', end: inAMonth(), grantorId: 'dev-admin', reason: 'MTP register keeper' });
+    await add(kavita, '2026-09-10');
+    await add(kavita, '2026-10-05');
+    const page = (await (await list()).json()) as { items: { admissionDate: string; opinionDoctorIds: string[]; patient: { id: string } }[] };
+    expect(page.items.map((e) => e.admissionDate)).toEqual(['2026-10-05', '2026-09-10']);
+    expect(page.items[0]).toMatchObject({ gestationWeeks: 9, opinionDoctorIds: [seedId('a0000000', 3)], patient: { id: kavita } });
+    const october = (await (await list('?from=2026-10-01&to=2026-10-31')).json()) as { items: unknown[] };
+    expect(october.items).toHaveLength(1);
+    const firstPage = (await (await list('?limit=1')).json()) as { nextCursor: string };
+    const second = (await (await list(`?limit=1&cursor=${firstPage.nextCursor}`)).json()) as { items: { admissionDate: string }[] };
+    expect(second.items.map((e) => e.admissionDate)).toEqual(['2026-09-10']);
+  });
+});

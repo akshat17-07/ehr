@@ -748,4 +748,20 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC form_f_created ON form_f (created_at)',
     ],
   },
+  {
+    // MTP register (api-list.md MtpEntry). opinion_doctor_ids is a JSON list of user ids.
+    id: '0048_mtp_register',
+    statements: () => [
+      ...createTable('mtp_register', [
+        'patient_id uuid NOT NULL',
+        'admission_date date NOT NULL',
+        'gestation_weeks integer NOT NULL',
+        'indication text NOT NULL',
+        'opinion_doctor_ids text NOT NULL',
+        'procedure_date date',
+        'document_id uuid',
+      ]),
+      'CREATE INDEX ASYNC mtp_register_admission ON mtp_register (admission_date, id)',
+    ],
+  },
 ];
