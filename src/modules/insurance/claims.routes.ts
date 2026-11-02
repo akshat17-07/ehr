@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { pageQuery } from '../../db/page.js';
-import { CLAIM_KINDS, CLAIM_STATUSES, createClaim, getClaim, listClaims } from './claims.js';
+import { addClaimEvent, CLAIM_KINDS, CLAIM_STATUSES, createClaim, getClaim, listClaims } from './claims.js';
 
 const newClaim = z
   .object({
@@ -24,6 +24,18 @@ const claimsQuery = pageQuery.extend({
   insurerId: z.uuid().optional(),
   overdue: z.enum(['true', 'false']).optional(),
 });
+
+const newEvent = z
+  .object({
+    status: z.enum(['submitted', 'query', 'approved', 'rejected', 'settled']),
+    note: z.string().trim().min(1).max(2000).optional(),
+    amountPaise: z.number().int().min(0).max(100_000_000_000).optional(),
+  })
+  .strict()
+  .refine((e) => (e.status !== 'approved' && e.status !== 'settled') || e.amountPaise !== undefined, {
+    message: 'needed for approved and settled',
+    path: ['amountPaise'],
+  });
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -44,4 +56,12 @@ export const claimsRoutes = new Hono<AuthEnv>()
     const claim = await getClaim(await dbOf(c), c.req.param('id'));
     auditDetails(c, { patientId: claim.patientId, recordType: 'claim', recordId: claim.id });
     return c.json(claim);
+  })
+  // #137
+  .post('/:id/events', requirePermission('claim.update'), async (c) => {
+    const input = newEvent.parse(await bodyOf(c));
+    const db = await dbOf(c);
+    const event = await addClaimEvent(db, c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: (await getClaim(db, event.claimId)).patientId, recordType: 'claim', recordId: event.claimId });
+    return c.json(event, 201);
   });

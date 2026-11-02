@@ -158,3 +158,35 @@ describe('GET /staff/claims/{id}', () => {
     expect((await app.request(`/staff/claims/${made.id}`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/claims/{id}/events', () => {
+  const step = (id: string, body: unknown, who = doctor) => post(`/staff/claims/${id}/events`, body, who);
+
+  it('walks a claim from submitted to settled, starting the IRDAI timer', async () => {
+    const made = (await (await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'cashless_preauth', amountClaimedPaise: 9000 })).json()) as { id: string };
+    const res = await step(made.id, { status: 'submitted', note: 'Pre-auth form sent to TPA' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ claimId: made.id, status: 'submitted', note: 'Pre-auth form sent to TPA', by: 'dev-doctor', at: expect.any(String) });
+    const sent = (await (await app.request(`/staff/claims/${made.id}`, {}, doctor)).json()) as { status: string; dueBy: string; events: unknown[] };
+    expect(sent.status).toBe('submitted');
+    expect(new Date(sent.dueBy).getTime() - Date.now()).toBeGreaterThan(55 * 60_000);
+    await step(made.id, { status: 'query', note: 'Asked for the X-ray' });
+    await step(made.id, { status: 'submitted' });
+    expect((await step(made.id, { status: 'approved', amountPaise: 9001 })).status).toBe(422);
+    await step(made.id, { status: 'approved', amountPaise: 8000 });
+    await step(made.id, { status: 'settled', amountPaise: 8000 });
+    const done = (await (await app.request(`/staff/claims/${made.id}`, {}, doctor)).json()) as { status: string; amountApprovedPaise: number; dueBy?: string; events: { status: string }[] };
+    expect(done).toMatchObject({ status: 'settled', amountApprovedPaise: 8000 });
+    expect(done.dueBy).toBeUndefined();
+    expect(done.events.map((e) => e.status)).toEqual(['submitted', 'query', 'submitted', 'approved', 'settled']);
+    expect(await (await step(made.id, { status: 'query' })).json()).toMatchObject({ error: 'bad_move', allowed: [] });
+  });
+
+  it('409 for a draft going straight to approved; 422 without an amount; 403 for a nurse; 404 for no claim', async () => {
+    const made = (await (await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 9000 })).json()) as { id: string };
+    expect(await (await step(made.id, { status: 'approved', amountPaise: 100 })).json()).toMatchObject({ error: 'bad_move', allowed: ['submitted'] });
+    expect((await step(made.id, { status: 'settled' })).status).toBe(422);
+    expect((await step(made.id, { status: 'submitted' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await step(seedId('c1a00000', 999), { status: 'submitted' })).status).toBe(404);
+  });
+});

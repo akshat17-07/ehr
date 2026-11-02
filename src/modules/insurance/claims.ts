@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertLinks } from '../billing/bills.js';
 import { assertPatientDocuments } from '../documents/documents.js';
@@ -146,4 +148,47 @@ export async function listClaims(db: Queryable, query: ClaimQuery, now = new Dat
   const page = await pageRows(db, { select: 'SELECT * FROM claims', where, params, orderBy: ['created_at', 'id'] }, query, (r) => toClaim(r));
   const events = await eventsOf(db, page.items.map((c) => c.id));
   return { ...page, items: page.items.map((c) => ({ ...c, events: events.get(c.id) ?? [] })) };
+}
+
+/** Which status each status may move to (typed in from the insurer's or TPA's letters and emails). */
+export const CLAIM_MOVES: Record<ClaimStatus, ClaimStatus[]> = {
+  draft: ['submitted'],
+  submitted: ['query', 'approved', 'rejected'],
+  query: ['submitted', 'approved', 'rejected'],
+  approved: ['query', 'settled'],
+  // Sent again after a rejection (with what was missing).
+  rejected: ['submitted'],
+  settled: [],
+};
+
+/**
+ * #137: moves the claim to a new status and records the step. submitted starts the IRDAI timer again;
+ * approved sets the approved amount (at most the claimed one). 409 bad_move for a move not in CLAIM_MOVES.
+ */
+export async function addClaimEvent(
+  db: Queryable,
+  id: string,
+  input: { status: Exclude<ClaimStatus, 'draft'>; note?: string; amountPaise?: number },
+  by: string,
+  now = new Date(),
+): Promise<ClaimEvent> {
+  const claim = await getClaim(db, id);
+  if (!CLAIM_MOVES[claim.status].includes(input.status)) {
+    throw new AppError(409, 'bad_move', `a ${claim.status} claim can't become ${input.status}`, { allowed: CLAIM_MOVES[claim.status] });
+  }
+  if (input.status === 'approved' && input.amountPaise! > claim.amountClaimedPaise) {
+    throw new AppError(422, 'validation_failed', `amountPaise: more than the ${claim.amountClaimedPaise} claimed`);
+  }
+  const set: Record<string, unknown> = { status: input.status };
+  if (input.status === 'submitted') set.submitted_at = now;
+  if (input.status === 'approved') set.amount_approved_paise = input.amountPaise;
+  return withTransaction(db, async (tx) => {
+    await updateRecord(tx, 'claims', { id, version: claim.version, by, set });
+    const { rows } = await tx.query(
+      `INSERT INTO claim_events (id, status, created_by, updated_by, created_at, updated_at, claim_id, to_status, note, amount_paise)
+       VALUES ($1, 'active', $2, $2, $3, $3, $4, $5, $6, $7) RETURNING *`,
+      [randomUUID(), by, now, id, input.status, input.note ?? null, input.amountPaise ?? null],
+    );
+    return toClaimEvent(rows[0] as Record<string, unknown>);
+  });
 }
