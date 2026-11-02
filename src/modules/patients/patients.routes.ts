@@ -31,6 +31,7 @@ import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
 import { addPolicy, patientPolicies } from '../insurance/policies.js';
 import { policyFields } from '../insurance/policies.routes.js';
+import { linkAgent } from '../insurance/agent-links.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -385,6 +386,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const policy = await addPolicy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: policy.patientId, recordType: 'policy', recordId: policy.id });
     return c.json(policy, 201);
+  })
+  // #139
+  .post('/:id/agent-links', requirePermission('insurance.agent_link'), async (c) => {
+    const input = z.object({ agentUserId: z.uuid(), to: z.iso.date().optional() }).strict().parse(await bodyOf(c));
+    const link = await linkAgent(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: link.patientId, recordType: 'agent_link', recordId: link.id });
+    return c.json(link, 201);
   })
   // #127
   .get('/:id/deposits', requirePermission('bill.view'), async (c) => {

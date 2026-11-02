@@ -216,3 +216,25 @@ describe('POST /staff/claims/{id}/documents', () => {
     expect((await post(`/staff/claims/${seedId('c1a00000', 999)}/documents`, { documentIds: [a] })).status).toBe(404);
   });
 });
+
+describe('POST /staff/patients/{id}/agent-links', () => {
+  const agent = seedId('a0000000', 9);
+  const sita = seedId('9a710000', 2);
+  const link = (patientId: string, body: unknown, who = doctor) => post(`/staff/patients/${patientId}/agent-links`, body, who);
+
+  it('links an insurance agent from today; a second open link is a duplicate', async () => {
+    const res = await link(sita, { agentUserId: agent, to: '2099-01-31' });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { id: string; from: string };
+    expect(made).toMatchObject({ status: 'active', patientId: sita, agentUserId: agent, to: '2099-01-31' });
+    expect(made.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(await (await link(sita, { agentUserId: agent })).json()).toMatchObject({ error: 'duplicate', agentLinkId: made.id });
+  });
+
+  it('422 for a user who is not an agent or a past end; 403 for a nurse; 404 for no patient', async () => {
+    expect((await link(irfan, { agentUserId: seedId('a0000000', 3) })).status).toBe(422);
+    expect((await link(irfan, { agentUserId: agent, to: '2020-01-01' })).status).toBe(422);
+    expect((await link(irfan, { agentUserId: agent }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await link(seedId('9a710000', 999), { agentUserId: agent })).status).toBe(404);
+  });
+});

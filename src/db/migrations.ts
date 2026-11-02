@@ -1195,4 +1195,14 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC claim_events_claim ON claim_events (claim_id, created_at)',
     ],
   },
+  {
+    // Which insurance agent may see which patient's insurance section (api-list.md AgentLink), from_date to to_date
+    // (none: until ended). status: active or ended.
+    id: '0080_agent_links',
+    statements: () => [
+      ...createTable('agent_links', ['patient_id uuid NOT NULL', 'agent_user_id uuid NOT NULL', 'from_date date NOT NULL', 'to_date date']),
+      'CREATE INDEX ASYNC agent_links_agent ON agent_links (agent_user_id, patient_id)',
+      'CREATE INDEX ASYNC agent_links_patient ON agent_links (patient_id, created_at)',
+    ],
+  },
 ];
