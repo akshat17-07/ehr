@@ -11,6 +11,8 @@ import { assertOpen, getEncounter } from './encounters.js';
 
 export const NOTE_KINDS = ['progress', 'consult', 'procedure', 'nursing'] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
+export const SHIFTS = ['morning', 'evening', 'night'] as const;
+export type Shift = (typeof SHIFTS)[number];
 export const NOTE_STATUSES = ['draft', 'signed'] as const;
 export type NoteStatus = (typeof NOTE_STATUSES)[number];
 
@@ -28,6 +30,8 @@ export interface Note extends Omit<BaseFields, 'status'> {
   text: string;
   signedAt?: string;
   signedBy?: string;
+  /** Nursing notes only. */
+  shift?: Shift;
   addenda: Addendum[];
 }
 
@@ -40,6 +44,7 @@ export function toNote(r: Record<string, unknown>): Note {
     kind: r.kind as NoteKind,
     text: String(r.text),
     ...(r.signed_at instanceof Date && { signedAt: r.signed_at.toISOString(), signedBy: String(r.signed_by) }),
+    ...(r.shift != null && { shift: r.shift as Shift }),
     addenda: JSON.parse(String(r.addenda ?? '[]')) as Addendum[],
   };
 }
@@ -113,4 +118,22 @@ export async function addAddendum(db: Queryable, id: string, text: string, by: s
   const addenda: Addendum[] = [...note.addenda, { text, by, at: now.toISOString() }];
   await updateRecord(db, 'notes', { id, version: note.version, by, set: { addenda: JSON.stringify(addenda) } });
   return getNote(db, id);
+}
+
+/** #49: a nursing note, signed as it is saved (nurses chart as they go; corrections are addenda). */
+export async function addNursingNote(
+  db: Queryable,
+  encounterId: string,
+  input: { text: string; shift?: Shift },
+  by: string,
+  now = new Date(),
+): Promise<Note> {
+  const encounter = await getEncounter(db, encounterId);
+  assertOpen(encounter);
+  const { rows } = await db.query(
+    `INSERT INTO notes (id, status, created_by, updated_by, encounter_id, patient_id, kind, text, addenda, signed_at, signed_by, shift)
+     VALUES ($1, 'signed', $2, $2, $3, $4, 'nursing', $5, '[]', $6, $2, $7) RETURNING *`,
+    [randomUUID(), by, encounter.id, encounter.patientId, input.text, now, input.shift ?? null],
+  );
+  return toNote(rows[0] as Record<string, unknown>);
 }

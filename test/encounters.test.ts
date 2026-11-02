@@ -390,3 +390,26 @@ describe('POST /staff/notes/{id}/addenda', () => {
     expect((await addend(id, { text: 'x' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/encounters/{id}/nursing-notes', () => {
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const chart = (id: string, body: unknown, who = nurse) =>
+    app.request(`/staff/encounters/${id}/nursing-notes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('saves a signed nursing note with its shift; it does not keep the encounter open', async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await chart(id, { text: 'IV line checked, patient resting.', shift: 'night' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ kind: 'nursing', status: 'signed', signedBy: 'dev-nurse', shift: 'night', encounterId: id });
+    expect((await chart(id, { text: 'Vitals stable.' })).status).toBe(201);
+    expect((await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor)).status).toBe(200);
+    expect((await chart(id, { text: 'late' })).status).toBe(409);
+  });
+
+  it('422 for an unknown shift or empty text; 403 for reception', async () => {
+    const id = await open(seedId('9a710000', 2));
+    expect((await chart(id, { text: 'x', shift: 'noon' })).status).toBe(422);
+    expect((await chart(id, { text: '' })).status).toBe(422);
+    expect((await chart(id, { text: 'x' }, reception)).status).toBe(403);
+  });
+});

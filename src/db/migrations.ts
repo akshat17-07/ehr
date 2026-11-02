@@ -538,4 +538,9 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC notes_patient ON notes (patient_id, created_at)',
     ],
   },
+  {
+    // The ward shift a nursing note was written in (#49): morning, evening or night.
+    id: '0035_notes_shift',
+    statements: () => ['ALTER TABLE notes ADD COLUMN shift text'],
+  },
 ];
