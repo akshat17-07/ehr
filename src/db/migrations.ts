@@ -1057,4 +1057,33 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC purchase_orders_supplier ON purchase_orders (supplier_id)',
     ],
   },
+  {
+    // Patient bills (api-list.md Bill); lines is JSON. Money in paise. series: tax_invoice / bill_of_supply.
+    // status: draft / final / paid / part_paid / void.
+    id: '0070_bills',
+    statements: () => [
+      ...createTable('bills', [
+        'patient_id uuid NOT NULL',
+        'encounter_id uuid',
+        'admission_id uuid',
+        'series text NOT NULL',
+        'number text',
+        'lines text NOT NULL',
+        'subtotal_paise bigint NOT NULL',
+        'gst_paise bigint NOT NULL',
+        'discount_paise bigint NOT NULL DEFAULT 0',
+        'total_paise bigint NOT NULL',
+        'paid_paise bigint NOT NULL DEFAULT 0',
+        'finalised_at timestamptz',
+      ]),
+      'CREATE INDEX ASYNC bills_patient ON bills (patient_id, created_at)',
+      'CREATE INDEX ASYNC bills_created ON bills (created_at)',
+      'CREATE INDEX ASYNC bills_number ON bills (number)',
+    ],
+  },
+  {
+    // An IPD pharmacy bill (#104) is charged on the patient's bill: this is that bill.
+    id: '0071_pharmacy_bills_bill',
+    statements: () => ['ALTER TABLE pharmacy_bills ADD COLUMN bill_id uuid'],
+  },
 ];

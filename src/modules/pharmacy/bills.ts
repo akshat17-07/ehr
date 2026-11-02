@@ -58,7 +58,7 @@ export function financialYear(date: string): string {
 }
 
 /** GST inside an MRP-inclusive amount. */
-const gstInside = (amountPaise: number, rate: number) => Math.round((amountPaise * rate) / (100 + rate));
+export const gstInside = (amountPaise: number, rate: number) => Math.round((amountPaise * rate) / (100 + rate));
 
 export interface NewPharmacyBill {
   patientId: string;
