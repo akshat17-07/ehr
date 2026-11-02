@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
-import { updateRecord } from '../../db/records.js';
+import { updateRecord, voidRecord } from '../../db/records.js';
+import { withTransaction } from '../../db/transaction.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { LINK_SECONDS, type SignGetUrl } from '../../files/signed-url.js';
 import { UPLOAD_SECONDS, type FileUploads } from '../../files/uploads.js';
@@ -27,6 +28,8 @@ export interface Document extends Omit<BaseFields, 'status'> {
   sizeBytes: number;
   sha256: string;
   uploadedAt?: string;
+  /** On a copy made by #99: the misfiled original. */
+  linkedFrom?: string;
 }
 
 export function toDocument(r: Record<string, unknown>): Document {
@@ -40,6 +43,7 @@ export function toDocument(r: Record<string, unknown>): Document {
     sizeBytes: Number(r.size_bytes),
     sha256: String(r.sha256),
     ...(r.uploaded_at != null && { uploadedAt: (r.uploaded_at as Date).toISOString() }),
+    ...(r.linked_from != null && { linkedFrom: String(r.linked_from) }),
   };
 }
 
@@ -176,4 +180,42 @@ export async function retagDocument(db: Queryable, id: string, input: { version:
   const document = await getDocument(db, id);
   if (document.status === 'misfiled') throw new AppError(409, 'misfiled', 'this document is marked misfiled');
   return toDocument(await updateRecord(db, 'documents', { id, version: input.version, by, set: { type: input.type } }));
+}
+
+/**
+ * #99: a document filed to the wrong patient. It is marked misfiled with the reason (never deleted: the file stays,
+ * Object-Locked). With correctPatientId, the right patient gets a copy pointing at the same file, linked to the
+ * original; none if they already have that file.
+ */
+export async function misfileDocument(
+  db: Queryable,
+  id: string,
+  input: { reason: string; correctPatientId?: string },
+  by: string,
+): Promise<Document> {
+  const row = await documentRow(db, id);
+  const document = toDocument(row);
+  if (document.status === 'misfiled') throw new AppError(409, 'misfiled', 'this document is already marked misfiled');
+  const correct = input.correctPatientId;
+  if (correct) {
+    if (correct === document.patientId) throw new AppError(422, 'validation_failed', 'correctPatientId is the patient it is filed to');
+    if (document.status !== 'ready') throw new AppError(409, 'not_uploaded', 'the upload is not complete: nothing to copy');
+    const { rows } = await db.query('SELECT id FROM patients WHERE id = $1', [correct]);
+    if (!rows[0]) throw new AppError(422, 'validation_failed', 'correctPatientId: no such patient');
+  }
+  return withTransaction(db, async (tx) => {
+    const misfiled = await voidRecord(tx, 'documents', { id, version: document.version, by, reason: input.reason, status: 'misfiled' });
+    if (correct) {
+      const { rows: same } = await tx.query("SELECT id FROM documents WHERE patient_id = $1 AND sha256 = $2 AND status = 'ready'", [correct, document.sha256]);
+      if (!same[0]) {
+        await tx.query(
+          `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key, uploaded_at,
+             linked_from)
+           VALUES ($1, 'ready', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [randomUUID(), by, correct, document.type, document.fileName, document.mime, document.sizeBytes, document.sha256, row.s3_key, row.uploaded_at, id],
+        );
+      }
+    }
+    return toDocument(misfiled);
+  });
 }

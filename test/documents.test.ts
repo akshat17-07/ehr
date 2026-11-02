@@ -321,3 +321,48 @@ describe('POST /staff/documents/{id}/retag', () => {
     expect((await retag(seedId('d0c00000', 999), { version: 1, type: 'imaging' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/documents/{id}/misfile', () => {
+  const irfan = seedId('9a710000', 3);
+  const misfile = (id: string, body: unknown, who = doctor) => app.request(`/staff/documents/${id}/misfile`, json(body), who);
+  const add = async (status: string, sha = Math.random().toString(16).slice(2).padEnd(64, '0'), patientId = ramesh) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key, uploaded_at)
+       VALUES (gen_random_uuid(), $1, 'x', 'x', $2, 'lab_report', 'cbc.pdf', 'application/pdf', 1000, $3, 'patients/r/key', now()) RETURNING id`,
+      [status, patientId, sha],
+    )).rows[0]?.id);
+  const copiesOf = async (id: string) => (await db.query('SELECT patient_id, status, s3_key FROM documents WHERE linked_from = $1', [id])).rows;
+
+  it('marks it misfiled with the reason; the right patient gets a linked copy of the same file', async () => {
+    const id = await add('ready');
+    const res = await misfile(id, { reason: 'Irfan’s CBC, filed to Ramesh', correctPatientId: irfan });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, status: 'misfiled', patientId: ramesh, voidReason: 'Irfan’s CBC, filed to Ramesh', voidedBy: 'dev-doctor' });
+    expect(await copiesOf(id)).toEqual([{ patient_id: irfan, status: 'ready', s3_key: 'patients/r/key' }]);
+    const list = (await (await app.request(`/staff/patients/${irfan}/documents?type=lab_report`, {}, doctor)).json()) as { items: { linkedFrom?: string }[] };
+    expect(list.items.map((d) => d.linkedFrom)).toContain(id);
+    expect(await (await misfile(id, { reason: 'again' })).json()).toMatchObject({ error: 'misfiled' });
+  });
+
+  it('no copy without correctPatientId, or if the right patient already has that file', async () => {
+    const plain = await add('ready');
+    expect((await misfile(plain, { reason: 'not this patient’s' })).status).toBe(200);
+    expect(await copiesOf(plain)).toEqual([]);
+    const sha = 'ab'.repeat(32);
+    await add('ready', sha, irfan);
+    const dup = await add('ready', sha);
+    expect((await misfile(dup, { reason: 'Irfan’s', correctPatientId: irfan })).status).toBe(200);
+    expect(await copiesOf(dup)).toEqual([]);
+  });
+
+  it('422 for the same or an unknown patient or no reason; 409 to copy an unfinished upload; 403 for reception; 404 for none', async () => {
+    const id = await add('ready');
+    expect((await misfile(id, { reason: 'x1x', correctPatientId: ramesh })).status).toBe(422);
+    expect((await misfile(id, { reason: 'x1x', correctPatientId: seedId('9a710000', 999) })).status).toBe(422);
+    expect((await misfile(id, {})).status).toBe(422);
+    expect((await misfile(id, { reason: 'x1x' }, reception)).status).toBe(403);
+    expect(await (await misfile(await add('pending'), { reason: 'x1x', correctPatientId: irfan })).json()).toMatchObject({ error: 'not_uploaded' });
+    expect((await misfile(seedId('d0c00000', 999), { reason: 'x1x' })).status).toBe(404);
+    expect((await db.query('SELECT status FROM documents WHERE id = $1', [id])).rows[0]).toEqual({ status: 'ready' });
+  });
+});

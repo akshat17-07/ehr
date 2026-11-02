@@ -7,7 +7,7 @@ import { dbOf, signerOf, uploadsOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, documentViewUrl, MAX_DOCUMENT_BYTES, retagDocument, startUpload } from './documents.js';
+import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, documentViewUrl, MAX_DOCUMENT_BYTES, misfileDocument, retagDocument, startUpload } from './documents.js';
 
 const newUpload = z
   .object({
@@ -21,6 +21,8 @@ const newUpload = z
   .strict();
 
 const retag = z.object({ version: z.number().int().min(1), type: z.enum(DOCUMENT_TYPES) }).strict();
+
+const misfile = z.object({ reason: z.string().trim().min(3).max(500), correctPatientId: z.uuid().optional() }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -53,5 +55,12 @@ export const documentsRoutes = new Hono<AuthEnv>()
     const input = retag.parse(await bodyOf(c));
     const document = await retagDocument(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
+    return c.json(document);
+  })
+  // #99
+  .post('/:id/misfile', requirePermission('document.misfile'), async (c) => {
+    const input = misfile.parse(await bodyOf(c));
+    const document = await misfileDocument(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id, reason: input.reason });
     return c.json(document);
   });
