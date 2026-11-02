@@ -12,7 +12,7 @@ import { listTypePermissions, saveTypePermissions } from '../../permissions/type
 import { checkBundles, getUser } from '../users/users.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
-import { listGrantRules } from './grant-rules.js';
+import { addGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -50,6 +50,16 @@ const bundleChange = z
   .object({ version: z.number().int().min(1), name: bundleName.optional(), permissions: z.array(z.string()).min(1).max(100).optional(), reason: reason.optional() })
   .strict();
 
+const newGrantRule = z
+  .object({
+    grantorUserId: z.string().uuid(),
+    mayGrant: z.array(z.string()).min(1).max(100),
+    scope: z.enum(GRANT_RULE_SCOPES),
+    departmentId: z.string().uuid().optional(),
+    maxDays: z.number().int().min(1).max(365),
+  })
+  .strict();
+
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
   // #164: every active bundle, by name.
   .get('/bundles', requirePermission('grant.view'), async (c) => c.json(await listBundles(await dbOf(c))))
@@ -70,6 +80,13 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
 
   // #167
   .get('/grant-rules', requirePermission('grant.view'), async (c) => c.json(await listGrantRules(await dbOf(c), c.req.query('grantorUserId'))))
+  // #168 (Admin only)
+  .post('/grant-rules', requirePermission('grant_rule.manage'), async (c) => {
+    const body = newGrantRule.parse(await c.req.json().catch(() => undefined));
+    const rule = await addGrantRule(await dbOf(c), body, userOf(c).sub);
+    auditDetails(c, { recordType: 'grant_rule', recordId: rule.id });
+    return c.json(rule, 201);
+  })
 
   // #305: the whole catalog, group by group, with en/hi text and whether only an Admin may give it.
   .get('/permissions', requirePermission('user.permissions'), (c) => c.json(PERMISSIONS))

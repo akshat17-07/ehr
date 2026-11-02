@@ -5,6 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { accountsOf, dbOf, userOf } from '../../middleware/context.js';
 import { STAFF_TYPES } from '../../permissions/defaults.js';
 import { requirePermission } from '../../permissions/check.js';
+import { endGrantRules } from '../permissions/grant-rules.js';
 import {
   createUser,
   deactivateUser,
@@ -116,5 +117,8 @@ export const usersRoutes = new Hono<AuthEnv>()
   })
   .post('/:id/demote-head-doctor', requirePermission('role.promote_head_doctor'), async (c) => {
     const reason = await reasonOf(c);
-    return c.json(await demoteHeadDoctor(await dbOf(c), accountsOf(c), c.req.param('id'), userOf(c).sub, reason));
+    const db = await dbOf(c);
+    const user = await demoteHeadDoctor(db, accountsOf(c), c.req.param('id'), userOf(c).sub, reason);
+    await endGrantRules(db, user.id, userOf(c).sub, reason);
+    return c.json(user);
   });

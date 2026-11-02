@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
-import type { Permission } from '../../permissions/catalog.js';
-import { UUID } from '../users/users.js';
+import { isPermission, PERMISSIONS, type Permission } from '../../permissions/catalog.js';
+import { checkDepartments, UUID } from '../users/users.js';
 
 // Grant rules: what a Head Doctor may grant, where and for how long (api-list.md GrantRule, section 4).
 // An Admin sets them (#168/#169); a grant (#171) must fit one of the grantor's active rules.
@@ -41,4 +43,65 @@ export async function listGrantRules(db: Queryable, grantorUserId?: string): Pro
     grantorUserId ? [grantorUserId] : [],
   );
   return rows.map(toGrantRule);
+}
+
+const ADMIN_ONLY = new Set<string>(PERMISSIONS.filter((p) => p.adminOnly).map((p) => p.key));
+
+function invalid(message: string): never {
+  throw new AppError(422, 'invalid_input', message);
+}
+
+/** 422 for an unknown permission, role.* or user.* (#168), or one only an Admin may give. Sorted, without repeats. */
+export function checkMayGrant(keys: readonly string[]): Permission[] {
+  const issues = keys.flatMap((key) =>
+    !isPermission(key)
+      ? [`unknown permission: ${key}`]
+      : /^(role|user)\./.test(key)
+        ? [`${key} can't be granted`]
+        : ADMIN_ONLY.has(key)
+          ? [`only an Admin may give ${key}`]
+          : [],
+  );
+  if (issues.length) invalid(issues.join('; '));
+  return [...new Set(keys)].sort() as Permission[];
+}
+
+/** department scope needs an active department; all scope takes none. */
+async function checkScope(db: Queryable, scope: GrantRuleScope, departmentId: string | undefined): Promise<void> {
+  if (scope === 'all') {
+    if (departmentId !== undefined) invalid('departmentId is only for department scope');
+    return;
+  }
+  if (departmentId === undefined) invalid('department scope needs a departmentId');
+  await checkDepartments(db, [departmentId]);
+}
+
+export interface NewGrantRule {
+  grantorUserId: string;
+  mayGrant: string[];
+  scope: GrantRuleScope;
+  departmentId?: string;
+  maxDays: number;
+}
+
+/** #168: 422 unless the grantor is an active Head Doctor (an Admin needs no rule). */
+export async function addGrantRule(db: Queryable, input: NewGrantRule, by: string): Promise<GrantRule> {
+  const { rows: users } = await db.query('SELECT type, active FROM users WHERE id = $1', [input.grantorUserId]);
+  if (users[0]?.type !== 'head_doctor' || users[0].active !== true) invalid('grantorUserId must be an active Head Doctor');
+  const mayGrant = checkMayGrant(input.mayGrant);
+  await checkScope(db, input.scope, input.departmentId);
+  const { rows } = await db.query(
+    `INSERT INTO grant_rules (id, status, created_by, updated_by, grantor_id, may_grant, scope, department_id, max_days)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [randomUUID(), by, input.grantorUserId, JSON.stringify(mayGrant), input.scope, input.departmentId ?? null, input.maxDays],
+  );
+  return toGrantRule(rows[0] as Record<string, unknown>);
+}
+
+/** #162: a Head Doctor who goes back to doctor keeps no rules. Ended rules stay, with the reason in their history. */
+export async function endGrantRules(db: Queryable, grantorUserId: string, by: string, reason: string): Promise<void> {
+  const { rows } = await db.query("SELECT id, version FROM grant_rules WHERE grantor_id = $1 AND status = 'active'", [grantorUserId]);
+  for (const row of rows) {
+    await updateRecord(db, 'grant_rules', { id: String(row.id), version: Number(row.version), by, set: { status: 'ended' }, reason });
+  }
 }
