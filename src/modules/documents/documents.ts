@@ -170,3 +170,10 @@ export async function documentViewUrl(
     expiresAt: new Date(now.getTime() + LINK_SECONDS * 1000).toISOString(),
   };
 }
+
+/** #98: fix a document's type (a lab report filed as "other"); 409 once it is marked misfiled. */
+export async function retagDocument(db: Queryable, id: string, input: { version: number; type: DocumentType }, by: string): Promise<Document> {
+  const document = await getDocument(db, id);
+  if (document.status === 'misfiled') throw new AppError(409, 'misfiled', 'this document is marked misfiled');
+  return toDocument(await updateRecord(db, 'documents', { id, version: input.version, by, set: { type: input.type } }));
+}

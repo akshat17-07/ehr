@@ -294,3 +294,30 @@ describe('GET /staff/documents/{id}/view-url', () => {
     expect((await view(seedId('d0c00000', 999))).status).toBe(404);
   });
 });
+
+describe('POST /staff/documents/{id}/retag', () => {
+  const retag = (id: string, body: unknown, who = doctor) => app.request(`/staff/documents/${id}/retag`, json(body), who);
+  const add = async (status: string) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key)
+       VALUES (gen_random_uuid(), $1, 'x', 'x', $2, 'other', 'f.pdf', 'application/pdf', 1000, md5(random()::text), 'k') RETURNING id`,
+      [status, ramesh],
+    )).rows[0]?.id);
+
+  it('changes the type, kept in the history', async () => {
+    const id = await add('ready');
+    const res = await retag(id, { version: 1, type: 'lab_report' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, type: 'lab_report', version: 2, updatedBy: 'dev-doctor' });
+    expect(JSON.parse(String((await db.query('SELECT data FROM documents_versions WHERE record_id = $1', [id])).rows[0]?.data))).toMatchObject({ type: 'other' });
+  });
+
+  it('409 for a stale version or a misfiled document; 422 for a bad type; 403 for reception; 404 for none', async () => {
+    const id = await add('ready');
+    expect((await retag(id, { version: 5, type: 'imaging' })).status).toBe(409);
+    expect((await retag(id, { version: 1, type: 'selfie' })).status).toBe(422);
+    expect((await retag(id, { version: 1, type: 'imaging' }, reception)).status).toBe(403);
+    expect(await (await retag(await add('misfiled'), { version: 1, type: 'imaging' })).json()).toMatchObject({ error: 'misfiled' });
+    expect((await retag(seedId('d0c00000', 999), { version: 1, type: 'imaging' })).status).toBe(404);
+  });
+});

@@ -7,7 +7,7 @@ import { dbOf, signerOf, uploadsOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, documentViewUrl, MAX_DOCUMENT_BYTES, startUpload } from './documents.js';
+import { completeUpload, DOCUMENT_MIMES, DOCUMENT_TYPES, documentViewUrl, MAX_DOCUMENT_BYTES, retagDocument, startUpload } from './documents.js';
 
 const newUpload = z
   .object({
@@ -19,6 +19,8 @@ const newUpload = z
     sha256: z.string().toLowerCase().regex(/^[0-9a-f]{64}$/, '64 hex characters'),
   })
   .strict();
+
+const retag = z.object({ version: z.number().int().min(1), type: z.enum(DOCUMENT_TYPES) }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -45,4 +47,11 @@ export const documentsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, document.patientId));
     return c.json(link);
+  })
+  // #98
+  .post('/:id/retag', requirePermission('document.upload'), async (c) => {
+    const input = retag.parse(await bodyOf(c));
+    const document = await retagDocument(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
+    return c.json(document);
   });
