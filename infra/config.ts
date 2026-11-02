@@ -12,6 +12,8 @@ export interface StageConfig {
   backupAccountId?: string;
   /** GitHub repo of the website (`owner/name`). Its main branch may upload the website, nothing else. */
   frontendRepo: string;
+  /** Sender of record-copy emails. Verify it in SES (ap-south-1) and ask AWS for production access first. */
+  mailFrom?: string;
 }
 
 // Values come from `cdk.json` context or `-c key=value` on the command line.
@@ -27,6 +29,7 @@ export function readConfig(app: App): StageConfig {
     alertEmail: ctx('alertEmail'),
     backupAccountId: ctx('backupAccountId'),
     frontendRepo: ctx('frontendRepo') ?? 'akshat17-07/ehr-frontend',
+    mailFrom: ctx('mailFrom'),
   };
 }
 

@@ -1,7 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { requireEnv } from '../../config/env.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
+import { withTransaction } from '../../db/transaction.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import type { ExportFiles } from '../../files/exports.js';
+import type { Mailer } from '../../mail/mailer.js';
+import { getHospital } from '../reference/hospital.js';
+import { UUID } from '../users/users.js';
+import { recordCopyHtml } from './record-copy.js';
 import { AppError } from '../../middleware/errors.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 
@@ -94,4 +102,57 @@ export async function createRecordRequest(
     [randomUUID(), by, patient.id, requestedBy, input.scope, JSON.stringify(encounterIds), input.includeSensitive ?? false, input.email],
   );
   return toRecordRequest(rows[0] as Record<string, unknown>);
+}
+
+/** 404 for no request (or not a UUID). */
+export async function getRecordRequest(db: Queryable, id: string): Promise<RecordRequest> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM record_requests WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such record request');
+  return toRecordRequest(rows[0] as Record<string, unknown>);
+}
+
+/** How long a share link works. */
+export const SHARE_LINK_DAYS = 7;
+
+export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+
+/**
+ * #147: builds the copy, keeps it in the exports bucket and emails a share link that works for 7 days (opening it
+ * also needs a one-time code sent to the same email, #274 / #275). 409 not_pending unless pending. The email is sent
+ * inside the transaction, so if it fails nothing is saved and the request stays pending.
+ */
+export async function fulfilRecordRequest(
+  db: Queryable,
+  id: string,
+  deps: { exportFiles: ExportFiles; mailer: Mailer },
+  by: string,
+  now = new Date(),
+): Promise<RecordRequest> {
+  const request = await getRecordRequest(db, id);
+  if (request.status !== 'pending') throw new AppError(409, 'not_pending', `this request is ${request.status}`);
+  const shareUrl = requireEnv('SHARE_URL');
+  const key = `record-copies/${request.id}/${randomUUID()}.html`;
+  await deps.exportFiles.put(key, await recordCopyHtml(db, request, now), 'text/html; charset=utf-8');
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(now.getTime() + SHARE_LINK_DAYS * 86_400_000);
+  const hospital = await getHospital(db);
+  await withTransaction(db, async (tx) => {
+    await tx.query(
+      `INSERT INTO share_links (id, status, created_by, updated_by, record_request_id, patient_id, token_hash, s3_key, email, expires_at)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8)`,
+      [randomUUID(), by, request.id, request.patientId, tokenHash(token), key, request.email, expiresAt],
+    );
+    await updateRecord(tx, 'record_requests', { id: request.id, version: request.version, by, set: { status: 'fulfilled', share_link_expires_at: expiresAt } });
+    await deps.mailer.send({
+      to: request.email,
+      subject: `${hospital.name}: your record copy`,
+      text: [
+        `Your record copy from ${hospital.name} is ready.`,
+        `Open it here: ${shareUrl}${token}`,
+        `The link works for ${SHARE_LINK_DAYS} days. To open it you will get a one-time code at this email address.`,
+        `If you did not ask for this, call ${hospital.phone}.`,
+      ].join('\n\n'),
+    });
+  });
+  return getRecordRequest(db, request.id);
 }

@@ -1256,4 +1256,26 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC record_requests_patient ON record_requests (patient_id, created_at)',
     ],
   },
+  {
+    // A record copy shared by link (api-list.md 9.3). Only the SHA-256 of the token is kept. The copy itself is in
+    // the exports bucket (s3_key). otp_*: the one-time code for #274 / #275 (hash, expiry, sends this hour as a JSON
+    // list of times, wrong tries).
+    id: '0084_share_links',
+    statements: () => [
+      ...createTable('share_links', [
+        'record_request_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'token_hash text NOT NULL',
+        's3_key text NOT NULL',
+        'email text NOT NULL',
+        'expires_at timestamptz NOT NULL',
+        'otp_hash text',
+        'otp_expires_at timestamptz',
+        "otp_sends text NOT NULL DEFAULT '[]'",
+        'otp_wrong_tries integer NOT NULL DEFAULT 0',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC share_links_token ON share_links (token_hash)',
+      'CREATE INDEX ASYNC share_links_request ON share_links (record_request_id)',
+    ],
+  },
 ];

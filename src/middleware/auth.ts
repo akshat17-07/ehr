@@ -4,7 +4,9 @@ import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
 import type { Queryable } from '../db/migrate.js';
 import type { SignGetUrl } from '../files/signed-url.js';
+import type { ExportFiles } from '../files/exports.js';
 import type { FileUploads } from '../files/uploads.js';
+import type { Mailer } from '../mail/mailer.js';
 import type { StaffAccounts } from '../identity/staff-accounts.js';
 import type { UserPermissions } from '../permissions/check.js';
 import type { AuditDetails } from './audit.js';
@@ -42,6 +44,10 @@ export type AuthEnv = {
     uploads?: FileUploads;
     /** Cognito staff accounts, set by createApp. */
     staffAccounts?: StaffAccounts;
+    /** Writes to the exports bucket, set by createApp. */
+    exportFiles?: ExportFiles;
+    /** Sends email, set by createApp. */
+    mailer?: Mailer;
   };
 };
 

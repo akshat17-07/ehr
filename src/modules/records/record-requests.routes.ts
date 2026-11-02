@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, userOf } from '../../middleware/context.js';
+import { dbOf, exportsOf, mailerOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createRecordRequest, listRecordRequests, RECORD_REQUEST_STATUSES, RECORD_SCOPES } from './record-requests.js';
+import { createRecordRequest, fulfilRecordRequest, listRecordRequests, RECORD_REQUEST_STATUSES, RECORD_SCOPES } from './record-requests.js';
 
 const listQuery = pageQuery.extend({ status: z.enum(RECORD_REQUEST_STATUSES).optional(), overdue: z.enum(['true', 'false']).optional() }).strict();
 
@@ -32,4 +32,10 @@ export const recordRequestsRoutes = new Hono<AuthEnv>()
     const request = await createRecordRequest(await dbOf(c), input, 'counter', userOf(c).sub);
     auditDetails(c, { patientId: request.patientId, recordType: 'record_request', recordId: request.id });
     return c.json(request, 201);
+  })
+  // #147
+  .post('/:id/fulfil', requirePermission('records.release'), async (c) => {
+    const request = await fulfilRecordRequest(await dbOf(c), c.req.param('id'), { exportFiles: exportsOf(c), mailer: mailerOf(c) }, userOf(c).sub);
+    auditDetails(c, { action: 'print', patientId: request.patientId, recordType: 'record_request', recordId: request.id });
+    return c.json(request);
   });

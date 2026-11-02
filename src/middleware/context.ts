@@ -1,7 +1,9 @@
 import type { Context } from 'hono';
 import type { Queryable } from '../db/migrate.js';
 import { signGetUrl, type SignGetUrl } from '../files/signed-url.js';
+import { s3Exports, type ExportFiles } from '../files/exports.js';
 import { s3Uploads, type FileUploads } from '../files/uploads.js';
+import { sesMailer, type Mailer } from '../mail/mailer.js';
 import { cognitoStaffAccounts, type StaffAccounts } from '../identity/staff-accounts.js';
 import type { AuthEnv, CurrentUser } from './auth.js';
 import { AppError } from './errors.js';
@@ -20,6 +22,14 @@ export function signerOf(c: Context<AuthEnv>): SignGetUrl {
 
 export function uploadsOf(c: Context<AuthEnv>): FileUploads {
   return c.get('uploads') ?? s3Uploads;
+}
+
+export function exportsOf(c: Context<AuthEnv>): ExportFiles {
+  return c.get('exportFiles') ?? s3Exports;
+}
+
+export function mailerOf(c: Context<AuthEnv>): Mailer {
+  return c.get('mailer') ?? sesMailer;
 }
 
 export function accountsOf(c: Context<AuthEnv>): StaffAccounts {

@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as apigw from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -59,6 +59,9 @@ export class Api extends Construct {
         PATIENT_POOL_ID: props.auth.patient.pool.userPoolId,
         FILES_BUCKET: props.files.bucket.bucketName,
         EXPORTS_BUCKET: props.files.exportsBucket.bucketName,
+        // The website is the first allowed origin; its /share page opens record-copy links.
+        SHARE_URL: `${props.allowedOrigins[0]}/share/`,
+        ...(config.mailFrom ? { MAIL_FROM: config.mailFrom } : {}),
         ...(config.backupAccountId
           ? { BACKUP_BUCKET: names.backupBucket(config.stage, config.backupAccountId) }
           : {}),
@@ -66,6 +69,10 @@ export class Api extends Construct {
     });
     props.database.grantConnect(this.role);
     props.files.grantPutAndRead(this.role);
+    // Record-copy share links and their one-time codes (#147, #274), from this account's SES identities only.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [`arn:aws:ses:${Stack.of(this).region}:${Stack.of(this).account}:identity/*`] }),
+    );
     // Staff accounts are made and disabled by the API (#154, #158); never deleted, so no AdminDeleteUser.
     props.auth.staff.pool.grant(
       this.role,

@@ -13,7 +13,9 @@ import {
 import { getDb } from './db/client.js';
 import type { Queryable } from './db/migrate.js';
 import { signGetUrl, type SignGetUrl } from './files/signed-url.js';
+import { s3Exports, type ExportFiles } from './files/exports.js';
 import { s3Uploads, type FileUploads } from './files/uploads.js';
+import { sesMailer, type Mailer } from './mail/mailer.js';
 import { cognitoStaffAccounts, type StaffAccounts } from './identity/staff-accounts.js';
 import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
@@ -70,9 +72,20 @@ export interface AppDeps {
   uploads?: FileUploads;
   /** Cognito staff accounts (tests pass a fake). */
   staffAccounts?: StaffAccounts;
+  /** The exports bucket (tests pass a fake). */
+  exportFiles?: ExportFiles;
+  /** Email (tests pass a fake). */
+  mailer?: Mailer;
 }
 
-export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Uploads, staffAccounts = cognitoStaffAccounts }: AppDeps = {}) {
+export function createApp({
+  db = getDb,
+  signUrl = signGetUrl,
+  uploads = s3Uploads,
+  staffAccounts = cognitoStaffAccounts,
+  exportFiles = s3Exports,
+  mailer = sesMailer,
+}: AppDeps = {}) {
   const staff = new Hono<AuthEnv>()
     .use(requireUser('staff', WORKFORCE_GROUPS))
     .route('/me', meRoutes)
@@ -129,6 +142,8 @@ export function createApp({ db = getDb, signUrl = signGetUrl, uploads = s3Upload
       c.set('signGetUrl', signUrl);
       c.set('uploads', uploads);
       c.set('staffAccounts', staffAccounts);
+      c.set('exportFiles', exportFiles);
+      c.set('mailer', mailer);
       await next();
     })
     .use(auditRequests(db))
