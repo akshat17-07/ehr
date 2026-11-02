@@ -114,7 +114,7 @@ describe('GET /staff/surgeries/{id}', () => {
   it('returns the surgery with its implants', async () => {
     const planned = await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Total knee replacement', side: 'right', surgeonId, scheduledAt: new Date(Date.now() + 86_400_000).toISOString(), venue: 'own', chargesPaise: 15000000 }), doctor);
     const { id } = (await planned.json()) as { id: string };
-    expect(await (await get(id)).json()).toMatchObject({ id, procedure: 'Total knee replacement', implants: [] });
+    expect(await (await get(id)).json()).toMatchObject({ id, procedure: 'Total knee replacement', implants: [], venuePayments: [] });
     await app.request(`/staff/surgeries/${id}/implants`, json({ name: 'Knee prosthesis', batchNo: 'TK-77', mrpPaise: 9000000 }), doctor);
     expect(await (await get(id)).json()).toMatchObject({ implants: [{ name: 'Knee prosthesis', batchNo: 'TK-77', surgeryId: id }] });
   });
@@ -227,5 +227,32 @@ describe('POST /staff/surgeries/{id}/op-note', () => {
     expect((await write(id, { procedureDone: 'x' })).status).toBe(422);
     expect((await write(id, note, nurse)).status).toBe(403);
     expect((await write(seedId('5e000000', 999), note)).status).toBe(404);
+  });
+});
+
+describe('POST /staff/surgeries/{id}/venue-payments', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const pay = (id: string, body: unknown, who = doctor) => app.request(`/staff/surgeries/${id}/venue-payments`, json(body), who);
+  const partner = seedId('9a000000', 2);
+  const payment = { amountPaise: 2000000, paidOn: '2026-10-30', mode: 'bank', reference: 'NEFT 4471' };
+  const planned = async (venue: object) =>
+    ((await (await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Spine fixation', surgeonId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), chargesPaise: 9000000, ...venue }), doctor)).json()) as { id: string }).id;
+
+  it("pays the surgery's partner hospital; the payment shows on the surgery", async () => {
+    const id = await planned({ venue: 'partner', partnerHospitalId: partner });
+    const res = await pay(id, payment);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ surgeryId: id, partnerHospitalId: partner, ...payment, version: 1 });
+    expect(await (await app.request(`/staff/surgeries/${id}`, {}, doctor)).json()).toMatchObject({ venuePayments: [{ amountPaise: 2000000, paidOn: '2026-10-30' }] });
+  });
+
+  it('422 for our own theatre, a future date or a bad mode; 403 for a nurse; 404 for none', async () => {
+    const own = await planned({ venue: 'own' });
+    expect((await pay(own, payment)).status).toBe(422);
+    const id = await planned({ venue: 'partner', partnerHospitalId: partner });
+    expect((await pay(id, { ...payment, paidOn: '2099-01-01' })).status).toBe(422);
+    expect((await pay(id, { ...payment, mode: 'cheque' })).status).toBe(422);
+    expect((await pay(id, payment, nurse)).status).toBe(403);
+    expect((await pay(seedId('5e000000', 999), payment)).status).toBe(404);
   });
 });

@@ -3,7 +3,7 @@ import type { Queryable } from '../../db/migrate.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
-import { indiaDayStart } from '../../time/india.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { getPatient, patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // Surgeries (api-list.md Surgery): planned here or at a partner hospital (then we pay the venue, #92).
@@ -271,4 +271,55 @@ export async function writeOpNote(db: Queryable, id: string, note: OpNote, by: s
     set: { status: 'done', op_note: JSON.stringify({ ...note, by, at: now.toISOString() }) },
   });
   return getSurgery(db, id);
+}
+
+export const PAYMENT_MODES = ['cash', 'upi', 'card', 'bank'] as const;
+
+export interface VenuePayment extends BaseFields {
+  surgeryId: string;
+  partnerHospitalId: string;
+  amountPaise: number;
+  /** YYYY-MM-DD. */
+  paidOn: string;
+  mode: (typeof PAYMENT_MODES)[number];
+  reference?: string;
+}
+
+const VENUE_PAYMENT_SELECT = 'SELECT venue_payments.*, paid_on::text AS paid_on_text FROM venue_payments';
+
+export function toVenuePayment(r: Record<string, unknown>): VenuePayment {
+  return {
+    ...baseFields(r as unknown as BaseRow),
+    surgeryId: String(r.surgery_id),
+    partnerHospitalId: String(r.partner_hospital_id),
+    amountPaise: Number(r.amount_paise),
+    paidOn: String(r.paid_on_text),
+    mode: r.mode as VenuePayment['mode'],
+    ...(r.reference != null && { reference: String(r.reference) }),
+  };
+}
+
+/** #92: only for a surgery at a partner hospital; paid to that hospital. Cancelled ones too (a cancellation fee). */
+export async function addVenuePayment(
+  db: Queryable,
+  id: string,
+  input: { amountPaise: number; paidOn: string; mode: VenuePayment['mode']; reference?: string },
+  by: string,
+  now = new Date(),
+): Promise<VenuePayment> {
+  const surgery = await getSurgery(db, id);
+  if (surgery.venue !== 'partner' || !surgery.partnerHospitalId) invalid('this surgery is in our own theatre: there is no venue to pay');
+  if (input.paidOn > indiaDate(now)) invalid('paidOn: cannot be in the future');
+  const { rows } = await db.query(
+    `INSERT INTO venue_payments (id, status, created_by, updated_by, surgery_id, partner_hospital_id, amount_paise, paid_on, mode, reference)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8) RETURNING *, paid_on::text AS paid_on_text`,
+    [randomUUID(), by, surgery.id, surgery.partnerHospitalId, input.amountPaise, input.paidOn, input.mode, input.reference ?? null],
+  );
+  return toVenuePayment(rows[0] as Record<string, unknown>);
+}
+
+/** A surgery's venue payments, oldest first. */
+export async function venuePayments(db: Queryable, surgeryId: string): Promise<VenuePayment[]> {
+  const { rows } = await db.query(`${VENUE_PAYMENT_SELECT} WHERE surgery_id = $1 AND voided_at IS NULL ORDER BY paid_on, id`, [surgeryId]);
+  return rows.map(toVenuePayment);
 }

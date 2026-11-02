@@ -808,4 +808,21 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC implants_batch ON implants (batch_no)',
     ],
   },
+  {
+    // What we paid a partner hospital for a surgery there (api-list.md VenuePayment): an expense, never shown to patients.
+    id: '0051_venue_payments',
+    statements: () => [
+      ...createTable('venue_payments', [
+        'surgery_id uuid NOT NULL',
+        'partner_hospital_id uuid NOT NULL',
+        'amount_paise bigint NOT NULL',
+        'paid_on date NOT NULL',
+        'mode text NOT NULL',
+        'reference text',
+      ]),
+      'CREATE INDEX ASYNC venue_payments_surgery ON venue_payments (surgery_id)',
+      // The ledger and the surgery-margin report read by date.
+      'CREATE INDEX ASYNC venue_payments_paid_on ON venue_payments (paid_on, id)',
+    ],
+  },
 ];

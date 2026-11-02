@@ -7,7 +7,21 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
-import { CHECKLIST_ITEMS, getSurgery, listSurgeries, planSurgery, recordChecklist, updateSurgery, writeOpNote, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
+import {
+  addVenuePayment,
+  CHECKLIST_ITEMS,
+  getSurgery,
+  listSurgeries,
+  PAYMENT_MODES,
+  planSurgery,
+  recordChecklist,
+  SIDES,
+  SURGERY_STATUSES,
+  updateSurgery,
+  VENUES,
+  venuePayments,
+  writeOpNote,
+} from './surgeries.js';
 
 const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
@@ -74,6 +88,15 @@ const opNote = z
   })
   .strict();
 
+const venuePayment = z
+  .object({
+    amountPaise: z.number().int().min(1).max(10_000_000_000),
+    paidOn: z.iso.date(),
+    mode: z.enum(PAYMENT_MODES),
+    reference: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -87,13 +110,13 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery, 201);
   })
-  // #88: a clinical read, so the inactive-patient rule applies. Venue payments join at #92.
+  // #88: a clinical read, so the inactive-patient rule applies.
   .get('/:id', requirePermission('surgery.view'), async (c) => {
     const db = await dbOf(c);
     const surgery = await getSurgery(db, c.req.param('id'));
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, surgery.patientId));
-    return c.json({ ...surgery, implants: await surgeryImplants(db, surgery.id) });
+    return c.json({ ...surgery, implants: await surgeryImplants(db, surgery.id), venuePayments: await venuePayments(db, surgery.id) });
   })
   // #89
   .patch('/:id', requirePermission('surgery.update'), async (c) => {
@@ -112,6 +135,14 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     const surgery = await writeOpNote(await dbOf(c), c.req.param('id'), opNote.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery);
+  })
+  // #92
+  .post('/:id/venue-payments', requirePermission('surgery.venue_payment'), async (c) => {
+    const db = await dbOf(c);
+    const payment = await addVenuePayment(db, c.req.param('id'), venuePayment.parse(await bodyOf(c)), userOf(c).sub);
+    const { patientId } = await getSurgery(db, payment.surgeryId);
+    auditDetails(c, { patientId, recordType: 'venue_payment', recordId: payment.id });
+    return c.json(payment, 201);
   })
   // #85
   .post('/:id/implants', requirePermission('dept.ortho'), async (c) => {
