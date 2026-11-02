@@ -96,3 +96,23 @@ describe('POST /staff/prescriptions/check', () => {
     expect((await check({ patientId: ramesh, lines: [line('Paracetamol')] }, nurse)).status).toBe(403);
   });
 });
+
+describe('GET /staff/prescriptions/{id}', () => {
+  const get = (id: string, who = doctor) => app.request(`/staff/prescriptions/${id}`, {}, who);
+
+  it('shows one prescription, to a doctor, a nurse or the pharmacy', async () => {
+    const id = String((await db.query('SELECT id FROM prescriptions ORDER BY created_at LIMIT 1')).rows[0]?.id);
+    const res = await get(id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, status: 'confirmed', lines: [{ drugText: 'Paracetamol 500 mg' }] });
+    expect((await get(id, nurse)).status).toBe(200);
+    expect((await get(id, asStaff('dev-medical', ['medical']))).status).toBe(200);
+  });
+
+  it('404 for none; 403 for reception', async () => {
+    expect((await get(seedId('9c000000', 999))).status).toBe(404);
+    expect((await get('nope')).status).toBe(404);
+    const id = String((await db.query('SELECT id FROM prescriptions LIMIT 1')).rows[0]?.id);
+    expect((await get(id, reception)).status).toBe(403);
+  });
+});

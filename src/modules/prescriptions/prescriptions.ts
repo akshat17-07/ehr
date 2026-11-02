@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { AppError } from '../../middleware/errors.js';
 import { assertOpen, getEncounter } from '../encounters/encounters.js';
 import type { BaseFields } from '../patients/patients.js';
 import { assertAlertsCleared, checkLines, type RxLine } from './rx-checks.js';
@@ -78,4 +79,13 @@ export async function encounterPrescriptions(db: Queryable, encounterId: string)
     encounterId,
   ]);
   return rows.map(toPrescription);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** #66: 404 if there is none. */
+export async function getPrescription(db: Queryable, id: string): Promise<Prescription> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM prescriptions WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such prescription');
+  return toPrescription(rows[0] as Record<string, unknown>);
 }

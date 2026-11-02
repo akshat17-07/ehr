@@ -2,9 +2,11 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf } from '../../middleware/context.js';
+import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
+import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
+import { getPrescription } from './prescriptions.js';
 import { checkLines } from './rx-checks.js';
 
 // Prescriptions by id (api-list.md #64-#68), mounted at /staff/prescriptions. They are written in an encounter (#62).
@@ -41,4 +43,12 @@ export const prescriptionsRoutes = new Hono<AuthEnv>()
     const patient = await getPatient(db, patientId);
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     return c.json({ alerts: await checkLines(db, patient.id, lines) });
+  })
+  // #66: a clinical read, so the inactive-patient rule applies.
+  .get('/:id', requirePermission('rx.view'), async (c) => {
+    const db = await dbOf(c);
+    const prescription = await getPrescription(db, c.req.param('id'));
+    auditDetails(c, { patientId: prescription.patientId, recordType: 'prescription', recordId: prescription.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, prescription.patientId));
+    return c.json(prescription);
   });
