@@ -23,7 +23,7 @@ import { patientVitals } from '../encounters/vitals.js';
 import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
 import { addProblem, listProblems } from './problems.js';
-import { dentalChart } from '../departments/dental.js';
+import { addDentalEntries, dentalChart, FDI_TOOTH, TOOTH_SURFACES } from '../departments/dental.js';
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
@@ -107,6 +107,25 @@ const newConsent = z
 const reasonBody = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
 
 const rangeQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
+
+const newDentalEntries = z
+  .object({
+    encounterId: z.uuid().optional(),
+    entries: z
+      .array(
+        z
+          .object({
+            tooth: z.string().regex(FDI_TOOTH, 'an FDI tooth number, e.g. 36'),
+            surface: z.string().trim().toUpperCase().regex(TOOTH_SURFACES, 'surface letters M D O B L I P').optional(),
+            condition: z.string().trim().min(1).max(100),
+            treatment: z.string().trim().min(1).max(200).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(52),
+  })
+  .strict();
 
 const prescriptionsQuery = rangeQuery.extend({ status: z.enum(RX_STATUSES).optional() });
 
@@ -238,6 +257,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await dentalChart(db, patient.id));
+  })
+  // #78
+  .post('/:id/dental-chart', requirePermission('dept.dental'), async (c) => {
+    const input = newDentalEntries.parse(await bodyOf(c));
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    const entries = await addDentalEntries(db, patient.id, input, userOf(c).sub);
+    auditDetails(c, { patientId: patient.id, recordType: 'dental_entry', recordId: entries[0]?.id ?? patient.id });
+    return c.json(entries, 201);
   })
   // #67: a clinical read, so the inactive-patient rule applies.
   .get('/:id/prescriptions', requirePermission('rx.view'), async (c) => {
