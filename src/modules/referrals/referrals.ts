@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -50,4 +51,25 @@ export async function addReferral(
     [randomUUID(), by, patient.id, input.referrerId, input.date ?? today, input.reason ?? null],
   );
   return toReferral(rows[0] as Record<string, unknown>);
+}
+
+export interface ReferralQuery extends PageQuery {
+  referrerId?: string;
+  /** YYYY-MM-DD, both days included. */
+  from?: string;
+  to?: string;
+}
+
+/** #144: newest referral date first; voided ones are left out. */
+export async function listReferrals(db: Queryable, query: ReferralQuery): Promise<Page<Referral>> {
+  const where = ['voided_at IS NULL'];
+  const params: unknown[] = [];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    where.push(sql.replace('?', `$${params.length}`));
+  };
+  if (query.referrerId) add('referrer_id = ?', query.referrerId);
+  if (query.from) add('referral_date >= ?', query.from);
+  if (query.to) add('referral_date <= ?', query.to);
+  return pageRows(db, { select: `SELECT ${REFERRAL_COLUMNS} FROM referrals`, where, params, orderBy: ['referral_date', 'created_at', 'id'] }, query, toReferral);
 }

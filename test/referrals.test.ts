@@ -97,3 +97,24 @@ describe('POST /staff/patients/{id}/referrals', () => {
     expect((await refer(ramesh, { referrerId: live }, asStaff('dev-medical', ['medical']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/referrals', () => {
+  it('pages referrals newest date first, filtered by referrer and dates', async () => {
+    const referrerId = await insertReferrer('Dr Paging', null, null);
+    const ids: string[] = [];
+    for (const [patient, date] of [[1, '2026-02-01'], [3, '2026-02-03'], [4, '2026-02-02']] as const) {
+      const res = await post(`/staff/patients/${seedId('9a710000', patient)}/referrals`, { referrerId, date });
+      ids.push(((await res.json()) as { id: string }).id);
+    }
+    const list = async (q: string) => (await (await app.request(`/staff/referrals?referrerId=${referrerId}${q}`, {}, doctor)).json()) as { items: { id: string }[]; nextCursor?: string };
+    const first = await list('&limit=2');
+    expect(first.items.map((r) => r.id)).toEqual([ids[1], ids[2]]);
+    expect((await list(`&limit=2&cursor=${first.nextCursor}`)).items.map((r) => r.id)).toEqual([ids[0]]);
+    expect((await list('&from=2026-02-02&to=2026-02-02')).items.map((r) => r.id)).toEqual([ids[2]]);
+  });
+
+  it('422 for from after to; 403 without referrer.view', async () => {
+    expect((await app.request('/staff/referrals?from=2026-03-02&to=2026-03-01', {}, doctor)).status).toBe(422);
+    expect((await app.request('/staff/referrals', {}, asStaff('dev-medical', ['medical']))).status).toBe(403);
+  });
+});

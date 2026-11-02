@@ -4,7 +4,9 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
+import { pageQuery } from '../../db/page.js';
 import { addReferrer, searchReferrers } from './referrers.js';
+import { listReferrals } from './referrals.js';
 
 const searchQuery = z.object({ q: z.string().trim().min(2).max(100), limit: z.coerce.number().int().min(1).max(50).default(20) }).strict();
 
@@ -33,3 +35,13 @@ export const referrersRoutes = new Hono<AuthEnv>()
     auditDetails(c, { recordType: 'referrer', recordId: referrer.id });
     return c.json(referrer, 201);
   });
+
+const referralQuery = pageQuery
+  .extend({ referrerId: z.uuid().optional(), from: z.iso.date().optional(), to: z.iso.date().optional() })
+  .strict()
+  .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from is after to', path: ['to'] });
+
+// Mounted at /staff/referrals.
+export const referralsRoutes = new Hono<AuthEnv>()
+  // #144
+  .get('/', requirePermission('referrer.view'), async (c) => c.json(await listReferrals(await dbOf(c), referralQuery.parse(c.req.query()))));
