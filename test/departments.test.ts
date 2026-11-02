@@ -85,3 +85,32 @@ describe('GET /staff/patients/{id}/anc-records', () => {
     expect((await list(ramesh, nurse)).status).toBe(403);
   });
 });
+
+describe('POST /staff/patients/{id}/anc-records', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const add = (patient: string, body: unknown, who = doctor) => app.request(`/staff/patients/${patient}/anc-records`, json(body), who);
+  const rahul = seedId('9a710000', 5);
+
+  it('records a visit, which then shows in the list', async () => {
+    const res = await add(rahul, { lmp: '2026-07-01', edd: '2027-04-07', gravida: 1, para: 0, gestationWeeks: 17, bp: '118/76', weightKg: 61.2, fundalHeightCm: 16, fhr: 148, notes: 'Doing well.' });
+    expect(res.status).toBe(201);
+    const record = await res.json();
+    expect(record).toMatchObject({ patientId: rahul, lmp: '2026-07-01', edd: '2027-04-07', gravida: 1, para: 0, gestationWeeks: 17, bp: '118/76', weightKg: 61.2, fundalHeightCm: 16, fhr: 148, version: 1 });
+    expect(await (await app.request(`/staff/patients/${rahul}/anc-records`, {}, doctor)).json()).toMatchObject([{ id: (record as { id: string }).id }]);
+  });
+
+  it('422 for bad values, a future LMP, EDD before LMP, para >= gravida, another patient\'s encounter or nothing recorded', async () => {
+    expect((await add(rahul, { bp: '120-80' })).status).toBe(422);
+    expect((await add(rahul, { fhr: 20 })).status).toBe(422);
+    expect((await add(rahul, { lmp: '2099-01-01' })).status).toBe(422);
+    expect((await add(rahul, { lmp: '2026-07-01', edd: '2026-06-01' })).status).toBe(422);
+    expect((await add(rahul, { gravida: 2, para: 2 })).status).toBe(422);
+    expect((await add(rahul, {})).status).toBe(422);
+    expect((await add(rahul, { encounterId: seedId('e0000000', 999), notes: 'x' })).status).toBe(422);
+  });
+
+  it('404 for no patient; 403 for a nurse', async () => {
+    expect((await add(seedId('9a710000', 999), { notes: 'x' })).status).toBe(404);
+    expect((await add(rahul, { notes: 'x' }, nurse)).status).toBe(403);
+  });
+});

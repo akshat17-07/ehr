@@ -23,7 +23,7 @@ import { patientVitals } from '../encounters/vitals.js';
 import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
 import { addProblem, listProblems } from './problems.js';
-import { listAncRecords } from '../departments/anc.js';
+import { addAncRecord, listAncRecords } from '../departments/anc.js';
 import { addDentalEntries, dentalChart, FDI_TOOTH, TOOTH_SURFACES } from '../departments/dental.js';
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
@@ -127,6 +127,25 @@ const newDentalEntries = z
       .max(52),
   })
   .strict();
+
+const isoDate = z.iso.date();
+const newAncRecord = z
+  .object({
+    encounterId: z.uuid().optional(),
+    lmp: isoDate.optional(),
+    edd: isoDate.optional(),
+    gravida: z.number().int().min(1).max(20).optional(),
+    para: z.number().int().min(0).max(20).optional(),
+    gestationWeeks: z.number().int().min(1).max(45).optional(),
+    bp: z.string().trim().regex(/^\d{2,3}\/\d{2,3}$/, 'like 120/80').optional(),
+    weightKg: z.number().min(20).max(250).optional(),
+    fundalHeightCm: z.number().min(5).max(60).optional(),
+    fhr: z.number().int().min(60).max(220).optional(),
+    notes: z.string().trim().min(1).max(2000).optional(),
+  })
+  .strict()
+  .refine((b) => Object.keys(b).some((k) => k !== 'encounterId'), 'record at least one finding')
+  .refine((b) => b.para === undefined || b.gravida === undefined || b.para < b.gravida, 'para: must be less than gravida');
 
 const prescriptionsQuery = rangeQuery.extend({ status: z.enum(RX_STATUSES).optional() });
 
@@ -275,6 +294,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await listAncRecords(db, patient.id));
+  })
+  // #80
+  .post('/:id/anc-records', requirePermission('dept.anc'), async (c) => {
+    const input = newAncRecord.parse(await bodyOf(c));
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    const record = await addAncRecord(db, patient.id, input, userOf(c).sub);
+    auditDetails(c, { patientId: patient.id, recordType: 'anc_record', recordId: record.id });
+    return c.json(record, 201);
   })
   // #67: a clinical read, so the inactive-patient rule applies.
   .get('/:id/prescriptions', requirePermission('rx.view'), async (c) => {
