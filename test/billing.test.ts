@@ -293,3 +293,18 @@ describe('POST /staff/bills/{id}/void', () => {
     expect((await voidIt(seedId('b1000000', 999))).status).toBe(404);
   });
 });
+
+describe('GET /staff/bills/{id}/versions', () => {
+  it('every version, oldest first, with who and why', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill & { version: number };
+    const patched = (await (await app.request(`/staff/bills/${d.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: d.version, lines: [{ tariffId: tariff(5), qty: 2 }] }) }, doctor)).json()) as { version: number };
+    await app.request(`/staff/bills/${d.id}/void`, json({ reason: 'Patient left' }), doctor);
+    const res = await app.request(`/staff/bills/${d.id}/versions`, {}, doctor);
+    expect(res.status).toBe(200);
+    const versions = (await res.json()) as { version: number; by: string; reason?: string; data: Bill }[];
+    expect(versions.map((v) => [v.version, v.data.status, v.data.totalPaise])).toEqual([[1, 'draft', 10000], [patched.version, 'draft', 20000], [patched.version + 1, 'void', 20000]]);
+    expect(versions.at(-1)).toMatchObject({ by: 'dev-doctor', reason: 'Patient left' });
+    expect((await app.request(`/staff/bills/${d.id}/versions`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}/versions`, {}, doctor)).status).toBe(404);
+  });
+});

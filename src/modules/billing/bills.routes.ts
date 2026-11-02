@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { listVersions } from '../../db/records.js';
 import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
@@ -9,7 +10,7 @@ import { getPatient } from '../patients/patients.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
 import { billPayments, payBill } from './payments.js';
-import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, updateBillLines, voidBill } from './bills.js';
+import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, toBill, updateBillLines, voidBill } from './bills.js';
 
 export const lineInput = z
   .object({
@@ -77,6 +78,14 @@ export const billsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
     return c.json({ ...bill, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id) });
+  })
+  // #124
+  .get('/:id/versions', requirePermission('bill.view'), async (c) => {
+    const db = await dbOf(c);
+    const bill = await getBill(db, c.req.param('id'));
+    auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
+    await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
+    return c.json(await listVersions(db, 'bills', bill.id, toBill));
   })
   // #119
   .patch('/:id', requirePermission('bill.update'), async (c) => {
