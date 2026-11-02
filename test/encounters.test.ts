@@ -220,3 +220,32 @@ describe('GET /staff/patients/{id}/vitals', () => {
     expect((await history('', asStaff('dev-gp', ['gp']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/encounters/{id}/observations', () => {
+  const nurse = asStaff('dev-nurse', ['nurse']);
+  const observe = (id: string, body: unknown, who = nurse) =>
+    app.request(`/staff/encounters/${id}/observations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('records a coded number or text', async () => {
+    const id = await open(seedId('9a710000', 2));
+    const res = await observe(id, { loinc: '8867-4', name: 'Heart rate (manual)', value: 88, unit: '/min' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ encounterId: id, loinc: '8867-4', value: 88, unit: '/min', createdBy: 'dev-nurse' });
+    const text = await observe(id, { loinc: '8310-5', name: 'Temperature', value: 'afebrile to touch' });
+    expect(await text.json()).toMatchObject({ value: 'afebrile to touch' });
+  });
+
+  it('422 for a code not in the list, a bad code or value; 409 once closed; 403 for reception', async () => {
+    const id = await open(seedId('9a710000', 2));
+    for (const body of [
+      { loinc: '99999-9', name: 'x', value: 1 },
+      { loinc: 'HR', name: 'x', value: 1 },
+      { loinc: '8867-4', name: 'x', value: true },
+      { loinc: '8867-4', name: 'x', value: '' },
+      { loinc: '8867-4', value: 1 },
+    ]) expect((await observe(id, body)).status, JSON.stringify(body)).toBe(422);
+    expect((await observe(id, { loinc: '8867-4', name: 'x', value: 1 }, reception)).status).toBe(403);
+    await app.request(`/staff/encounters/${id}/close`, { method: 'POST' }, doctor);
+    expect((await observe(id, { loinc: '8867-4', name: 'x', value: 1 })).status).toBe(409);
+  });
+});

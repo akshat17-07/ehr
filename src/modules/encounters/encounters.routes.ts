@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { checkIn } from '../appointments/appointments.js';
 import { getPatient } from '../patients/patients.js';
+import { recordObservation } from './observations.js';
 import { recordVital, VITAL_FIELDS, type VitalField } from './vitals.js';
 import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, ENCOUNTER_TYPES, getEncounter, listEncounters, updateEncounter } from './encounters.js';
 
@@ -54,6 +55,16 @@ const newVital = z
   .refine((v) => (v.bpSys === undefined) === (v.bpDia === undefined), 'bpSys and bpDia go together')
   .refine((v) => v.bpSys === undefined || v.bpDia === undefined || v.bpDia < v.bpSys, 'bpDia must be below bpSys');
 
+const newObservation = z
+  .object({
+    loinc: z.string().trim().regex(/^\d{1,7}-\d$/, 'a LOINC code looks like 8867-4'),
+    name: z.string().trim().min(1).max(200),
+    value: z.union([z.number().finite(), z.string().trim().min(1).max(500)]),
+    unit: z.string().trim().min(1).max(30).optional(),
+    takenAt: z.iso.datetime({ offset: true }).optional(),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -98,4 +109,11 @@ export const encountersRoutes = new Hono<AuthEnv>()
     const vital = await recordVital(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: vital.patientId, recordType: 'vital', recordId: vital.id });
     return c.json(vital, 201);
+  })
+  // #43
+  .post('/:id/observations', requirePermission('observation.record'), async (c) => {
+    const input = newObservation.parse(await bodyOf(c));
+    const observation = await recordObservation(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: observation.patientId, recordType: 'observation', recordId: observation.id });
+    return c.json(observation, 201);
   });

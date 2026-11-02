@@ -503,4 +503,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC vitals_patient ON vitals (patient_id, taken_at)',
     ],
   },
+  {
+    // Observations (api-list.md Observation): a LOINC-coded value, a number (value_num) or text (value_text).
+    id: '0033_observations',
+    statements: () => [
+      ...createTable('observations', [
+        'encounter_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'loinc text NOT NULL',
+        'name text NOT NULL',
+        'value_num numeric',
+        'value_text text',
+        'unit text',
+        'taken_at timestamptz NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC observations_encounter ON observations (encounter_id, taken_at)',
+      'CREATE INDEX ASYNC observations_patient ON observations (patient_id, loinc, taken_at)',
+    ],
+  },
 ];
