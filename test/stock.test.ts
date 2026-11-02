@@ -419,3 +419,33 @@ describe('GET /staff/stock/movements', () => {
     expect((await app.request('/staff/stock/movements', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('GET /staff/purchase-orders', () => {
+  type Po = { id: string; status: string; number?: string; supplierId: string; lines: unknown[]; placedAt?: string; receivedQty: Record<string, number> };
+  const list = async (query = '', who = medical) => (await (await app.request(`/staff/purchase-orders${query}`, {}, who)).json()) as Po[];
+  const [s1, s2] = [seedId('5a000000', 1), seedId('5a000000', 2)];
+  const po = (n: number) => seedId('90000000', n);
+
+  it('open orders only, oldest placed first; filters by status and supplier', async () => {
+    const insert = (n: number, status: string, supplier: string, placedAt: string | null, received = '{}') =>
+      db.query(
+        `INSERT INTO purchase_orders (id, status, created_by, updated_by, number, supplier_id, lines, placed_at, received_qty)
+         VALUES ($1, $2, 'x', 'x', $3, $4, $5, $6, $7)`,
+        [po(n), status, `PO-${n}`, supplier, JSON.stringify([{ itemId: gauze, qty: 100, ratePaise: 3000 }]), placedAt, received],
+      );
+    await insert(1, 'draft', s1, null);
+    await insert(2, 'placed', s1, '2026-10-20T05:00:00Z');
+    await insert(3, 'part_received', s2, '2026-10-10T05:00:00Z', JSON.stringify({ [gauze]: 40 }));
+    await insert(4, 'received', s1, '2026-10-01T05:00:00Z');
+    await insert(5, 'cancelled', s2, '2026-10-02T05:00:00Z');
+    expect((await list()).map((p) => p.id)).toEqual([po(3), po(2)]);
+    expect((await list())[0]).toMatchObject({ number: 'PO-3', supplierId: s2, status: 'part_received', placedAt: '2026-10-10T05:00:00.000Z', receivedQty: { [gauze]: 40 }, lines: [{ itemId: gauze, qty: 100, ratePaise: 3000 }] });
+    expect((await list('?status=placed')).map((p) => p.id)).toEqual([po(2)]);
+    expect((await list(`?supplierId=${s2}`)).map((p) => p.id)).toEqual([po(3)]);
+  });
+
+  it('422 for a closed status; 403 for reception', async () => {
+    expect((await app.request('/staff/purchase-orders?status=draft', {}, medical)).status).toBe(422);
+    expect((await app.request('/staff/purchase-orders', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});

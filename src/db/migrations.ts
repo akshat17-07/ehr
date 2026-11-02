@@ -1039,4 +1039,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC quarantines_created ON quarantines (created_at)',
     ],
   },
+  {
+    // Orders to suppliers (api-list.md PurchaseOrder); made and placed at #295-#301. lines and received_qty are
+    // JSON. status: draft / placed / part_received / received / cancelled.
+    id: '0069_purchase_orders',
+    statements: () => [
+      ...createTable('purchase_orders', [
+        'number text',
+        'supplier_id uuid NOT NULL',
+        'reorder_check_id uuid',
+        'lines text NOT NULL',
+        'note text',
+        'placed_at timestamptz',
+        "received_qty text NOT NULL DEFAULT '{}'",
+      ]),
+      'CREATE INDEX ASYNC purchase_orders_status ON purchase_orders (status, created_at)',
+      'CREATE INDEX ASYNC purchase_orders_supplier ON purchase_orders (supplier_id)',
+    ],
+  },
 ];
