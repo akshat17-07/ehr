@@ -378,3 +378,37 @@ describe('GET /staff/patients/{id}/deposits', () => {
     expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/deposits`, {}, doctor)).status).toBe(404);
   });
 });
+
+describe('POST /staff/deposits/{id}/apply', () => {
+  const apply = (id: string, body: unknown, who = doctor) => app.request(`/staff/deposits/${id}/apply`, json(body), who);
+  const finalOf = async (patientId: string, unitPaise: number) => {
+    const d = (await (await bill({ patientId, lines: [{ text: 'Room', qty: 1, unitPaise }] })).json()) as Bill & { version: number };
+    return (await (await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor)).json()) as Bill;
+  };
+
+  it('pays a bill from the deposit and lowers its balance', async () => {
+    const dep = (await (await app.request(`/staff/patients/${irfan}/deposits`, json({ amountPaise: 30_000, mode: 'card', reference: 'C77' }), doctor)).json()) as { id: string };
+    const b = await finalOf(irfan, 20_000);
+    const res = await apply(dep.id, { billId: b.id, amountPaise: 20_000 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ deposit: { id: dep.id, balancePaise: 10_000 }, bill: { status: 'paid', duePaise: 0 } });
+    const read = (await (await app.request(`/staff/bills/${b.id}`, {}, doctor)).json()) as { payments: { mode: string; depositId: string }[] };
+    expect(read.payments).toMatchObject([{ mode: 'deposit', depositId: dep.id }]);
+    const next = await finalOf(irfan, 50_000);
+    expect(await (await apply(dep.id, { billId: next.id, amountPaise: 10_001 })).json()).toMatchObject({ error: 'validation_failed' });
+    expect(await (await apply(dep.id, { billId: next.id, amountPaise: 10_000 })).json()).toMatchObject({ deposit: { balancePaise: 0 }, bill: { status: 'part_paid' } });
+  });
+
+  it("refuses another patient's bill, a draft, more than due; 403 for a nurse; 404 for no deposit", async () => {
+    const dep = (await (await app.request(`/staff/patients/${irfan}/deposits`, json({ amountPaise: 50_000, mode: 'cash' }), doctor)).json()) as { id: string };
+    const theirs = await finalOf(kavita, 1000);
+    expect((await apply(dep.id, { billId: theirs.id, amountPaise: 100 })).status).toBe(422);
+    const draft = (await (await bill({ patientId: irfan, lines: [{ text: 'Room', qty: 1, unitPaise: 1000 }] })).json()) as Bill;
+    expect(await (await apply(dep.id, { billId: draft.id, amountPaise: 100 })).json()).toMatchObject({ error: 'not_payable' });
+    const small = await finalOf(irfan, 1000);
+    expect((await apply(dep.id, { billId: small.id, amountPaise: 1001 })).status).toBe(422);
+    expect((await apply(dep.id, { billId: small.id, amountPaise: 100 }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await apply(seedId('de900000', 999), { billId: small.id, amountPaise: 100 })).status).toBe(404);
+  });
+});
+
