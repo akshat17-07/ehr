@@ -103,7 +103,7 @@ describe('GET /staff/bills/{id}', () => {
     const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
     const res = await app.request(`/staff/bills/${made.id}`, {}, doctor);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(made);
+    expect(await res.json()).toEqual({ ...made, discounts: [] });
     const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY at`, [made.id]);
     expect(rows.map((r) => r.action)).toContain('view');
     expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}`, {}, doctor)).status).toBe(404);
@@ -177,5 +177,41 @@ describe('POST /staff/bills/{id}/finalise', () => {
     const patch = await app.request(`/staff/bills/${d.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: d.version + 1, lines: [] }) }, doctor);
     expect(await patch.json()).toMatchObject({ error: 'not_draft' });
     expect((await finalise(seedId('b1000000', 999), 1)).status).toBe(404);
+  });
+});
+
+describe('POST /staff/bills/{id}/discounts', () => {
+  const discount = (id: string, body: unknown, who = doctor) => app.request(`/staff/bills/${id}/discounts`, json(body), who);
+  const draft = async (patientId: string, lines: unknown[]) => (await (await bill({ patientId, lines })).json()) as Bill & { version: number };
+
+  it('up to the limit it comes off the total; over it waits, and the bill cannot be finalised', async () => {
+    const d = await draft(irfan, [{ tariffId: tariff(7), qty: 2 }]);
+    const res = await discount(d.id, { amountPaise: 20000, reason: 'Staff family' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'applied', billId: d.id, amountPaise: 20000, reason: 'Staff family' });
+    const big = (await (await discount(d.id, { amountPaise: 150000, reason: 'Hardship' })).json()) as { id: string; status: string };
+    expect(big.status).toBe('pending');
+    const read = (await (await app.request(`/staff/bills/${d.id}`, {}, doctor)).json()) as Bill & { version: number; discounts: { status: string }[] };
+    expect(read).toMatchObject({ subtotalPaise: 240000, discountPaise: 20000, totalPaise: 220000, duePaise: 220000 });
+    expect(read.discounts.map((x) => x.status)).toEqual(['applied', 'pending']);
+    expect(await (await app.request(`/staff/bills/${d.id}/finalise`, json({ version: read.version }), doctor)).json()).toMatchObject({ error: 'discount_pending' });
+    expect((await discount(d.id, { amountPaise: 80000, reason: 'More' })).status).toBe(422);
+  });
+
+  it('GST inside goes down with the discount on a tax invoice', async () => {
+    await app.request('/staff/pharmacy/bills', json({ patientId: rahul, setting: 'ipd', lines: [{ drugId: seedId('d0000000', 1), batchId: seedId('ba000000', 3), qty: 50 }] }), medical);
+    const d = await draft(rahul, []);
+    expect(d).toMatchObject({ series: 'tax_invoice', totalPaise: 105000, gstPaise: 5000 });
+    await discount(d.id, { amountPaise: 10500, reason: 'Senior citizen' });
+    expect(await (await app.request(`/staff/bills/${d.id}`, {}, doctor)).json()).toMatchObject({ totalPaise: 94500, gstPaise: 4500, discountPaise: 10500 });
+  });
+
+  it('409 once final; 404 for no bill; 422 without a reason; 403 for a nurse', async () => {
+    const d = await draft(irfan, [{ tariffId: tariff(5), qty: 1 }]);
+    expect((await discount(d.id, { amountPaise: 100 })).status).toBe(422);
+    expect((await discount(d.id, { amountPaise: 100, reason: 'Kind' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor);
+    expect(await (await discount(d.id, { amountPaise: 100, reason: 'Late' })).json()).toMatchObject({ error: 'not_draft' });
+    expect((await discount(seedId('b1000000', 999), { amountPaise: 100, reason: 'None' })).status).toBe(404);
   });
 });

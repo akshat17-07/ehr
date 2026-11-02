@@ -1086,4 +1086,18 @@ export const migrations: Migration[] = [
     id: '0071_pharmacy_bills_bill',
     statements: () => ['ALTER TABLE pharmacy_bills ADD COLUMN bill_id uuid'],
   },
+  {
+    // Discounts on a bill (api-list.md Discount). status: applied / pending (over the limit, waits for #179) / rejected.
+    id: '0072_discounts',
+    statements: () => [
+      ...createTable('discounts', ['bill_id uuid NOT NULL', 'amount_paise bigint NOT NULL', 'reason text NOT NULL', 'approved_by text']),
+      'CREATE INDEX ASYNC discounts_bill ON discounts (bill_id)',
+      'CREATE INDEX ASYNC discounts_status ON discounts (status, created_at)',
+    ],
+  },
+  {
+    // Discounts and refunds above these need a second person (#177, #179). Set at #189; empty means the default.
+    id: '0073_hospital_limits',
+    statements: () => ['ALTER TABLE hospital ADD COLUMN discount_limit_paise bigint', 'ALTER TABLE hospital ADD COLUMN refund_limit_paise bigint'],
+  },
 ];

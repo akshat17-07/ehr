@@ -73,14 +73,19 @@ export function toBill(r: Record<string, unknown>): Bill {
   };
 }
 
-/** The money columns of a bill from its lines, and any bill-level discount. */
+/**
+ * The money columns of a bill from its lines, and any bill-level discount. A bill-level discount lowers every line's
+ * value alike, so the GST inside goes down by the same share.
+ */
 export function billTotals(lines: BillLine[], billDiscountPaise = 0) {
   const subtotalPaise = lines.reduce((sum, l) => sum + l.qty * l.unitPaise, 0);
+  const linesPaise = lines.reduce((sum, l) => sum + l.amountPaise, 0);
+  const gstOnLines = lines.reduce((sum, l) => sum + gstInside(l.amountPaise, l.gstRate), 0);
   const discountPaise = lines.reduce((sum, l) => sum + l.discountPaise, 0) + billDiscountPaise;
   return {
     series: (lines.some((l) => l.gstRate > 0) ? 'tax_invoice' : 'bill_of_supply') as BillSeries,
     subtotal_paise: subtotalPaise,
-    gst_paise: lines.reduce((sum, l) => sum + gstInside(l.amountPaise, l.gstRate), 0),
+    gst_paise: linesPaise > 0 ? Math.round((gstOnLines * (linesPaise - billDiscountPaise)) / linesPaise) : 0,
     discount_paise: discountPaise,
     total_paise: subtotalPaise - discountPaise,
   };
@@ -222,7 +227,7 @@ export async function getBill(db: Queryable, id: string): Promise<Bill> {
 }
 
 /** A bill's own discount, apart from its lines' (#121). */
-const billLevelDiscount = (bill: Bill) => bill.discountPaise - bill.lines.reduce((sum, l) => sum + l.discountPaise, 0);
+export const billLevelDiscount = (bill: Bill) => bill.discountPaise - bill.lines.reduce((sum, l) => sum + l.discountPaise, 0);
 
 /**
  * #119: the typed lines of a draft are replaced; lines taken in from stock issues and pharmacy bills stay.
@@ -250,6 +255,8 @@ export async function finaliseBill(db: Queryable, id: string, input: { version: 
   const bill = await getBill(db, id);
   if (bill.status !== 'draft') throw new AppError(409, 'not_draft', 'only a draft bill is finalised; this one is ' + bill.status);
   if (bill.version !== input.version) throw new AppError(409, 'conflict', 'someone else saved this record first');
+  const { rows: pending } = await db.query(`SELECT 1 FROM discounts WHERE bill_id = $1 AND status = 'pending' LIMIT 1`, [id]);
+  if (pending[0]) throw new AppError(409, 'discount_pending', 'a discount on this bill waits for approval (#179)');
   const { rows } = await db.query('SELECT invoice_prefix, bill_of_supply_prefix FROM hospital LIMIT 1');
   const prefix = String((bill.series === 'tax_invoice' ? rows[0]?.invoice_prefix : rows[0]?.bill_of_supply_prefix) ?? (bill.series === 'tax_invoice' ? 'INV' : 'BOS'));
   const year = financialYear(indiaDate(now));
