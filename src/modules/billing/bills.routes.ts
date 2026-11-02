@@ -8,6 +8,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { getPatient } from '../patients/patients.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
+import { billPayments, payBill } from './payments.js';
 import { BILL_STATUSES, createBill, finaliseBill, getBill, listBills, updateBillLines } from './bills.js';
 
 export const lineInput = z
@@ -38,6 +39,16 @@ const billUpdate = z.object({ version: z.number().int().min(1), lines: z.array(l
 
 const newDiscount = z.object({ amountPaise: z.number().int().min(1).max(100_000_000), reason: z.string().trim().min(3).max(500) }).strict();
 
+// Deposits are paid in at #128 (mode deposit).
+const newPayment = z
+  .object({
+    amountPaise: z.number().int().min(1).max(1_000_000_000),
+    mode: z.enum(['cash', 'upi', 'card']),
+    reference: z.string().trim().min(3).max(100).optional(),
+  })
+  .strict()
+  .refine((p) => p.mode === 'cash' || p.reference, { message: 'the UPI or card reference is needed', path: ['reference'] });
+
 const versionOnly = z.object({ version: z.number().int().min(1) }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
@@ -63,7 +74,7 @@ export const billsRoutes = new Hono<AuthEnv>()
     const bill = await getBill(db, c.req.param('id'));
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
-    return c.json({ ...bill, discounts: await billDiscounts(db, bill.id) });
+    return c.json({ ...bill, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id) });
   })
   // #119
   .patch('/:id', requirePermission('bill.update'), async (c) => {
@@ -85,4 +96,11 @@ export const billsRoutes = new Hono<AuthEnv>()
     const discount = await addDiscount(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { recordType: 'discount', recordId: discount.id, reason: discount.reason });
     return c.json(discount, 201);
+  })
+  // #122
+  .post('/:id/payments', requirePermission('payment.mark_paid'), async (c) => {
+    const input = newPayment.parse(await bodyOf(c));
+    const result = await payBill(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: result.bill.patientId, recordType: 'payment', recordId: result.payment.id });
+    return c.json(result, 201);
   });

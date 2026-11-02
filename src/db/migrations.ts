@@ -1100,4 +1100,14 @@ export const migrations: Migration[] = [
     id: '0073_hospital_limits',
     statements: () => ['ALTER TABLE hospital ADD COLUMN discount_limit_paise bigint', 'ALTER TABLE hospital ADD COLUMN refund_limit_paise bigint'],
   },
+  {
+    // Money received against a bill (api-list.md Payment). mode: cash / upi / card / deposit.
+    id: '0074_payments',
+    statements: () => [
+      ...createTable('payments', ['bill_id uuid NOT NULL', 'patient_id uuid NOT NULL', 'amount_paise bigint NOT NULL', 'mode text NOT NULL', 'reference text', 'deposit_id uuid']),
+      'CREATE INDEX ASYNC payments_bill ON payments (bill_id)',
+      'CREATE INDEX ASYNC payments_patient ON payments (patient_id, created_at)',
+      'CREATE INDEX ASYNC payments_created ON payments (created_at)',
+    ],
+  },
 ];

@@ -103,7 +103,7 @@ describe('GET /staff/bills/{id}', () => {
     const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
     const res = await app.request(`/staff/bills/${made.id}`, {}, doctor);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...made, discounts: [] });
+    expect(await res.json()).toEqual({ ...made, discounts: [], payments: [] });
     const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY at`, [made.id]);
     expect(rows.map((r) => r.action)).toContain('view');
     expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}`, {}, doctor)).status).toBe(404);
@@ -213,5 +213,46 @@ describe('POST /staff/bills/{id}/discounts', () => {
     await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor);
     expect(await (await discount(d.id, { amountPaise: 100, reason: 'Late' })).json()).toMatchObject({ error: 'not_draft' });
     expect((await discount(seedId('b1000000', 999), { amountPaise: 100, reason: 'None' })).status).toBe(404);
+  });
+});
+
+describe('POST /staff/bills/{id}/payments', () => {
+  const pay = (id: string, body: unknown, who = doctor) => app.request(`/staff/bills/${id}/payments`, json(body), who);
+  const finalBill = async (patientId: string, lines: unknown[]) => {
+    const d = (await (await bill({ patientId, lines })).json()) as Bill & { version: number };
+    return (await (await app.request(`/staff/bills/${d.id}/finalise`, json({ version: d.version }), doctor)).json()) as Bill;
+  };
+
+  it('part then full payment moves the status; payments are listed on the bill', async () => {
+    const b = await finalBill(irfan, [{ tariffId: tariff(7), qty: 1 }]);
+    const res = await pay(b.id, { amountPaise: 50000, mode: 'cash' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      payment: { billId: b.id, amountPaise: 50000, mode: 'cash', receivedBy: 'dev-doctor', at: expect.any(String) },
+      bill: { status: 'part_paid', paidPaise: 50000, duePaise: 70000 },
+    });
+    expect((await pay(b.id, { amountPaise: 70001, mode: 'upi', reference: 'UPI-1' })).status).toBe(422);
+    expect(await (await pay(b.id, { amountPaise: 70000, mode: 'upi', reference: 'UPI-778899' })).json()).toMatchObject({ bill: { status: 'paid', duePaise: 0 } });
+    const read = (await (await app.request(`/staff/bills/${b.id}`, {}, doctor)).json()) as { payments: { mode: string }[] };
+    expect(read.payments.map((p) => p.mode)).toEqual(['cash', 'upi']);
+    expect(await (await pay(b.id, { amountPaise: 1, mode: 'cash' })).json()).toMatchObject({ error: 'not_payable' });
+  });
+
+  it('refuses ₹2,00,000 cash from one patient in a day (sec 269ST)', async () => {
+    const b = await finalBill(kavita, [{ text: 'Surgery package', qty: 1, unitPaise: 30_000_000 }]);
+    expect(await (await pay(b.id, { amountPaise: 20_000_000, mode: 'cash' })).json()).toMatchObject({ error: 'cash_limit' });
+    expect((await pay(b.id, { amountPaise: 19_999_900, mode: 'cash' })).status).toBe(201);
+    expect(await (await pay(b.id, { amountPaise: 100, mode: 'cash' })).json()).toMatchObject({ error: 'cash_limit' });
+    const other = await finalBill(kavita, [{ text: 'Room', qty: 1, unitPaise: 100_000 }]);
+    expect(await (await pay(other.id, { amountPaise: 100, mode: 'cash' })).json()).toMatchObject({ error: 'cash_limit' });
+    expect((await pay(other.id, { amountPaise: 100, mode: 'card', reference: 'CARD-4411' })).status).toBe(201);
+  });
+
+  it('409 for a draft; 422 for UPI without a reference or deposit mode; 403 for a nurse', async () => {
+    const d = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
+    expect(await (await pay(d.id, { amountPaise: 100, mode: 'cash' })).json()).toMatchObject({ error: 'not_payable' });
+    expect((await pay(d.id, { amountPaise: 100, mode: 'upi' })).status).toBe(422);
+    expect((await pay(d.id, { amountPaise: 100, mode: 'deposit' })).status).toBe(422);
+    expect((await pay(d.id, { amountPaise: 100, mode: 'cash' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
