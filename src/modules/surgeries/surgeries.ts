@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
-import { updateRecord } from '../../db/records.js';
+import { updateRecord, voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
@@ -322,4 +322,12 @@ export async function addVenuePayment(
 export async function venuePayments(db: Queryable, surgeryId: string): Promise<VenuePayment[]> {
   const { rows } = await db.query(`${VENUE_PAYMENT_SELECT} WHERE surgery_id = $1 AND voided_at IS NULL ORDER BY paid_on, id`, [surgeryId]);
   return rows.map(toVenuePayment);
+}
+
+/** #93: with the reason; 409 once done or already cancelled. It stays listed, as cancelled. */
+export async function cancelSurgery(db: Queryable, id: string, reason: string, by: string): Promise<Surgery> {
+  const surgery = await getSurgery(db, id);
+  assertNotCancelled(surgery);
+  if (surgery.status === 'done') throw new AppError(409, 'done', 'this surgery is done');
+  return toSurgery(await voidRecord(db, 'surgeries', { id, version: surgery.version, by, reason, status: 'cancelled' }));
 }

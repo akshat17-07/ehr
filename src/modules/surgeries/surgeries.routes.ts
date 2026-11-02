@@ -9,6 +9,7 @@ import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
 import {
   addVenuePayment,
+  cancelSurgery,
   CHECKLIST_ITEMS,
   getSurgery,
   listSurgeries,
@@ -97,6 +98,8 @@ const venuePayment = z
   })
   .strict();
 
+const reasonBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -143,6 +146,13 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     const { patientId } = await getSurgery(db, payment.surgeryId);
     auditDetails(c, { patientId, recordType: 'venue_payment', recordId: payment.id });
     return c.json(payment, 201);
+  })
+  // #93
+  .post('/:id/cancel', requirePermission('surgery.update'), async (c) => {
+    const { reason } = reasonBody.parse(await bodyOf(c));
+    const surgery = await cancelSurgery(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
+    auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id, reason });
+    return c.json(surgery);
   })
   // #85
   .post('/:id/implants', requirePermission('dept.ortho'), async (c) => {

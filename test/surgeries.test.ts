@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
+import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -254,5 +255,34 @@ describe('POST /staff/surgeries/{id}/venue-payments', () => {
     expect((await pay(id, { ...payment, mode: 'cheque' })).status).toBe(422);
     expect((await pay(id, payment, nurse)).status).toBe(403);
     expect((await pay(seedId('5e000000', 999), payment)).status).toBe(404);
+  });
+});
+
+describe('POST /staff/surgeries/{id}/cancel', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const cancel = (id: string, body: unknown, who = doctor) => app.request(`/staff/surgeries/${id}/cancel`, json(body), who);
+  const planned = async () =>
+    ((await (await app.request('/staff/surgeries', json({ patientId: ramesh, procedure: 'Cataract surgery', side: 'right', surgeonId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), venue: 'own', chargesPaise: 2000000 }), doctor)).json()) as { id: string; scheduledAt: string });
+
+  it('cancels with the reason; still listed, as cancelled; off the timeline', async () => {
+    const { id, scheduledAt } = await planned();
+    const res = await cancel(id, { reason: 'Blood sugar too high today' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'cancelled', voidReason: 'Blood sugar too high today', voidedBy: 'dev-doctor' });
+    const day = indiaDate(new Date(scheduledAt));
+    const list = (await (await app.request(`/staff/surgeries?from=${day}&to=${day}&status=cancelled`, {}, doctor)).json()) as { id: string }[];
+    expect(list.map((s) => s.id)).toContain(id);
+    const timeline = (await (await app.request(`/staff/patients/${ramesh}/timeline`, {}, doctor)).json()) as { items: { id: string }[] };
+    expect(timeline.items.map((i) => i.id)).not.toContain(id);
+    expect(await (await cancel(id, { reason: 'Again, by mistake' })).json()).toMatchObject({ error: 'cancelled' });
+  });
+
+  it('409 once done; 422 without a reason; 403 for a nurse; 404 for none', async () => {
+    const { id } = await planned();
+    expect((await cancel(id, {})).status).toBe(422);
+    expect((await cancel(id, { reason: 'Patient unwell' }, nurse)).status).toBe(403);
+    await app.request(`/staff/surgeries/${id}/op-note`, json({ findings: 'Mature cataract.', procedureDone: 'Phaco with IOL.' }), doctor);
+    expect(await (await cancel(id, { reason: 'Patient unwell' })).json()).toMatchObject({ error: 'done' });
+    expect((await cancel(seedId('5e000000', 999), { reason: 'Patient unwell' })).status).toBe(404);
   });
 });
