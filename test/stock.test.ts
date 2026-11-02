@@ -108,3 +108,24 @@ describe('POST /staff/stock/grn', () => {
     expect((await receive(grn([line()]), asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/stock/indents', () => {
+  const indent = (body: unknown, who = medical) =>
+    app.request('/staff/stock/indents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const ramesh = seedId('9a710000', 1);
+
+  it('records the request, for the ward or one patient', async () => {
+    const res = await indent({ ward: 'General Ward A', patientId: ramesh, lines: [{ itemId: gauze, qty: 2 }, { itemId: paracetamol, qty: 10 }] });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ status: 'requested', ward: 'General Ward A', patientId: ramesh, lines: [{ itemId: gauze, qty: 2 }, { itemId: paracetamol, qty: 10 }], createdBy: 'dev-medical' });
+    expect(await (await indent({ ward: 'ICU', lines: [{ itemId: gauze, qty: 5 }] })).json()).not.toHaveProperty('patientId');
+  });
+
+  it('422 for an unknown item, the same item twice, or no lines; 404 for no patient; 403 for a nurse (not by default)', async () => {
+    expect((await indent({ ward: 'ICU', lines: [{ itemId: seedId('17e00000', 999), qty: 1 }] })).status).toBe(422);
+    expect((await indent({ ward: 'ICU', lines: [{ itemId: gauze, qty: 1 }, { itemId: gauze, qty: 2 }] })).status).toBe(422);
+    expect((await indent({ ward: 'ICU', lines: [] })).status).toBe(422);
+    expect((await indent({ ward: 'ICU', patientId: seedId('9a710000', 999), lines: [{ itemId: gauze, qty: 1 }] })).status).toBe(404);
+    expect((await indent({ ward: 'ICU', lines: [{ itemId: gauze, qty: 1 }] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

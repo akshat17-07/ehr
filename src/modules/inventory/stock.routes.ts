@@ -6,6 +6,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { receiveGoods } from './grn.js';
+import { requestIndent } from './indents.js';
 import { ITEM_KINDS } from './items.js';
 import { listStock } from './stock.js';
 
@@ -42,6 +43,14 @@ const newGrn = z
   })
   .strict();
 
+const newIndent = z
+  .object({
+    ward: z.string().trim().min(1).max(50),
+    patientId: z.uuid().optional(),
+    lines: z.array(z.object({ itemId: z.uuid(), qty: z.number().int().min(1).max(10_000) }).strict()).min(1).max(50),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -58,4 +67,11 @@ export const stockRoutes = new Hono<AuthEnv>()
     const grn = await receiveGoods(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { recordType: 'grn', recordId: grn.id });
     return c.json(grn, 201);
+  })
+  // #109
+  .post('/indents', requirePermission('stock.indent'), async (c) => {
+    const input = newIndent.parse(await bodyOf(c));
+    const indent = await requestIndent(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { ...(indent.patientId && { patientId: indent.patientId }), recordType: 'indent', recordId: indent.id });
+    return c.json(indent, 201);
   });

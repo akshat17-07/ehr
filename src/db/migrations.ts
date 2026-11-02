@@ -960,4 +960,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC grns_created ON grns (created_at)',
     ],
   },
+  {
+    // A ward asking the store for items (api-list.md Indent); lines is JSON. status: requested / issued / cancelled.
+    id: '0061_indents',
+    statements: () => [
+      ...createTable('indents', ['ward text NOT NULL', 'patient_id uuid', 'lines text NOT NULL']),
+      'CREATE INDEX ASYNC indents_status ON indents (status, created_at)',
+    ],
+  },
 ];
