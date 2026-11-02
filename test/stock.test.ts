@@ -241,3 +241,29 @@ describe('GET /staff/inventory/items', () => {
     expect((await app.request('/staff/inventory/items', {}, asStaff('dev-reception', ['staff']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/inventory/items', () => {
+  const add = (body: unknown, who = medical) =>
+    app.request('/staff/inventory/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('adds an item with no stock; a similar name needs force', async () => {
+    const res = await add({ name: 'Surgical gloves 7.5', kind: 'surgical', unit: 'pair', packSize: 50, hsn: '4015', gstRate: 12, mrpPaise: 3000 });
+    expect(res.status).toBe(201);
+    const item = (await res.json()) as { id: string };
+    expect(item).toMatchObject({ name: 'Surgical gloves 7.5', kind: 'surgical', unit: 'pair', packSize: 50, hsn: '4015', gstRate: 12, mrpPaise: 3000, active: true, qtyOnHand: 0, qtyUsable: 0 });
+    const dup = await add({ name: 'surgical  Gloves, 7.5', kind: 'surgical', unit: 'pair' });
+    expect(dup.status).toBe(409);
+    expect(await dup.json()).toMatchObject({ error: 'possible_duplicate', matches: [{ id: item.id, name: 'Surgical gloves 7.5' }] });
+    expect(await (await add({ name: 'Gauze roll', kind: 'consumable', unit: 'roll' })).json()).toMatchObject({ error: 'possible_duplicate', matches: [{ id: gauze }] });
+    expect(await (await add({ name: 'Paracetamol syrup', kind: 'other', unit: 'bottle' })).json()).toMatchObject({ error: 'possible_duplicate' });
+    expect((await add({ name: 'surgical  Gloves, 7.5', kind: 'surgical', unit: 'pair', force: true })).status).toBe(201);
+    expect((await add({ name: 'Surgical gloves 8', kind: 'surgical', unit: 'pair' })).status).toBe(201);
+  });
+
+  it('422 for a drug, a bad GST rate or extra fields; 403 for a nurse', async () => {
+    expect((await add({ name: 'Some tablet', kind: 'drug', unit: 'tablet' })).status).toBe(422);
+    expect((await add({ name: 'Cotton', kind: 'consumable', unit: 'roll', gstRate: 7 })).status).toBe(422);
+    expect((await add({ name: 'Cotton', kind: 'consumable', unit: 'roll', qtyOnHand: 5 })).status).toBe(422);
+    expect((await add({ name: 'Cotton', kind: 'consumable', unit: 'roll' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
