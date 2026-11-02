@@ -789,4 +789,23 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC surgeries_patient ON surgeries (patient_id, scheduled_at)',
     ],
   },
+  {
+    // Implants put in at a surgery (api-list.md Implant): batch and MRP, as the sticker shows, for recalls and the bill.
+    id: '0050_implants',
+    statements: () => [
+      ...createTable('implants', [
+        'surgery_id uuid NOT NULL',
+        'patient_id uuid NOT NULL',
+        'name text NOT NULL',
+        'manufacturer text',
+        'batch_no text NOT NULL',
+        'size text',
+        'sticker_document_id uuid',
+        'mrp_paise bigint NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC implants_surgery ON implants (surgery_id)',
+      // A recall: which patients got this batch.
+      'CREATE INDEX ASYNC implants_batch ON implants (batch_no)',
+    ],
+  },
 ];

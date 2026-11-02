@@ -145,3 +145,17 @@ export async function planSurgery(db: Queryable, input: NewSurgery, by: string, 
   );
   return toSurgery(rows[0] as Record<string, unknown>);
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One surgery; 404 if there is none. */
+export async function getSurgery(db: Queryable, id: string): Promise<Surgery> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM surgeries WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such surgery');
+  return toSurgery(rows[0] as Record<string, unknown>);
+}
+
+/** 409 for a cancelled surgery. */
+export function assertNotCancelled(surgery: Surgery): void {
+  if (surgery.status === 'cancelled') throw new AppError(409, 'cancelled', 'this surgery was cancelled');
+}

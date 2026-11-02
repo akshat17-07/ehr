@@ -79,3 +79,30 @@ describe('POST /staff/surgeries', () => {
     expect((await plan(surgery, nurse)).status).toBe(403);
   });
 });
+
+describe('POST /staff/surgeries/{id}/implants', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const add = (id: string, body: unknown, who = doctor) => app.request(`/staff/surgeries/${id}/implants`, json(body), who);
+  const implant = { name: 'Locking compression plate, 8 hole', manufacturer: 'Orthomed', batchNo: 'LCP-2611-044', size: '4.5 mm', mrpPaise: 1850000 };
+  const surgeryOf = async (status = 'scheduled') =>
+    String((await db.query(
+      `INSERT INTO surgeries (id, status, created_by, updated_by, patient_id, procedure, surgeon_id, team_ids, scheduled_at, venue, charges_paise, consent_document_ids)
+       VALUES (gen_random_uuid(), $1, 'x', 'x', $2, 'ORIF femur', $3, '[]', now(), 'own', 4500000, '[]') RETURNING id`,
+      [status, irfan, surgeonId],
+    )).rows[0]?.id);
+
+  it("records the implant against the surgery's patient", async () => {
+    const id = await surgeryOf();
+    const res = await add(id, implant);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ surgeryId: id, patientId: irfan, ...implant, version: 1 });
+  });
+
+  it('409 for a cancelled surgery; 422 without a batch; 404 for none; 403 for a nurse', async () => {
+    expect(await (await add(await surgeryOf('cancelled'), implant)).json()).toMatchObject({ error: 'cancelled' });
+    const id = await surgeryOf();
+    expect((await add(id, { ...implant, batchNo: undefined })).status).toBe(422);
+    expect((await add(seedId('5e000000', 999), implant)).status).toBe(404);
+    expect((await add(id, implant, nurse)).status).toBe(403);
+  });
+});

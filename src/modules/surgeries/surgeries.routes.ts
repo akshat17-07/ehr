@@ -4,6 +4,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
+import { addImplant } from '../departments/implants.js';
 import { listSurgeries, planSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
 
 const listQuery = z
@@ -27,6 +28,17 @@ const newSurgery = z
   })
   .strict();
 
+// stickerDocumentId comes with documents (#211).
+const newImplant = z
+  .object({
+    name: z.string().trim().min(2).max(200),
+    manufacturer: z.string().trim().min(1).max(200).optional(),
+    batchNo: z.string().trim().min(1).max(50),
+    size: z.string().trim().min(1).max(50).optional(),
+    mrpPaise: z.number().int().min(0).max(10_000_000_000),
+  })
+  .strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -39,4 +51,10 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     const surgery = await planSurgery(await dbOf(c), newSurgery.parse(await bodyOf(c)), userOf(c).sub);
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery, 201);
+  })
+  // #85
+  .post('/:id/implants', requirePermission('dept.ortho'), async (c) => {
+    const implant = await addImplant(await dbOf(c), c.req.param('id'), newImplant.parse(await bodyOf(c)), userOf(c).sub);
+    auditDetails(c, { patientId: implant.patientId, recordType: 'implant', recordId: implant.id });
+    return c.json(implant, 201);
   });
