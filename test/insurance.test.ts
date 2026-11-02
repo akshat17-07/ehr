@@ -47,3 +47,29 @@ describe('GET /staff/patients/{id}/policies', () => {
     expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/policies`, {}, doctor)).status).toBe(404);
   });
 });
+
+describe('POST /staff/patients/{id}/policies', () => {
+  const kavita = seedId('9a710000', 4);
+  const add = (patientId: string, body: unknown, who = doctor) =>
+    app.request(`/staff/patients/${patientId}/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const body = { insurerId: star, tpaId: mediAssist, policyNo: 'STAR-778', memberId: 'M1', holderName: 'Kavita Sharma', validFrom: '2026-04-01', validTo: '2027-03-31', sumInsuredPaise: 50_000_000 };
+
+  it('puts the policy on file; the same number again is a duplicate', async () => {
+    const res = await add(kavita, body);
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { id: string };
+    expect(made).toMatchObject({ ...body, patientId: kavita, documentIds: [], createdBy: 'dev-doctor' });
+    const again = await add(kavita, body);
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: 'duplicate', policyId: made.id });
+    expect(((await (await app.request(`/staff/patients/${kavita}/policies`, {}, doctor)).json()) as { id: string }[]).map((p) => p.id)).toContain(made.id);
+  });
+
+  it('422 for an unknown insurer, backwards dates or a document not of this patient; 403 for a nurse', async () => {
+    expect((await add(kavita, { ...body, policyNo: 'X1', insurerId: seedId('1a000000', 99) })).status).toBe(422);
+    expect((await add(kavita, { ...body, policyNo: 'X2', tpaId: seedId('1b000000', 99) })).status).toBe(422);
+    expect((await add(kavita, { ...body, policyNo: 'X3', validTo: '2026-01-01' })).status).toBe(422);
+    expect((await add(kavita, { ...body, policyNo: 'X4', documentIds: [seedId('d0c00000', 99)] })).status).toBe(422);
+    expect((await add(kavita, { ...body, policyNo: 'X5' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

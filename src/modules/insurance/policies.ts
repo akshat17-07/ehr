@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { indiaDate } from '../../time/india.js';
+import { AppError } from '../../middleware/errors.js';
+import { assertPatientDocuments } from '../documents/documents.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 
 // Insurance policies on file (api-list.md Policy). Typed in by the TPA desk; there is no insurer portal link.
 
@@ -53,4 +57,54 @@ export async function patientPolicies(db: Queryable, patientId: string, query: {
     query.active ? [patient.id, today] : [patient.id],
   );
   return rows.map(toPolicy);
+}
+
+export interface PolicyFields {
+  insurerId: string;
+  tpaId?: string;
+  policyNo: string;
+  memberId?: string;
+  holderName: string;
+  validFrom: string;
+  validTo: string;
+  sumInsuredPaise?: number;
+  documentIds?: string[];
+}
+
+/** 422 unless the insurer (and TPA) are on the list and active, and the dates run forwards. */
+export async function assertPolicyFields(db: Queryable, f: Pick<PolicyFields, 'insurerId' | 'tpaId' | 'validFrom' | 'validTo'>): Promise<void> {
+  const active = async (table: 'insurers' | 'tpas', id: string) => (await db.query(`SELECT 1 FROM ${table} WHERE id = $1 AND active`, [id])).rows.length > 0;
+  if (!(await active('insurers', f.insurerId))) throw new AppError(422, 'validation_failed', 'insurerId: no such active insurer');
+  if (f.tpaId && !(await active('tpas', f.tpaId))) throw new AppError(422, 'validation_failed', 'tpaId: no such active TPA');
+  if (f.validTo < f.validFrom) throw new AppError(422, 'validation_failed', 'validTo: before validFrom');
+}
+
+/** #132: 404 for no patient; 422 for a bad insurer, TPA, dates or documents; 409 duplicate for the same insurer and policy number. */
+export async function addPolicy(db: Queryable, patientId: string, input: PolicyFields, by: string): Promise<Policy> {
+  const patient = await getPatient(db, patientId);
+  await assertPolicyFields(db, input);
+  const documentIds = [...new Set(input.documentIds ?? [])];
+  await assertPatientDocuments(db, patient.id, documentIds, 'documentIds');
+  const { rows: same } = await db.query('SELECT id FROM policies WHERE insurer_id = $1 AND policy_no = $2 AND patient_id = $3 AND voided_at IS NULL', [
+    input.insurerId,
+    input.policyNo,
+    patient.id,
+  ]);
+  if (same[0]) throw new AppError(409, 'duplicate', 'this policy is already on file', { policyId: String(same[0].id) });
+  const { rows } = await db.query(
+    `INSERT INTO policies (id, status, created_by, updated_by, patient_id, insurer_id, tpa_id, policy_no, member_id, holder_name, valid_from, valid_to, sum_insured_paise, document_ids)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+    [
+      randomUUID(), by, patient.id, input.insurerId, input.tpaId ?? null, input.policyNo, input.memberId ?? null, input.holderName,
+      input.validFrom, input.validTo, input.sumInsuredPaise ?? null, JSON.stringify(documentIds),
+    ],
+  );
+  return getPolicy(db, String(rows[0]?.id));
+}
+
+/** 404 for no policy (or not a UUID). */
+export async function getPolicy(db: Queryable, id: string): Promise<Policy> {
+  const { rows } = UUID.test(id) ? await db.query(`SELECT ${POLICY_COLUMNS} FROM policies WHERE id = $1`, [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such policy');
+  return toPolicy(rows[0] as Record<string, unknown>);
 }

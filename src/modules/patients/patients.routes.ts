@@ -29,7 +29,7 @@ import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescription
 import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits.js';
-import { patientPolicies } from '../insurance/policies.js';
+import { addPolicy, patientPolicies } from '../insurance/policies.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -181,6 +181,19 @@ const timelineQuery = pageQuery.extend({
   to: z.iso.date().optional(),
   kind: z.enum(TIMELINE_KINDS).optional(),
 });
+
+export const policyFields = {
+  insurerId: z.uuid(),
+  tpaId: z.uuid().optional(),
+  policyNo: z.string().trim().min(1).max(60),
+  memberId: z.string().trim().min(1).max(60).optional(),
+  holderName: z.string().trim().min(1).max(200),
+  validFrom: z.iso.date(),
+  validTo: z.iso.date(),
+  sumInsuredPaise: z.number().int().min(0).max(100_000_000_000).optional(),
+  documentIds: z.array(z.uuid()).max(20).optional(),
+};
+const newPolicy = z.object(policyFields).strict();
 
 const newDeposit = z
   .object({
@@ -375,6 +388,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const policies = await patientPolicies(await dbOf(c), id, query);
     auditDetails(c, { patientId: id, recordType: 'patient', recordId: id });
     return c.json(policies);
+  })
+  // #132
+  .post('/:id/policies', requirePermission('insurance.policy'), async (c) => {
+    const input = newPolicy.parse(await bodyOf(c));
+    const policy = await addPolicy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: policy.patientId, recordType: 'policy', recordId: policy.id });
+    return c.json(policy, 201);
   })
   // #127
   .get('/:id/deposits', requirePermission('bill.view'), async (c) => {
