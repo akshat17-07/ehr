@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { pageQuery } from '../../db/page.js';
-import { addClaimEvent, CLAIM_KINDS, CLAIM_STATUSES, createClaim, getClaim, listClaims } from './claims.js';
+import { addClaimDocuments, addClaimEvent, CLAIM_KINDS, CLAIM_STATUSES, createClaim, getClaim, listClaims } from './claims.js';
 
 const newClaim = z
   .object({
@@ -64,4 +64,11 @@ export const claimsRoutes = new Hono<AuthEnv>()
     const event = await addClaimEvent(db, c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: (await getClaim(db, event.claimId)).patientId, recordType: 'claim', recordId: event.claimId });
     return c.json(event, 201);
+  })
+  // #138
+  .post('/:id/documents', requirePermission('claim.update'), async (c) => {
+    const input = z.object({ documentIds: z.array(z.uuid()).min(1).max(50) }).strict().parse(await bodyOf(c));
+    const claim = await addClaimDocuments(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: claim.patientId, recordType: 'claim', recordId: claim.id });
+    return c.json(claim);
   });

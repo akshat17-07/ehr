@@ -190,3 +190,29 @@ describe('POST /staff/claims/{id}/events', () => {
     expect((await step(seedId('c1a00000', 999), { status: 'submitted' })).status).toBe(404);
   });
 });
+
+describe('POST /staff/claims/{id}/documents', () => {
+  /** A ready document row straight in the table (the upload flow is tested in documents.test). */
+  const document = async (patientId: string) => {
+    const id = randomUUID();
+    await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, patient_id, type, file_name, mime, size_bytes, sha256, s3_key)
+       VALUES ($1, 'ready', 'test', 'test', $2, 'insurance', 'card.pdf', 'application/pdf', 100, $3, $4)`,
+      [id, patientId, randomUUID().replace(/-/g, '').padEnd(64, '0'), `test/${id}`],
+    );
+    return id;
+  };
+
+  it("adds the patient's documents once each; 422 for another patient's", async () => {
+    const made = (await (await post('/staff/claims', { patientId: ramesh, policyId: rameshPolicy, kind: 'reimbursement', amountClaimedPaise: 100 })).json()) as { id: string };
+    const a = await document(ramesh);
+    const b = await document(ramesh);
+    const res = await post(`/staff/claims/${made.id}/documents`, { documentIds: [a] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ documentIds: [a] });
+    expect(await (await post(`/staff/claims/${made.id}/documents`, { documentIds: [a, b] })).json()).toMatchObject({ documentIds: [a, b] });
+    expect((await post(`/staff/claims/${made.id}/documents`, { documentIds: [await document(irfan)] })).status).toBe(422);
+    expect((await post(`/staff/claims/${made.id}/documents`, { documentIds: [a] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    expect((await post(`/staff/claims/${seedId('c1a00000', 999)}/documents`, { documentIds: [a] })).status).toBe(404);
+  });
+});

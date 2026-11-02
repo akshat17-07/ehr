@@ -192,3 +192,13 @@ export async function addClaimEvent(
     return toClaimEvent(rows[0] as Record<string, unknown>);
   });
 }
+
+/** #138: adds the patient's uploaded documents to the claim (ones already there are kept once). 422 for another patient's. */
+export async function addClaimDocuments(db: Queryable, id: string, input: { documentIds: string[] }, by: string): Promise<Claim> {
+  const claim = await getClaim(db, id);
+  await assertPatientDocuments(db, claim.patientId, input.documentIds, 'documentIds');
+  const documentIds = [...new Set([...claim.documentIds, ...input.documentIds])];
+  if (documentIds.length === claim.documentIds.length) return claim;
+  await updateRecord(db, 'claims', { id, version: claim.version, by, set: { document_ids: JSON.stringify(documentIds) } });
+  return getClaim(db, id);
+}
