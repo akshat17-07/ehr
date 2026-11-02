@@ -22,7 +22,7 @@ import { patientObservations } from '../encounters/observations.js';
 import { patientVitals } from '../encounters/vitals.js';
 import { addAllergy, ALLERGY_SEVERITIES, listAllergies } from './allergies.js';
 import { addGuardian } from './guardians.js';
-import { listProblems } from './problems.js';
+import { addProblem, listProblems } from './problems.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
 // /staff/patients (api-list.md 6.3).
@@ -119,6 +119,13 @@ const newAllergy = z
   .strict();
 
 const problemsQuery = z.object({ active: z.enum(['true', 'false']).optional() });
+const newProblem = z
+  .object({
+    text: z.string().trim().min(2).max(500),
+    icd10: z.string().trim().regex(/^[A-Za-z]\d{2}(\.\w{1,4})?$/, 'an ICD-10 code looks like J18.9').optional(),
+    onset: z.iso.date().optional(),
+  })
+  .strict();
 
 const timelineQuery = pageQuery.extend({
   from: z.iso.date().optional(),
@@ -228,6 +235,13 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await listProblems(db, patient.id, active === undefined ? undefined : active === 'true'));
+  })
+  // #56
+  .post('/:id/problems', requirePermission('problem.write'), async (c) => {
+    const input = newProblem.parse(await bodyOf(c));
+    const problem = await addProblem(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: problem.patientId, recordType: 'problem', recordId: problem.id });
+    return c.json(problem, 201);
   })
   // #26
   .post('/:id/guardians', requirePermission('patient.update'), async (c) => {

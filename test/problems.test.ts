@@ -38,3 +38,31 @@ describe('GET /staff/patients/{id}/problems', () => {
     expect((await list(irfan, '', asStaff('dev-gp', ['gp']))).status).toBe(403);
   });
 });
+
+describe('POST /staff/patients/{id}/problems', () => {
+  const rahul = seedId('9a710000', 5);
+  const add = (patient: string, body: unknown, who = doctor) =>
+    app.request(`/staff/patients/${patient}/problems`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('adds an active problem, the code upper-cased', async () => {
+    const res = await add(rahul, { text: 'Type 2 diabetes', icd10: 'e11.9', onset: '2021-03-01' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ patientId: rahul, text: 'Type 2 diabetes', icd10: 'E11.9', onset: '2021-03-01', status: 'active', createdBy: 'dev-doctor' });
+    expect((await add(rahul, { text: 'Asthma' })).status).toBe(201);
+    expect((await list(rahul)).body.map((p) => p.text)).toEqual(['Type 2 diabetes', 'Asthma']);
+  });
+
+  it('409 if already active (same code or same text); a resolved one may come back', async () => {
+    expect(await (await add(rahul, { text: 'Diabetes', icd10: 'E11.9' })).json()).toMatchObject({ error: 'already_recorded' });
+    expect(await (await add(rahul, { text: 'asthma' })).json()).toMatchObject({ error: 'already_recorded' });
+    expect((await add(irfan, { text: 'Dengue again', icd10: 'A90' })).status).toBe(201);
+  });
+
+  it('422 for an unknown code, a future onset or a bad body; 404 for no patient; 403 for a nurse', async () => {
+    expect((await add(rahul, { text: 'Something', icd10: 'Z99.99' })).status).toBe(422);
+    expect((await add(rahul, { text: 'Something', onset: '2999-01-01' })).status).toBe(422);
+    expect((await add(rahul, { text: 'Something', extra: 1 })).status).toBe(422);
+    expect((await add(seedId('9a710000', 999), { text: 'Something' })).status).toBe(404);
+    expect((await add(rahul, { text: 'Something' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
-import type { BaseFields } from './patients.js';
+import { AppError } from '../../middleware/errors.js';
+import { indiaDate } from '../../time/india.js';
+import { getPatient, type BaseFields } from './patients.js';
 
 // Problem list (api-list.md Problem): the patient's ongoing conditions (diabetes, hypertension), across encounters.
 // status: active until resolved (#57).
@@ -40,4 +43,33 @@ export async function listProblems(db: Queryable, patientId: string, active?: bo
     [patientId],
   );
   return rows.map(toProblem);
+}
+
+export interface NewProblem {
+  text: string;
+  icd10?: string;
+  onset?: string;
+}
+
+/** #56: 422 for a code not in the ICD-10 list or an onset after today; 409 if already an active problem. */
+export async function addProblem(db: Queryable, patientId: string, input: NewProblem, by: string, now = new Date()): Promise<Problem> {
+  const patient = await getPatient(db, patientId);
+  const icd10 = input.icd10?.toUpperCase();
+  if (icd10) {
+    const code = await db.query("SELECT 1 FROM codes WHERE system = 'icd10' AND code = $1 AND status = 'active'", [icd10]);
+    if (!code.rows[0]) throw new AppError(422, 'invalid_input', 'icd10: not in the code list');
+  }
+  if (input.onset && input.onset > indiaDate(now)) throw new AppError(422, 'invalid_input', 'onset: cannot be in the future');
+  const active = await listProblems(db, patient.id, true);
+  if (active.some((p) => (icd10 && p.icd10 === icd10) || p.text.toLowerCase() === input.text.toLowerCase())) {
+    throw new AppError(409, 'already_recorded', 'this problem is already on the list');
+  }
+  const id = randomUUID();
+  await db.query(
+    `INSERT INTO problems (id, status, created_by, updated_by, patient_id, icd10, text, onset)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6)`,
+    [id, by, patient.id, icd10 ?? null, input.text, input.onset ?? null],
+  );
+  const { rows } = await db.query(`${PROBLEM_SELECT} WHERE id = $1`, [id]);
+  return toProblem(rows[0] as Record<string, unknown>);
 }
