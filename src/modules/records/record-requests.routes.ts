@@ -1,6 +1,9 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
+import { assertPatientAccess } from '../access/patient-access.js';
+import { getPatient } from '../patients/patients.js';
+import { exportPatient } from './exports.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, exportsOf, mailerOf, userOf } from '../../middleware/context.js';
@@ -45,4 +48,16 @@ export const recordRequestsRoutes = new Hono<AuthEnv>()
     const request = await rejectRecordRequest(await dbOf(c), c.req.param('id'), reason, userOf(c).sub);
     auditDetails(c, { patientId: request.patientId, recordType: 'record_request', recordId: request.id, reason });
     return c.json(request);
+  });
+
+// Mounted at /staff/fhir.
+export const fhirRoutes = new Hono<AuthEnv>()
+  // #150
+  .post('/Patient/:id/$export', requirePermission('fhir.export'), async (c) => {
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    await assertPatientAccess(db, userOf(c), patient);
+    const done = await exportPatient(db, patient.id, exportsOf(c), userOf(c).sub);
+    auditDetails(c, { action: 'print', patientId: patient.id, recordType: 'export', recordId: done.id });
+    return c.json(done, 202);
   });

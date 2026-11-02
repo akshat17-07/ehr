@@ -1278,4 +1278,13 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC share_links_request ON share_links (record_request_id)',
     ],
   },
+  {
+    // FHIR exports (api-list.md Export). kind: patient (#150) or full (#199). The file is in the exports bucket
+    // (s3_key), which deletes it after 7 days. status: running, done or failed.
+    id: '0085_exports',
+    statements: () => [
+      ...createTable('exports', ['kind text NOT NULL', 'patient_id uuid', 's3_key text NOT NULL', 'finished_at timestamptz']),
+      'CREATE INDEX ASYNC exports_created ON exports (created_at)',
+    ],
+  },
 ];
