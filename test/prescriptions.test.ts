@@ -76,3 +76,23 @@ describe('POST /staff/encounters/{id}/prescriptions', () => {
     expect((await prescribe({ lines: [line('ORS')] }, seedId('e0000000', 999))).status).toBe(404);
   });
 });
+
+describe('POST /staff/prescriptions/check', () => {
+  const check = (body: unknown, who = doctor) => app.request('/staff/prescriptions/check', json(body), who);
+
+  it('returns the alerts without saving anything', async () => {
+    const before = (await db.query('SELECT count(*)::int AS n FROM prescriptions')).rows[0]?.n;
+    const res = await check({ patientId: ramesh, lines: [line('Amoxicillin', { drugId: drug(3) }), line('Morphine', { drugId: drug(12) })] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { alerts: Alert[] }).alerts.map((a) => `${a.id} ${a.severity}`)).toEqual(['allergy:0 warning', 'schedule:1 info']);
+    expect((await db.query('SELECT count(*)::int AS n FROM prescriptions')).rows[0]?.n).toBe(before);
+    expect(await (await check({ patientId: seedId('9a710000', 3), lines: [line('Paracetamol')] })).json()).toEqual({ alerts: [] });
+  });
+
+  it('422 for a bad body or unknown drug; 404 for no patient; 403 for a nurse', async () => {
+    expect((await check({ patientId: ramesh, lines: [] })).status).toBe(422);
+    expect((await check({ patientId: ramesh, lines: [line('X', { drugId: drug(999) })] })).status).toBe(422);
+    expect((await check({ patientId: seedId('9a710000', 999), lines: [line('Paracetamol')] })).status).toBe(404);
+    expect((await check({ patientId: ramesh, lines: [line('Paracetamol')] }, nurse)).status).toBe(403);
+  });
+});

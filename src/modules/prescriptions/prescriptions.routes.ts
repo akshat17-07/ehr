@@ -1,6 +1,11 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
+import { dbOf } from '../../middleware/context.js';
+import { requirePermission } from '../../permissions/check.js';
+import { getPatient } from '../patients/patients.js';
+import { checkLines } from './rx-checks.js';
 
 // Prescriptions by id (api-list.md #64-#68), mounted at /staff/prescriptions. They are written in an encounter (#62).
 
@@ -23,4 +28,17 @@ export const rxLine = z
 export const rxLines = z.array(rxLine).min(1).max(30);
 export const acknowledgedAlerts = z.array(z.string().max(40)).max(100).optional();
 
-export const prescriptionsRoutes = new Hono<AuthEnv>();
+const checkBody = z.object({ patientId: z.uuid(), lines: rxLines }).strict();
+
+/** A JSON body, or undefined (then the schema answers 422). */
+const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
+
+export const prescriptionsRoutes = new Hono<AuthEnv>()
+  // #65: the alerts while the doctor types, before saving.
+  .post('/check', requirePermission('rx.write'), async (c) => {
+    const { patientId, lines } = checkBody.parse(await bodyOf(c));
+    const db = await dbOf(c);
+    const patient = await getPatient(db, patientId);
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json({ alerts: await checkLines(db, patient.id, lines) });
+  });
