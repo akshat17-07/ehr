@@ -126,3 +126,43 @@ describe('GET /staff/surgeries/{id}', () => {
     expect((await get(id, nurse)).status).toBe(403);
   });
 });
+
+describe('PATCH /staff/surgeries/{id}', () => {
+  const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const patch = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/surgeries/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const partner = seedId('9a000000', 1);
+  const planned = async (extra: object = {}) =>
+    (await (await app.request('/staff/surgeries', json({ patientId: irfan, procedure: 'Laparoscopic cholecystectomy', surgeonId, scheduledAt: new Date(Date.now() + 2 * 86_400_000).toISOString(), venue: 'own', chargesPaise: 6000000, ...extra }), doctor)).json()) as { id: string; version: number };
+
+  it('reschedules and moves the venue; the old row is in the history with the reason', async () => {
+    const { id, version } = await planned();
+    const at = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const res = await patch(id, { version, scheduledAt: at, venue: 'partner', partnerHospitalId: partner, chargesPaise: 6500000, reason: 'OT booked at the partner hospital' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ version: version + 1, scheduledAt: at, venue: 'partner', partnerHospitalId: partner, chargesPaise: 6500000 });
+    const history = (await db.query('SELECT reason FROM surgeries_versions WHERE record_id = $1', [id])).rows;
+    expect(history).toEqual([{ reason: 'OT booked at the partner hospital' }]);
+    const back = (await (await patch(id, { version: version + 1, venue: 'own' })).json()) as Record<string, unknown>;
+    expect(back.venue).toBe('own');
+    expect(back.partnerHospitalId).toBeUndefined();
+  });
+
+  it('422 for a partner without its hospital, a hospital for our own theatre or nothing to change', async () => {
+    const { id, version } = await planned();
+    expect((await patch(id, { version, venue: 'partner' })).status).toBe(422);
+    expect((await patch(id, { version, partnerHospitalId: partner })).status).toBe(422);
+    expect((await patch(id, { version, reason: 'Just because' })).status).toBe(422);
+  });
+
+  it('409 once done or cancelled, or for a stale version; 403 for a nurse; 404 for none', async () => {
+    const { id, version } = await planned();
+    expect((await patch(id, { version, chargesPaise: 1 }, nurse)).status).toBe(403);
+    expect((await patch(id, { version: version + 5, chargesPaise: 1 })).status).toBe(409);
+    await db.query("UPDATE surgeries SET status = 'done' WHERE id = $1", [id]);
+    expect(await (await patch(id, { version, chargesPaise: 1 })).json()).toMatchObject({ error: 'done' });
+    await db.query("UPDATE surgeries SET status = 'cancelled' WHERE id = $1", [id]);
+    expect(await (await patch(id, { version, chargesPaise: 1 })).json()).toMatchObject({ error: 'cancelled' });
+    expect((await patch(seedId('5e000000', 999), { version: 1, chargesPaise: 1 })).status).toBe(404);
+  });
+});

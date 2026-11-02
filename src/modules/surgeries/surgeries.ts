@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDayStart } from '../../time/india.js';
@@ -122,13 +123,17 @@ export interface NewSurgery {
 const PAST_GRACE_MS = DAY_MS;
 const MAX_AHEAD_MS = 365 * DAY_MS;
 
+function checkWhen(scheduledAt: Date, now: Date): void {
+  const at = scheduledAt.getTime();
+  if (at < now.getTime() - PAST_GRACE_MS || at > now.getTime() + MAX_AHEAD_MS) invalid('scheduledAt: from yesterday to a year ahead');
+}
+
 /** #87: a partner venue needs its hospital, and only then. The surgeon is not repeated in the team. */
 export async function planSurgery(db: Queryable, input: NewSurgery, by: string, now = new Date()): Promise<Surgery> {
   if ((input.venue === 'partner') !== (input.partnerHospitalId !== undefined)) {
     invalid('partnerHospitalId: needed for a partner venue, and only then');
   }
-  const at = input.scheduledAt.getTime();
-  if (at < now.getTime() - PAST_GRACE_MS || at > now.getTime() + MAX_AHEAD_MS) invalid('scheduledAt: from yesterday to a year ahead');
+  checkWhen(input.scheduledAt, now);
   const patient = await getPatient(db, input.patientId, now);
   await assertActiveUsers(db, 'surgeonId', [input.surgeonId], SURGEONS);
   const teamIds = [...new Set(input.teamIds ?? [])].filter((id) => id !== input.surgeonId);
@@ -158,4 +163,48 @@ export async function getSurgery(db: Queryable, id: string): Promise<Surgery> {
 /** 409 for a cancelled surgery. */
 export function assertNotCancelled(surgery: Surgery): void {
   if (surgery.status === 'cancelled') throw new AppError(409, 'cancelled', 'this surgery was cancelled');
+}
+
+export interface SurgeryChange {
+  version: number;
+  scheduledAt?: Date;
+  teamIds?: string[];
+  venue?: Surgery['venue'];
+  partnerHospitalId?: string;
+  chargesPaise?: number;
+  instructions?: string;
+  reason?: string;
+}
+
+/**
+ * #89: only while scheduled (409 done / cancelled). Moving to our own theatre drops the partner hospital; moving to
+ * a partner needs one.
+ */
+export async function updateSurgery(db: Queryable, id: string, change: SurgeryChange, by: string, now = new Date()): Promise<Surgery> {
+  const surgery = await getSurgery(db, id);
+  assertNotCancelled(surgery);
+  if (surgery.status === 'done') throw new AppError(409, 'done', 'this surgery is done; write to the op note instead');
+  const set: Record<string, unknown> = {};
+  if (change.scheduledAt) {
+    checkWhen(change.scheduledAt, now);
+    set.scheduled_at = change.scheduledAt;
+  }
+  if (change.teamIds) {
+    const teamIds = [...new Set(change.teamIds)].filter((t) => t !== surgery.surgeonId);
+    await assertActiveUsers(db, 'teamIds', teamIds);
+    set.team_ids = JSON.stringify(teamIds);
+  }
+  if (change.venue !== undefined || change.partnerHospitalId !== undefined) {
+    const venue = change.venue ?? surgery.venue;
+    if (venue === 'own' && change.partnerHospitalId) invalid('partnerHospitalId: only for a partner venue');
+    const partner = venue === 'own' ? undefined : (change.partnerHospitalId ?? surgery.partnerHospitalId);
+    if (!partner && venue === 'partner') invalid('partnerHospitalId: needed for a partner venue');
+    if (change.partnerHospitalId) await assertPartnerHospital(db, change.partnerHospitalId);
+    set.venue = venue;
+    set.partner_hospital_id = partner ?? null;
+  }
+  if (change.chargesPaise !== undefined) set.charges_paise = change.chargesPaise;
+  if (change.instructions !== undefined) set.instructions = change.instructions;
+  await updateRecord(db, 'surgeries', { id, version: change.version, by, set, ...(change.reason && { reason: change.reason }) });
+  return getSurgery(db, id);
 }

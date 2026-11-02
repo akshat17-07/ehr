@@ -7,7 +7,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
-import { getSurgery, listSurgeries, planSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
+import { getSurgery, listSurgeries, planSurgery, updateSurgery, SIDES, SURGERY_STATUSES, VENUES } from './surgeries.js';
 
 const listQuery = z
   .object({ from: z.iso.date(), to: z.iso.date(), surgeonId: z.uuid().optional(), status: z.enum(SURGERY_STATUSES).optional() })
@@ -41,6 +41,21 @@ const newImplant = z
   })
   .strict();
 
+// consentDocumentIds come with documents (#211).
+const surgeryChange = z
+  .object({
+    version: z.number().int().min(1),
+    scheduledAt: z.iso.datetime({ offset: true }).transform((s) => new Date(s)).optional(),
+    teamIds: z.array(z.uuid()).max(15).optional(),
+    venue: z.enum(VENUES).optional(),
+    partnerHospitalId: z.uuid().optional(),
+    chargesPaise: z.number().int().min(0).max(10_000_000_000).optional(),
+    instructions: z.string().trim().min(1).max(2000).optional(),
+    reason: z.string().trim().min(5).max(500).optional(),
+  })
+  .strict()
+  .refine((b) => Object.keys(b).some((k) => k !== 'version' && k !== 'reason'), 'change at least one field');
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -61,6 +76,12 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, surgery.patientId));
     return c.json({ ...surgery, implants: await surgeryImplants(db, surgery.id) });
+  })
+  // #89
+  .patch('/:id', requirePermission('surgery.update'), async (c) => {
+    const surgery = await updateSurgery(await dbOf(c), c.req.param('id'), surgeryChange.parse(await bodyOf(c)), userOf(c).sub);
+    auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
+    return c.json(surgery);
   })
   // #85
   .post('/:id/implants', requirePermission('dept.ortho'), async (c) => {
