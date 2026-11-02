@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { pageQuery } from '../../db/page.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { getPatient } from '../patients/patients.js';
-import { exportPatient } from './exports.js';
+import { exportPatient, getExport } from './exports.js';
+import { requireEnv } from '../../config/env.js';
+import { LINK_SECONDS } from '../../files/signed-url.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, exportsOf, mailerOf, userOf } from '../../middleware/context.js';
+import { dbOf, exportsOf, mailerOf, signerOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { createRecordRequest, fulfilRecordRequest, listRecordRequests, rejectRecordRequest, RECORD_REQUEST_STATUSES, RECORD_SCOPES } from './record-requests.js';
 
@@ -60,4 +62,16 @@ export const fhirRoutes = new Hono<AuthEnv>()
     const done = await exportPatient(db, patient.id, exportsOf(c), userOf(c).sub);
     auditDetails(c, { action: 'print', patientId: patient.id, recordType: 'export', recordId: done.id });
     return c.json(done, 202);
+  });
+
+// Mounted at /staff/exports.
+export const exportsRoutes = new Hono<AuthEnv>()
+  // #151: a 10-minute download link once done.
+  .get('/:id', requirePermission('fhir.export'), async (c) => {
+    const db = await dbOf(c);
+    const { s3Key, ...found } = await getExport(db, c.req.param('id'));
+    if (found.patientId) await assertPatientAccess(db, userOf(c), await getPatient(db, found.patientId));
+    const downloadUrl = found.status === 'done' ? await signerOf(c)(requireEnv('EXPORTS_BUCKET'), s3Key, LINK_SECONDS) : undefined;
+    auditDetails(c, { ...(found.patientId && { patientId: found.patientId }), recordType: 'export', recordId: found.id });
+    return c.json({ ...found, ...(downloadUrl && { downloadUrl }) });
   });

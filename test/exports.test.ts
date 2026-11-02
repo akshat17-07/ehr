@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../src/app.js';
+import { env } from '../src/config/env.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
 
+env.EXPORTS_BUCKET = 'exports-test';
 const db = await openLocalDb();
 await seedDev(db);
 /** What the fake exports bucket holds, by key. */
@@ -60,5 +62,24 @@ describe('POST /staff/fhir/Patient/{id}/$export', () => {
     expect(rows).toHaveLength(1);
     expect((await post(`/staff/fhir/Patient/${seedId('9a710000', 999)}/$export`)).status).toBe(404);
     expect((await post(`/staff/fhir/Patient/${irfan}/$export`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
+
+describe('GET /staff/exports/{id}', () => {
+  it('gives a 10-minute download link once done, none when failed', async () => {
+    const made = (await (await post(`/staff/fhir/Patient/${irfan}/$export`)).json()) as { id: string };
+    const res = await app.request(`/staff/exports/${made.id}`, {}, doctor);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: made.id, status: 'done', downloadUrl: `https://s3.test/exports-test/fhir/${irfan}/${made.id}.json?get=600` });
+    const { rows } = await db.query("SELECT id FROM exports WHERE status = 'failed' LIMIT 1");
+    const failed = (await (await app.request(`/staff/exports/${String(rows[0]!.id)}`, {}, doctor)).json()) as object;
+    expect(failed).toMatchObject({ status: 'failed' });
+    expect(failed).not.toHaveProperty('downloadUrl');
+    expect(failed).not.toHaveProperty('s3Key');
+  });
+
+  it('404 for no export; 403 for a nurse', async () => {
+    expect((await app.request(`/staff/exports/${randomUUID()}`, {}, doctor)).status).toBe(404);
+    expect((await app.request(`/staff/exports/${randomUUID()}`, {}, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
   });
 });
