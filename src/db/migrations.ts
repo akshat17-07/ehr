@@ -983,4 +983,9 @@ export const migrations: Migration[] = [
       ...createTable('recalls', ['item_id uuid NOT NULL', 'batch_nos text NOT NULL', 'reference text NOT NULL', 'note text', 'batches text NOT NULL']),
     ],
   },
+  {
+    // The pharmacy bill a return was refunded against (#103): refunds are at the rate the patient paid.
+    id: '0064_pharmacy_returns_bill',
+    statements: () => ['ALTER TABLE pharmacy_returns ADD COLUMN bill_id uuid'],
+  },
 ];

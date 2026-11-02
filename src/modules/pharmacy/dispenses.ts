@@ -127,8 +127,9 @@ export type RefundMode = (typeof REFUND_MODES)[number];
 
 /**
  * #103: medicines brought back. lineIndex is the position in the dispense's lines; at most what was given (less
- * earlier returns), else 409. The stock goes back to its batch and the refund is at the batch MRP. The prescription
- * is left as it is: a return doesn't put it back in the queue.
+ * earlier returns), else 409. The stock goes back to its batch. The refund is at the rate on the patient's bill for
+ * this dispense; nothing if it isn't billed yet (nothing was charged, and the bill leaves returns out). The
+ * prescription is left as it is: a return doesn't put it back in the queue.
  */
 export async function returnDispense(
   db: Queryable,
@@ -148,9 +149,15 @@ export async function returnDispense(
     back.set(line.batchId, (back.get(line.batchId) ?? 0) + r.qty);
   });
   const batches = await batchesByIds(db, [...back.keys()], now);
+  const { rows: bills } = await db.query('SELECT id, lines FROM pharmacy_bills WHERE dispense_id = $1 AND voided_at IS NULL', [id]);
+  const bill = bills[0];
+  // The rate paid, by drug and batch, from the bill.
+  const paid = new Map(
+    bill ? (JSON.parse(String(bill.lines)) as { drugId: string; batchId: string; mrpPaise: number }[]).map((l) => [`${l.drugId}|${l.batchId}`, l.mrpPaise]) : [],
+  );
   const returned = input.lines.map((r) => {
     const line = lines[r.lineIndex]!;
-    return { lineIndex: r.lineIndex, batchId: line.batchId, qty: r.qty, refundPaise: r.qty * batches.get(line.batchId)!.mrpPaise };
+    return { lineIndex: r.lineIndex, batchId: line.batchId, qty: r.qty, refundPaise: r.qty * (paid.get(`${line.drugId}|${line.batchId}`) ?? 0) };
   });
   const refundPaise = returned.reduce((sum, r) => sum + r.refundPaise, 0);
 
@@ -161,9 +168,9 @@ export async function returnDispense(
       await updateRecord(tx, 'batches', { id: batchId, version: batch.version, by, set: { qty_on_hand: batch.qtyOnHand + qty } });
     }
     await tx.query(
-      `INSERT INTO pharmacy_returns (id, status, created_by, updated_by, dispense_id, patient_id, lines, reason, refund_paise, refund_mode)
-       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8)`,
-      [randomUUID(), by, id, given.patientId, JSON.stringify(returned), input.reason, refundPaise, input.refundMode ?? 'cash'],
+      `INSERT INTO pharmacy_returns (id, status, created_by, updated_by, dispense_id, patient_id, lines, reason, refund_paise, refund_mode, bill_id)
+       VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [randomUUID(), by, id, given.patientId, JSON.stringify(returned), input.reason, refundPaise, input.refundMode ?? 'cash', bill?.id ?? null],
     );
     return { dispense: toDispense(row), refundPaise };
   });

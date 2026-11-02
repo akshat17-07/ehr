@@ -146,17 +146,28 @@ describe('POST /staff/dispenses/{id}/return', () => {
     return { rx, id: ((await (await app.request('/staff/dispenses', json({ prescriptionId: rx, lines }), medical)).json()) as { id: string }).id };
   };
 
-  it('puts the stock back and refunds at the batch MRP; the prescription stays dispensed', async () => {
+  it('puts the stock back and refunds at the rate on the bill; the prescription stays dispensed', async () => {
     const { rx, id } = await given();
+    const bill = (await (await app.request('/staff/pharmacy/bills', json({ patientId: irfan, dispenseId: id, setting: 'ipd' }), medical)).json()) as { id: string };
+    // The batch MRP changes after the sale: the refund is still at what the patient paid.
+    await db.query('UPDATE batches SET mrp_paise = 9900 WHERE id = $1', [seedId('ba000000', 3)]);
     const [three, two] = [await onHand(3), await onHand(2)];
     const res = await back(id, { lines: [{ lineIndex: 0, qty: 2 }, { lineIndex: 1, qty: 4 }], reason: 'stopped by the doctor', refundMode: 'upi' });
+    await db.query('UPDATE batches SET mrp_paise = 2100 WHERE id = $1', [seedId('ba000000', 3)]);
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({ refundPaise: 2 * 2100 + 4 * 2000, dispense: { id, version: 2, lines: [{ qty: 5, returnedQty: 2 }, { qty: 4, returnedQty: 4 }] } });
     expect([await onHand(3), await onHand(2)]).toEqual([three + 2, two + 4]);
-    expect((await db.query('SELECT refund_paise, refund_mode, reason FROM pharmacy_returns WHERE dispense_id = $1', [id])).rows).toEqual([
-      { refund_paise: 12_200, refund_mode: 'upi', reason: 'stopped by the doctor' },
+    expect((await db.query('SELECT refund_paise, refund_mode, reason, bill_id FROM pharmacy_returns WHERE dispense_id = $1', [id])).rows).toEqual([
+      { refund_paise: 12_200, refund_mode: 'upi', reason: 'stopped by the doctor', bill_id: bill.id },
     ]);
     expect((await db.query('SELECT status FROM prescriptions WHERE id = $1', [rx])).rows[0]?.status).toBe('dispensed');
+  });
+
+  it('refunds nothing before the dispense is billed: nothing was charged, and the bill leaves the return out', async () => {
+    const { id } = await given();
+    expect(await (await back(id, { lines: [{ lineIndex: 0, qty: 1 }], reason: 'one strip extra' })).json()).toMatchObject({ refundPaise: 0 });
+    const bill = (await (await app.request('/staff/pharmacy/bills', json({ patientId: irfan, dispenseId: id, setting: 'ipd' }), medical)).json()) as { lines: { qty: number }[] };
+    expect(bill.lines.map((l) => l.qty)).toEqual([4, 4]);
   });
 
   it('409 for more than is left to return; 422 for a missing line or reason; 403 for a nurse; 404 for none', async () => {
