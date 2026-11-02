@@ -3,6 +3,8 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
+import { financialYear } from '../src/modules/pharmacy/bills.js';
+import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -141,5 +143,39 @@ describe('PATCH /staff/bills/{id}', () => {
     expect((await patch(made.id, { version: made.version, lines: [] })).status).toBe(422);
     expect((await patch(seedId('b1000000', 999), { version: 1, lines: [] })).status).toBe(404);
     expect((await patch(made.id, { version: made.version, lines: [] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});
+
+describe('POST /staff/bills/{id}/finalise', () => {
+  const finalise = (id: string, version: number, who = doctor) => app.request(`/staff/bills/${id}/finalise`, json({ version }), who);
+  const year = financialYear(indiaDate());
+  const draft = async (lines: unknown[]) => (await (await bill({ patientId: irfan, lines })).json()) as Bill & { version: number };
+
+  it('numbers each series in turn, with no gaps after a failed try', async () => {
+    const a = await draft([{ tariffId: tariff(1), qty: 1 }]);
+    const b = await draft([{ tariffId: tariff(1), qty: 1 }]);
+    const res = await finalise(a.id, a.version);
+    expect(res.status).toBe(200);
+    const first = (await res.json()) as Bill & { number: string; finalisedAt: string };
+    expect(first).toMatchObject({ status: 'final', series: 'bill_of_supply', finalisedAt: expect.any(String) });
+    const n = Number(first.number.split('/').at(-1));
+    expect(first.number).toBe(`BOS/${year}/${n}`);
+    expect(await (await finalise(b.id, b.version + 5)).json()).toMatchObject({ error: 'conflict' });
+    expect(await (await finalise(a.id, a.version + 1)).json()).toMatchObject({ error: 'not_draft' });
+    expect(((await (await finalise(b.id, b.version)).json()) as { number: string }).number).toBe(`BOS/${year}/${n + 1}`);
+    const taxed = await (await app.request('/staff/pharmacy/bills', json({ patientId: kavita, setting: 'ipd', lines: [{ drugId: seedId('d0000000', 1), batchId: seedId('ba000000', 3), qty: 1 }] }), medical)).json();
+    expect(taxed).toMatchObject({ setting: 'ipd' });
+    const c = (await (await bill({ patientId: kavita, lines: [] })).json()) as Bill & { version: number };
+    expect(c.series).toBe('tax_invoice');
+    expect(((await (await finalise(c.id, c.version)).json()) as { number: string }).number).toMatch(new RegExp(`^INV/${year}/\\d+$`));
+  });
+
+  it('a final bill can no longer be changed; 403 for a nurse; 404 for no bill', async () => {
+    const d = await draft([{ tariffId: tariff(5), qty: 1 }]);
+    expect((await finalise(d.id, d.version, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+    await finalise(d.id, d.version);
+    const patch = await app.request(`/staff/bills/${d.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: d.version + 1, lines: [] }) }, doctor);
+    expect(await patch.json()).toMatchObject({ error: 'not_draft' });
+    expect((await finalise(seedId('b1000000', 999), 1)).status).toBe(404);
   });
 });

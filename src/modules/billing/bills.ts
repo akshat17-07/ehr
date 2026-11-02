@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { withGapFreeCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
@@ -9,7 +10,7 @@ import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { ITEMS } from '../inventory/items.js';
 import { UUID } from '../users/users.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
-import { gstInside } from '../pharmacy/bills.js';
+import { financialYear, gstInside } from '../pharmacy/bills.js';
 
 // Patient bills (api-list.md Bill). Prices are as charged, GST included (services are GST-exempt, goods are at MRP);
 // the GST inside is worked out per line. A bill with any taxed line is a tax invoice, else a bill of supply.
@@ -239,4 +240,20 @@ export async function updateBillLines(db: Queryable, id: string, input: { versio
     set: { lines: JSON.stringify(lines), ...billTotals(lines, billLevelDiscount(bill)) },
   });
   return toBill(row);
+}
+
+/**
+ * #120: the bill gets the next number in its series for the financial year, with no gaps (GST rules):
+ * `<prefix>/<yy-yy>/<n>`, the prefix from the hospital settings. 409 not_draft; 409 for a stale version.
+ */
+export async function finaliseBill(db: Queryable, id: string, input: { version: number }, by: string, now = new Date()): Promise<Bill> {
+  const bill = await getBill(db, id);
+  if (bill.status !== 'draft') throw new AppError(409, 'not_draft', 'only a draft bill is finalised; this one is ' + bill.status);
+  if (bill.version !== input.version) throw new AppError(409, 'conflict', 'someone else saved this record first');
+  const { rows } = await db.query('SELECT invoice_prefix, bill_of_supply_prefix FROM hospital LIMIT 1');
+  const prefix = String((bill.series === 'tax_invoice' ? rows[0]?.invoice_prefix : rows[0]?.bill_of_supply_prefix) ?? (bill.series === 'tax_invoice' ? 'INV' : 'BOS'));
+  const year = financialYear(indiaDate(now));
+  return withGapFreeCount(db, `bill-${bill.series}-${year}`, async (tx, n) =>
+    toBill(await updateRecord(tx, 'bills', { id, version: input.version, by, set: { status: 'final', number: `${prefix}/${year}/${n}`, finalised_at: now } })),
+  );
 }
