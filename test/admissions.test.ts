@@ -47,3 +47,30 @@ describe('POST /staff/admissions', () => {
     expect((await db.query('SELECT count(*)::int AS n FROM encounters WHERE type = $1', ['IPD'])).rows[0]?.n).toBe(2);
   });
 });
+
+describe('GET /staff/admissions', () => {
+  type Item = { bed: string; ward: string; patient: { uhid: string } };
+  const list = async (query = '', who = doctor) => {
+    const res = await app.request(`/staff/admissions${query}`, {}, who);
+    return { status: res.status, body: (await res.json()) as { items: Item[]; nextCursor?: string } };
+  };
+
+  it('lists the patients in beds by ward and bed, with the patient; filters and pages', async () => {
+    await admit({ patientId: seedId('9a710000', 5), bed: '1', ward: 'Children Ward', departmentId: med });
+    const { status, body } = await list();
+    expect(status).toBe(200);
+    expect(body.items.map((a) => `${a.ward} ${a.bed} ${a.patient.uhid}`)).toEqual([
+      'Children Ward 1 U26000005', 'General Ward A 1 U25000003', 'General Ward A 2 U25000004',
+    ]);
+    expect((await list('?ward=general%20ward%20a')).body.items).toHaveLength(2);
+    expect((await list(`?doctorId=${seedId('a0000000', 4)}`)).body.items).toEqual([]);
+    expect((await list('?current=false')).body.items.map((a) => a.patient.uhid)).toEqual(['U26000005', 'U25000004', 'U25000003']);
+    const first = await list('?limit=2');
+    expect((await list(`?limit=2&cursor=${first.body.nextCursor}`)).body.items.map((a) => a.bed)).toEqual(['2']);
+  });
+
+  it('422 for a bad filter; 403 for reception', async () => {
+    expect((await list('?current=yes')).status).toBe(422);
+    expect((await list('', asStaff('dev-reception', ['staff']))).status).toBe(403);
+  });
+});

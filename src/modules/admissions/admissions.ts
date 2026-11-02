@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { createEncounter } from '../encounters/encounters.js';
-import type { BaseFields } from '../patients/patients.js';
+import { patientSummaries, type BaseFields, type PatientSummary } from '../patients/patients.js';
 
 // IPD admissions (api-list.md Admission): a patient in a ward bed under a doctor. Admitting opens the IPD encounter
 // that holds the stay's notes, vitals, orders and prescriptions; the signed discharge summary (#76) ends both.
@@ -24,6 +25,8 @@ export interface Admission extends Omit<BaseFields, 'status'> {
   reason?: string;
   admittedAt: string;
   dischargedAt?: string;
+  /** In lists (#70). */
+  patient?: PatientSummary;
 }
 
 export function toAdmission(r: Record<string, unknown>): Admission {
@@ -89,4 +92,24 @@ export async function admit(db: Queryable, input: NewAdmission, by: string, now 
       throw error;
     }
   });
+}
+
+export interface AdmissionQuery extends PageQuery {
+  ward?: string;
+  doctorId?: string;
+  /** Default true: the patients in beds now, by ward and bed. false: every admission, newest first. */
+  current?: boolean;
+}
+
+/** #70, each with the patient's summary. */
+export async function listAdmissions(db: Queryable, query: AdmissionQuery, now = new Date()): Promise<Page<Admission>> {
+  const current = query.current ?? true;
+  const params: unknown[] = [];
+  const where = current ? ["status = 'current'"] : [];
+  if (query.ward) where.push(`lower(ward) = $${params.push(query.ward.toLowerCase())}`);
+  if (query.doctorId) where.push(`doctor_id = $${params.push(query.doctorId)}`);
+  const order = current ? { orderBy: ['ward', 'bed', 'id'], direction: 'asc' as const } : { orderBy: ['admitted_at', 'id'] };
+  const page = await pageRows(db, { select: 'SELECT * FROM admissions', where, params, ...order }, query, toAdmission);
+  const byId = await patientSummaries(db, page.items.map((a) => a.patientId), now);
+  return { ...page, items: page.items.map((a) => ({ ...a, patient: byId.get(a.patientId) })) };
 }
