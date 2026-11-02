@@ -115,3 +115,31 @@ describe('GET /staff/bills/{id}', () => {
     expect((await app.request(`/staff/bills/${made.id}`, {}, doctor)).status).toBe(403);
   });
 });
+
+describe('PATCH /staff/bills/{id}', () => {
+  const patch = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/bills/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('replaces the typed lines and totals; taken-in lines stay', async () => {
+    const issue = await app.request('/staff/stock/issues', json({ patientId: rahul, lines: [{ itemId: seedId('d0000000', 1), batchId: seedId('ba000000', 3), qty: 2 }] }), medical);
+    expect(issue.status).toBe(201);
+    const made = (await (await bill({ patientId: rahul, lines: [{ tariffId: tariff(8), qty: 1 }] })).json()) as Bill & { version: number };
+    expect(made.lines).toHaveLength(2);
+    const res = await patch(made.id, { version: made.version, lines: [{ tariffId: tariff(8), qty: 3 }, { text: 'Oxygen (per hour)', qty: 5, unitPaise: 10000 }] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      version: made.version + 1,
+      lines: [{ text: 'General ward bed (per day)', qty: 3 }, { text: 'Oxygen (per hour)', qty: 5 }, { qty: 2, source: { kind: 'stock_issue' } }],
+      subtotalPaise: 450000 + 50000 + 4200, totalPaise: 450000 + 50000 + 4200,
+    });
+    expect((await patch(made.id, { version: made.version, lines: [] })).status).toBe(409);
+  });
+
+  it('422 for a bad line; 404 for no bill; 403 for a nurse', async () => {
+    const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill & { version: number };
+    expect((await patch(made.id, { version: made.version, lines: [{ text: 'X', qty: 1 }] })).status).toBe(422);
+    expect((await patch(made.id, { version: made.version, lines: [] })).status).toBe(422);
+    expect((await patch(seedId('b1000000', 999), { version: 1, lines: [] })).status).toBe(404);
+    expect((await patch(made.id, { version: made.version, lines: [] }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

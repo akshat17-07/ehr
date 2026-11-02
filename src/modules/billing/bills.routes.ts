@@ -7,7 +7,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { getPatient } from '../patients/patients.js';
 import { assertPatientAccess } from '../access/patient-access.js';
-import { BILL_STATUSES, createBill, getBill, listBills } from './bills.js';
+import { BILL_STATUSES, createBill, getBill, listBills, updateBillLines } from './bills.js';
 
 export const lineInput = z
   .object({
@@ -33,6 +33,8 @@ const billsQuery = pageQuery
   })
   .refine((q) => !q.date || (!q.from && !q.to), { message: 'date or from/to, not both', path: ['date'] });
 
+const billUpdate = z.object({ version: z.number().int().min(1), lines: z.array(lineInput).max(200) }).strict();
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -56,5 +58,12 @@ export const billsRoutes = new Hono<AuthEnv>()
     const bill = await getBill(db, c.req.param('id'));
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
+    return c.json(bill);
+  })
+  // #119
+  .patch('/:id', requirePermission('bill.update'), async (c) => {
+    const input = billUpdate.parse(await bodyOf(c));
+    const bill = await updateBillLines(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
     return c.json(bill);
   });

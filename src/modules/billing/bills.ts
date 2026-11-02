@@ -219,3 +219,24 @@ export async function getBill(db: Queryable, id: string): Promise<Bill> {
   if (!rows[0]) throw new AppError(404, 'not_found');
   return toBill(rows[0]);
 }
+
+/** A bill's own discount, apart from its lines' (#121). */
+const billLevelDiscount = (bill: Bill) => bill.discountPaise - bill.lines.reduce((sum, l) => sum + l.discountPaise, 0);
+
+/**
+ * #119: the typed lines of a draft are replaced; lines taken in from stock issues and pharmacy bills stay.
+ * 409 not_draft once finalised or voided; 409 for a stale version; 422 for a bad line or nothing left to bill.
+ */
+export async function updateBillLines(db: Queryable, id: string, input: { version: number; lines: LineInput[] }, by: string, now = new Date()): Promise<Bill> {
+  const bill = await getBill(db, id);
+  if (bill.status !== 'draft') throw new AppError(409, 'not_draft', 'only a draft bill can be changed; this one is ' + bill.status);
+  const lines = [...(await pricedLines(db, input.lines, now)), ...bill.lines.filter((l) => l.source)];
+  if (lines.length === 0) throw invalid('lines: nothing to bill');
+  const row = await updateRecord(db, 'bills', {
+    id,
+    version: input.version,
+    by,
+    set: { lines: JSON.stringify(lines), ...billTotals(lines, billLevelDiscount(bill)) },
+  });
+  return toBill(row);
+}
