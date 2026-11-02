@@ -56,3 +56,25 @@ describe('POST /staff/patients/{id}/allergies', () => {
     expect(await banner(ramesh)).toEqual(['Penicillin']);
   });
 });
+
+describe('POST /staff/allergies/{id}/void', () => {
+  const penicillin = seedId('a1e70000', 1);
+  const voidIt = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/allergies/${id}/void`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('voids with a reason; it leaves the list and the banner but shows with includeVoid', async () => {
+    expect((await voidIt(penicillin, { reason: 'no' })).status).toBe(422);
+    const res = await voidIt(penicillin, { reason: 'tolerated amoxicillin course, test negative' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'voided', voidedBy: 'dev-doctor', version: 2 });
+    expect((await list(ramesh)).body).toEqual([]);
+    expect((await list(ramesh, '?includeVoid=true')).body.map((a) => a.status)).toEqual(['voided']);
+    expect(await banner(ramesh)).toEqual([]);
+    expect(await (await voidIt(penicillin, { reason: 'once more please' })).json()).toMatchObject({ error: 'voided' });
+  });
+
+  it('404 for none; 403 for a nurse', async () => {
+    expect((await voidIt(seedId('a1e70000', 999), { reason: 'not real' })).status).toBe(404);
+    expect((await voidIt(penicillin, { reason: 'not real' }, asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

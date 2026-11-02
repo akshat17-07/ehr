@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { voidRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
@@ -71,5 +72,18 @@ export async function addAllergy(db: Queryable, patientId: string, input: NewAll
     );
     await refreshAllergyList(tx, patient.id);
     return toAllergy(rows[0] as Record<string, unknown>);
+  });
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** #54: voids an allergy recorded in error (or disproved), with the reason, and drops it from the banner list. */
+export async function voidAllergy(db: Queryable, id: string, reason: string, by: string): Promise<Allergy> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM allergies WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such allergy');
+  return withTransaction(db, async (tx) => {
+    const voided = await voidRecord(tx, 'allergies', { id, version: Number(rows[0]?.version), by, reason });
+    await refreshAllergyList(tx, String(voided.patient_id));
+    return toAllergy(voided);
   });
 }
