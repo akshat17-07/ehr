@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { UPLOAD_SECONDS, type FileUploads } from '../../files/uploads.js';
 import { AppError } from '../../middleware/errors.js';
+import { indiaDayStart } from '../../time/india.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 
 // Patient documents (api-list.md Document): photos and PDFs of prescriptions, reports, consents. The file lives in
@@ -128,4 +130,24 @@ export async function assertPatientDocuments(db: Queryable, patientId: string, i
     [patientId, ...unique],
   );
   if (rows.length !== unique.length) throw new AppError(422, 'invalid_input', `${field}: each must be an uploaded document of this patient`);
+}
+
+export interface DocumentQuery extends PageQuery {
+  type?: DocumentType;
+  from?: string;
+  to?: string;
+  includeMisfiled?: 'true' | 'false';
+}
+
+/**
+ * #96: a patient's uploaded documents, newest first (IST days for from/to). Uploads not yet completed are left out;
+ * misfiled ones only when asked for.
+ */
+export async function patientDocuments(db: Queryable, patientId: string, query: DocumentQuery): Promise<Page<Document>> {
+  const params: unknown[] = [patientId];
+  const where = ['patient_id = $1', query.includeMisfiled === 'true' ? "status IN ('ready', 'misfiled')" : "status = 'ready'"];
+  if (query.type) where.push(`type = $${params.push(query.type)}`);
+  if (query.from) where.push(`created_at >= $${params.push(indiaDayStart(query.from))}`);
+  if (query.to) where.push(`created_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
+  return pageRows(db, { select: 'SELECT * FROM documents', where, params, orderBy: ['created_at', 'id'] }, query, toDocument);
 }

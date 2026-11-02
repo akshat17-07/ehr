@@ -26,6 +26,7 @@ import { addProblem, listProblems } from './problems.js';
 import { addAncRecord, listAncRecords } from '../departments/anc.js';
 import { addDentalEntries, dentalChart, FDI_TOOTH, TOOTH_SURFACES } from '../departments/dental.js';
 import { patientPrescriptions, RX_STATUSES } from '../prescriptions/prescriptions.js';
+import { DOCUMENT_TYPES, patientDocuments } from '../documents/documents.js';
 import { patientTimeline, TIMELINE_KINDS } from './timeline.js';
 
 // /staff/patients (api-list.md 6.3).
@@ -149,6 +150,8 @@ const newAncRecord = z
   .refine((b) => b.para === undefined || b.gravida === undefined || b.para < b.gravida, 'para: must be less than gravida');
 
 const prescriptionsQuery = rangeQuery.extend({ status: z.enum(RX_STATUSES).optional() });
+
+const documentsQuery = rangeQuery.extend({ type: z.enum(DOCUMENT_TYPES).optional(), includeMisfiled: z.enum(['true', 'false']).optional() });
 
 const observationsQuery = rangeQuery.extend({ loinc: z.string().trim().min(1).max(20).optional() });
 
@@ -313,6 +316,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
     await assertPatientAccess(db, userOf(c), patient);
     return c.json(await patientPrescriptions(db, patient.id, query));
+  })
+  // #96: a clinical read, so the inactive-patient rule applies.
+  .get('/:id/documents', requirePermission('document.view'), async (c) => {
+    const query = documentsQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json(await patientDocuments(db, patient.id, query));
   })
   // #55: a clinical read, so the inactive-patient rule applies.
   .get('/:id/problems', requirePermission('patient.view'), async (c) => {

@@ -233,3 +233,35 @@ describe('POST /staff/prescriptions/{id}/confirm', () => {
     expect((await confirm(seedId('d5000000', 999), { version: 1, lines: [paracetamol] })).status).toBe(404);
   });
 });
+
+describe('GET /staff/patients/{id}/documents', () => {
+  const rahul = seedId('9a710000', 5);
+  const list = (query = '', who = doctor) => app.request(`/staff/patients/${rahul}/documents${query}`, {}, who);
+  const add = async (status: string, type: string, createdAt: string) =>
+    String((await db.query(
+      `INSERT INTO documents (id, status, created_by, updated_by, created_at, updated_at, patient_id, type, file_name, mime, size_bytes, sha256, s3_key)
+       VALUES (gen_random_uuid(), $1, 'x', 'x', $3, $3, $2, $4, 'f.pdf', 'application/pdf', 1000, md5(random()::text), 'k') RETURNING id`,
+      [status, rahul, createdAt, type],
+    )).rows[0]?.id);
+
+  it('lists ready documents newest first, filtered by type and IST day; misfiled ones on request', async () => {
+    const older = await add('ready', 'lab_report', '2026-09-01T20:00:00Z'); // 2 Sep in India
+    const newer = await add('ready', 'imaging', '2026-09-03T05:00:00Z');
+    const misfiled = await add('misfiled', 'lab_report', '2026-09-02T05:00:00Z');
+    await add('pending', 'lab_report', '2026-09-02T06:00:00Z');
+    const ids = async (query: string) => ((await (await list(query)).json()) as { items: { id: string }[] }).items.map((d) => d.id);
+    expect(await ids('')).toEqual([newer, older]);
+    expect(await ids('?type=lab_report')).toEqual([older]);
+    expect(await ids('?includeMisfiled=true')).toEqual([newer, misfiled, older]);
+    expect(await ids('?from=2026-09-02&to=2026-09-02')).toEqual([older]);
+    const page = (await (await list('?limit=1')).json()) as { items: { id: string }[]; nextCursor: string };
+    expect(page.items.map((d) => d.id)).toEqual([newer]);
+    expect(await ids(`?limit=1&cursor=${page.nextCursor}`)).toEqual([older]);
+  });
+
+  it('422 for a bad type; 403 for reception; 404 for no patient', async () => {
+    expect((await list('?type=selfie')).status).toBe(422);
+    expect((await list('', reception)).status).toBe(403);
+    expect((await app.request(`/staff/patients/${seedId('9a710000', 999)}/documents`, {}, doctor)).status).toBe(404);
+  });
+});
