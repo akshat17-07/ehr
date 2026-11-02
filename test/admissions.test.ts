@@ -193,3 +193,27 @@ describe('POST /staff/encounters/{id}/discharge-summary', () => {
     expect((await write(seedId('e0000000', 999), summary)).status).toBe(404);
   });
 });
+
+describe('PATCH /staff/discharge-summaries/{id}', () => {
+  const summaryOf = async () => (await db.query('SELECT id, version FROM discharge_summaries LIMIT 1')).rows[0] as { id: string; version: number };
+  const patch = (id: string, body: unknown, who = doctor) =>
+    app.request(`/staff/discharge-summaries/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('changes the draft; the old text is in the history', async () => {
+    const { id, version } = await summaryOf();
+    const res = await patch(id, { version, advice: 'Fluids, rest for a week. Come back if bleeding.', medicinesOnDischarge: [] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ version: version + 1, advice: 'Fluids, rest for a week. Come back if bleeding.', medicinesOnDischarge: [], status: 'draft' });
+    const history = await db.query('SELECT data FROM discharge_summaries_versions WHERE record_id = $1', [id]);
+    expect(JSON.parse(String(history.rows[0]?.data))).toMatchObject({ advice: 'Plenty of fluids. Come back if bleeding or fever returns.' });
+  });
+
+  it('409 for a stale version; 422 for nothing to change or a past follow-up; 403 for a nurse; 404 for none', async () => {
+    const { id, version } = await summaryOf();
+    expect((await patch(id, { version: version + 3, course: 'x' })).status).toBe(409);
+    expect((await patch(id, { version })).status).toBe(422);
+    expect((await patch(id, { version, followUpDate: '2020-01-01' })).status).toBe(422);
+    expect((await patch(id, { version, course: 'x' }, nurse)).status).toBe(403);
+    expect((await patch(seedId('d5000000', 999), { version: 1, course: 'x' })).status).toBe(404);
+  });
+});

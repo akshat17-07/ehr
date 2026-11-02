@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -84,4 +85,42 @@ export async function writeSummary(db: Queryable, encounterId: string, input: Su
   }
   const { rows } = await db.query(`${SUMMARY_SELECT} WHERE id = $1`, [id]);
   return toDischargeSummary(rows[0] as Record<string, unknown>);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One summary; 404 if there is none. */
+export async function getSummary(db: Queryable, id: string): Promise<DischargeSummary> {
+  const { rows } = UUID.test(id) ? await db.query(`${SUMMARY_SELECT} WHERE id = $1`, [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found', 'no such discharge summary');
+  return toDischargeSummary(rows[0] as Record<string, unknown>);
+}
+
+const COLUMNS: Record<keyof SummaryFields, string> = {
+  diagnosisText: 'diagnosis_text',
+  course: 'course',
+  procedures: 'procedures',
+  medicinesOnDischarge: 'medicines',
+  advice: 'advice',
+  followUpDate: 'follow_up_date',
+};
+
+/** #75: 409 once signed (then the record is final). */
+export async function updateSummary(
+  db: Queryable,
+  id: string,
+  input: { version: number } & Partial<SummaryFields>,
+  by: string,
+  now = new Date(),
+): Promise<DischargeSummary> {
+  const summary = await getSummary(db, id);
+  if (summary.status === 'signed') throw new AppError(409, 'signed', 'a signed discharge summary cannot be changed');
+  checkFollowUp(input.followUpDate, now);
+  const set: Record<string, unknown> = {};
+  for (const [field, column] of Object.entries(COLUMNS) as [keyof SummaryFields, string][]) {
+    const value = input[field];
+    if (value !== undefined) set[column] = field === 'medicinesOnDischarge' ? JSON.stringify(value) : value;
+  }
+  await updateRecord(db, 'discharge_summaries', { id, version: input.version, by, set });
+  return getSummary(db, id);
 }
