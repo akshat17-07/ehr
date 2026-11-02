@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { nextCount } from '../../db/counters.js';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
-import { indiaDate } from '../../time/india.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { applyStockTake, batchesByIds, checkStockTake, type StockTake } from '../inventory/batches.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { getDispense } from './dispenses.js';
@@ -125,4 +126,16 @@ export async function createPharmacyBill(db: Queryable, input: NewPharmacyBill, 
     if (stock) await applyStockTake(tx, stock, by);
     return toPharmacyBill(rows[0] as Record<string, unknown>);
   });
+}
+
+/** #105: bills newest first; date is one IST day. */
+export async function listPharmacyBills(db: Queryable, query: PageQuery & { date?: string; patientId?: string }): Promise<Page<PharmacyBill>> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
+  if (query.date) {
+    const start = indiaDayStart(query.date);
+    where.push(`created_at >= $${params.push(start)}`, `created_at < $${params.push(new Date(start.getTime() + 86_400_000))}`);
+  }
+  return pageRows(db, { select: 'SELECT * FROM pharmacy_bills', where, params, orderBy: ['created_at', 'id'] }, query, toPharmacyBill);
 }

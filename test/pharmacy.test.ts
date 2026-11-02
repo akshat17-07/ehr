@@ -232,3 +232,28 @@ describe('financialYear', () => {
     expect(financialYear('2099-12-31')).toBe('99-00');
   });
 });
+
+describe('GET /staff/pharmacy/bills', () => {
+  const list = (query = '', who = medical) => app.request(`/staff/pharmacy/bills${query}`, {}, who);
+  type Bills = { items: { id: string; patientId: string; createdAt: string }[]; nextCursor?: string };
+
+  it('lists bills newest first, by patient and IST day, paged', async () => {
+    const sale = (patientId: string) =>
+      app.request('/staff/pharmacy/bills', json({ patientId, setting: 'opd', lines: [{ drugId: paracetamol.drugId, batchId: seedId('ba000000', 3), qty: 1 }] }), medical);
+    const first = ((await (await sale(rahul)).json()) as { id: string }).id;
+    const second = ((await (await sale(rahul)).json()) as { id: string }).id;
+    const mine = (await (await list(`?patientId=${rahul}`)).json()) as Bills;
+    expect(mine.items.slice(0, 2).map((b) => b.id)).toEqual([second, first]);
+    expect(mine.items.every((b) => b.patientId === rahul)).toBe(true);
+    const today = (await (await list(`?date=${indiaDate()}&limit=1`)).json()) as Bills;
+    expect(today.items.map((b) => b.id)).toEqual([second]);
+    const page2 = (await (await list(`?date=${indiaDate()}&limit=1&cursor=${today.nextCursor}`)).json()) as Bills;
+    expect(page2.items.map((b) => b.id)).toEqual([first]);
+    expect(((await (await list('?date=2020-01-01')).json()) as Bills).items).toEqual([]);
+  });
+
+  it('422 for a bad date; 403 for a nurse', async () => {
+    expect((await list('?date=yesterday')).status).toBe(422);
+    expect((await list('', asStaff('dev-nurse', ['nurse']))).status).toBe(403);
+  });
+});

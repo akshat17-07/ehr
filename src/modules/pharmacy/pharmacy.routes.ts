@@ -1,10 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { pageQuery } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createPharmacyBill } from './bills.js';
+import { createPharmacyBill, listPharmacyBills } from './bills.js';
 import { pharmacyQueue, SETTINGS } from './queue.js';
 
 const queueQuery = z.object({ date: z.iso.date().optional(), setting: z.enum(SETTINGS).optional() });
@@ -22,6 +23,8 @@ const newBill = z
   })
   .strict();
 
+const billsQuery = pageQuery.extend({ date: z.iso.date().optional(), patientId: z.uuid().optional() });
+
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
@@ -38,4 +41,10 @@ export const pharmacyRoutes = new Hono<AuthEnv>()
     const bill = await createPharmacyBill(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { patientId: bill.patientId, recordType: 'pharmacy_bill', recordId: bill.id });
     return c.json(bill, 201);
+  })
+  // #105
+  .get('/bills', requirePermission('pharmacy_bill.view'), async (c) => {
+    const query = billsQuery.parse(c.req.query());
+    if (query.patientId) auditDetails(c, { patientId: query.patientId });
+    return c.json(await listPharmacyBills(await dbOf(c), query));
   });
