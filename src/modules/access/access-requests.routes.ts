@@ -5,7 +5,8 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { ACCESS_REQUEST_STATUSES, createAccessRequest, decideAccessRequest, DEFAULT_ACCESS_HOURS, listAccessRequests, listMyAccessRequests } from './access-requests.js';
+import { isAdmin } from '../permissions/admin-rules.js';
+import { ACCESS_REQUEST_STATUSES, createAccessRequest, decideAccessRequest, listAccessRequests, listMyAccessRequests } from './access-requests.js';
 
 // /staff/me/access-requests: the access requests the caller made. /staff/access-requests: asking for one.
 // /admin/access-requests: deciding them.
@@ -40,8 +41,8 @@ export const adminAccessRequestsRoutes = new Hono<AuthEnv>()
     const request = await decideAccessRequest(
       await dbOf(c),
       c.req.param('id'),
-      { approve: true, hours: body.hours ?? DEFAULT_ACCESS_HOURS, ...(body.note && { note: body.note }) },
-      userOf(c).sub,
+      { approve: true, ...(body.hours && { hours: body.hours }), ...(body.note && { note: body.note }) },
+      { sub: userOf(c).sub, isAdmin: isAdmin(userOf(c)) },
     );
     auditDetails(c, { action: 'grant', patientId: request.patientId, recordType: 'access_request', recordId: request.id, ...(body.note && { reason: body.note }) });
     return c.json(request);
@@ -49,7 +50,7 @@ export const adminAccessRequestsRoutes = new Hono<AuthEnv>()
   // #176
   .post('/:id/reject', requirePermission('approval.access'), async (c) => {
     const body = rejectBody.parse(await c.req.json().catch(() => undefined));
-    const request = await decideAccessRequest(await dbOf(c), c.req.param('id'), { approve: false, reason: body.reason }, userOf(c).sub);
+    const request = await decideAccessRequest(await dbOf(c), c.req.param('id'), { approve: false, reason: body.reason }, { sub: userOf(c).sub, isAdmin: isAdmin(userOf(c)) });
     auditDetails(c, { action: 'update', patientId: request.patientId, recordType: 'access_request', recordId: request.id, reason: body.reason });
     return c.json(request);
   });

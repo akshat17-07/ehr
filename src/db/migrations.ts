@@ -1313,4 +1313,20 @@ export const migrations: Migration[] = [
     id: '0088_patient_merges_moved_rows',
     statements: () => ['ALTER TABLE patient_merges ADD COLUMN moved_rows text'],
   },
+  {
+    // The inactive-patient rule per role or user (api-list.md InactiveSetting). status: active or ended (never removed).
+    // user_id is users.id. No row for a person or their role means the default: request after 10 days, Head Doctor, 24 h.
+    id: '0089_inactive_settings',
+    statements: () => [
+      ...createTable('inactive_settings', [
+        'applies_to text NOT NULL',
+        'role text',
+        'user_id uuid',
+        'mode text NOT NULL',
+        'days integer NOT NULL',
+        'approver text NOT NULL',
+        'access_hours integer NOT NULL',
+      ]),
+    ],
+  },
 ];

@@ -1,3 +1,4 @@
+import { DEFAULT_INACTIVE_SETTING, displayInactiveDays } from '../access/inactive-settings.js';
 import { assertReferrer } from '../referrals/referrers.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -21,9 +22,6 @@ export const SENSITIVE_LABELS = ['mtp', 'pcpndt', 'hiv', 'mental_health'] as con
 export type SensitiveLabel = (typeof SENSITIVE_LABELS)[number];
 
 export const UHID = /^U\d{8,}$/i;
-
-/** Days without activity after which a patient is inactive. Per role or user once #185/#186 are built. */
-export const INACTIVE_AFTER_DAYS = 10;
 
 export type BaseFields = ReturnType<typeof baseFields>;
 
@@ -72,7 +70,8 @@ function ageOf(r: Record<string, unknown>, today: string): number | undefined {
   return Number(r.age_years) + yearsBetween(String(r.age_recorded_on_text), today);
 }
 
-export function toPatient(r: Record<string, unknown>, now = new Date()): Patient {
+/** `inactiveDays`: from displayInactiveDays(db) (inactive-settings.ts); 10 when not given. */
+export function toPatient(r: Record<string, unknown>, now = new Date(), inactiveDays = DEFAULT_INACTIVE_SETTING.days): Patient {
   const lastActivity = r.last_activity_at instanceof Date ? r.last_activity_at : undefined;
   const patient: Patient = {
     ...baseFields(r as unknown as BaseRow),
@@ -87,7 +86,7 @@ export function toPatient(r: Record<string, unknown>, now = new Date()): Patient
     unknown: r.unknown === true,
     labels: JSON.parse(String(r.labels)) as SensitiveLabel[],
     lastActivityAt: lastActivity?.toISOString(),
-    inactive: !lastActivity || now.getTime() - lastActivity.getTime() > INACTIVE_AFTER_DAYS * 86_400_000,
+    inactive: !lastActivity || now.getTime() - lastActivity.getTime() > inactiveDays * 86_400_000,
     allergies: JSON.parse(String(r.allergies)) as string[],
     activePolicyId: opt(r.active_policy_id),
     referrerId: opt(r.referrer_id),
@@ -103,7 +102,8 @@ export async function patientSummaries(db: Queryable, ids: string[], now = new D
   const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
   const { rows } = await db.query(`${PATIENT_SELECT} WHERE id IN (${unique.map((_, i) => `$${i + 1}`).join(', ')})`, unique);
-  return new Map(rows.map((p) => [String(p.id), toSummary(toPatient(p, now))]));
+  const days = await displayInactiveDays(db);
+  return new Map(rows.map((p) => [String(p.id), toSummary(toPatient(p, now, days))]));
 }
 
 export function toSummary(p: Patient): PatientSummary {
@@ -133,11 +133,12 @@ export async function searchPatients(db: Queryable, search: { q: string } & Page
   else if (q.length >= 2) [where, value] = ['name_search LIKE $1', `${q.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`];
   else throw new AppError(422, 'invalid_input', 'type a UHID, a 10-digit mobile number or at least 2 letters of the name');
 
+  const days = await displayInactiveDays(db);
   const page = await pageRows(
     db,
     { select: PATIENT_SELECT, where: [where, 'merged_into IS NULL'], params: [value], orderBy: ['name_search', 'id'], direction: 'asc' },
     search,
-    (r) => toSummary(toPatient(r, now)),
+    (r) => toSummary(toPatient(r, now, days)),
   );
   return page;
 }
@@ -148,7 +149,7 @@ export async function getPatient(db: Queryable, id: string, now = new Date()): P
   if (!z.uuid().safeParse(id).success) throw notFound();
   const { rows } = await db.query(`${PATIENT_SELECT} WHERE id = $1`, [id]);
   if (!rows[0]) throw notFound();
-  return toPatient(rows[0], now);
+  return toPatient(rows[0], now, await displayInactiveDays(db));
 }
 
 /** #20. Either dob or ageYears. */
@@ -311,7 +312,8 @@ export async function updatePatient(db: Queryable, id: string, change: PatientCh
 /** #24: every version of the patient, oldest first, with who changed it, when and why. */
 export async function listPatientVersions(db: Queryable, id: string, now = new Date()): Promise<Version<Patient>[]> {
   if (!z.uuid().safeParse(id).success) throw notFound();
+  const days = await displayInactiveDays(db);
   return listVersions(db, 'patients', id, (row) =>
-    toPatient({ ...row, dob_text: dateText(row.dob), age_recorded_on_text: dateText(row.age_recorded_on) }, now),
+    toPatient({ ...row, dob_text: dateText(row.dob), age_recorded_on_text: dateText(row.age_recorded_on) }, now, days),
   );
 }

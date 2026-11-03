@@ -5,6 +5,7 @@ import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
 import { getPatient } from '../patients/patients.js';
 import { UUID } from '../users/users.js';
+import { ruleForSub } from './inactive-settings.js';
 
 // Access requests (api-list.md AccessRequest): staff ask to open an inactive patient's record (#29), and a
 // Head Doctor or Admin approves for some hours or rejects (#175, #176). The row's status is pending, approved or
@@ -141,8 +142,6 @@ export function listAccessRequests(
   return pageRows(db, spec, query, (r) => toAdminAccessRequest(r, now));
 }
 
-/** Hours an approval lasts when the approver names none. Replaced by the inactive-access setting (#185). */
-export const DEFAULT_ACCESS_HOURS = 24;
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
@@ -153,18 +152,24 @@ const HOUR_MS = 60 * 60 * 1000;
 export async function decideAccessRequest(
   db: Queryable,
   id: string,
-  decision: { approve: true; hours: number; note?: string } | { approve: false; reason: string },
-  by: string,
+  decision: { approve: true; hours?: number; note?: string } | { approve: false; reason: string },
+  by: { sub: string; isAdmin: boolean },
   now = new Date(),
 ): Promise<AdminAccessRequest> {
   const { rows } = UUID.test(id) ? await db.query('SELECT version, status, requested_by FROM access_requests WHERE id = $1', [id]) : { rows: [] };
   const row = rows[0];
   if (!row) throw new AppError(404, 'not_found');
-  if (row.requested_by === by) throw new AppError(403, 'forbidden', "you can't decide your own request");
+  if (row.requested_by === by.sub) throw new AppError(403, 'forbidden', "you can't decide your own request");
   if (row.status !== 'pending') throw new AppError(409, 'conflict', `this request is already ${row.status}`);
+  // The requester's setting says who approves (Head Doctor or Admin) and, unless the approver names hours, for how long.
+  const rule = await ruleForSub(db, String(row.requested_by));
+  if (rule.approver === 'admin' && !by.isAdmin) throw new AppError(403, 'forbidden', "this person's requests are decided by an Admin");
   const set = decision.approve
-    ? { status: 'approved', approver_id: by, decided_at: now, decision_reason: decision.note ?? null, valid_until: new Date(now.getTime() + decision.hours * HOUR_MS) }
-    : { status: 'rejected', approver_id: by, decided_at: now, decision_reason: decision.reason };
-  await updateRecord(db, 'access_requests', { id, version: Number(row.version), by, set });
+    ? {
+        status: 'approved', approver_id: by.sub, decided_at: now, decision_reason: decision.note ?? null,
+        valid_until: new Date(now.getTime() + (decision.hours ?? rule.accessHours) * HOUR_MS),
+      }
+    : { status: 'rejected', approver_id: by.sub, decided_at: now, decision_reason: decision.reason };
+  await updateRecord(db, 'access_requests', { id, version: Number(row.version), by: by.sub, set });
   return getAdminAccessRequest(db, id, now);
 }
