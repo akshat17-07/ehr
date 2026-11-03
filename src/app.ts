@@ -56,6 +56,7 @@ import { agentLinksRoutes } from './modules/insurance/agent-links.routes.js';
 import { referralsRoutes, referrersRoutes } from './modules/referrals/referrals.routes.js';
 import { exportsRoutes, fhirRoutes, recordRequestsRoutes } from './modules/records/record-requests.routes.js';
 import { billsRoutes } from './modules/billing/bills.routes.js';
+import { adminPurchaseOrdersRoutes } from './modules/inventory/admin-purchase-orders.routes.js';
 import { purchaseOrdersRoutes } from './modules/inventory/purchase-orders.routes.js';
 import { registersRoutes } from './modules/pharmacy/registers.routes.js';
 import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
@@ -175,6 +176,7 @@ export function createApp({
     .route('/ledger', adminLedgerRoutes)
     .route('/inventory', adminInventoryRoutes)
     .route('/suppliers', adminSuppliersRoutes)
+    .route('/purchase-orders', adminPurchaseOrdersRoutes)
     .route('/audit', adminAuditRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
