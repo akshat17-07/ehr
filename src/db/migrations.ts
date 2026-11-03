@@ -1335,4 +1335,22 @@ export const migrations: Migration[] = [
     id: '0090_partner_hospitals_active',
     statements: () => ['ALTER TABLE partner_hospitals ADD COLUMN active boolean'],
   },
+  {
+    // Security incidents (api-list.md Incident, #222-#224). status: open, reported or closed. The CERT-In report is due
+    // 6 h and the Board report 72 h after detected_at. incident_events is the timeline: rows are only added, never changed.
+    id: '0091_incidents',
+    statements: () => [
+      ...createTable('incidents', [
+        'title text NOT NULL',
+        'detected_at timestamptz NOT NULL',
+        'kind text NOT NULL',
+        'description text NOT NULL',
+        'cert_in_due_by timestamptz NOT NULL',
+        'board_due_by timestamptz NOT NULL',
+      ]),
+      'CREATE INDEX ASYNC incidents_detected ON incidents (detected_at)',
+      ...createTable('incident_events', ['incident_id uuid NOT NULL', 'at timestamptz NOT NULL', 'text text NOT NULL', '"by" text NOT NULL']),
+      'CREATE INDEX ASYNC incident_events_incident ON incident_events (incident_id, at)',
+    ],
+  },
 ];
