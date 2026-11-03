@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, userOf } from '../../middleware/context.js';
+import { dbOf, exportsOf, signerOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { approvePayrollRun, approveRunBody, createPayrollRun, getPayrollRun, listPayrollRuns, newRunBody, runsQuery } from './runs.js';
+import { approvePayrollRun, approveRunBody, bankFileQuery, createPayrollRun, getPayrollRun, listPayrollRuns, makeBankFile, newRunBody, runsQuery } from './runs.js';
 
 // Mounted at /admin/payroll/runs.
 export const adminPayrollRunsRoutes = new Hono<AuthEnv>()
@@ -31,6 +31,13 @@ export const adminPayrollRunsRoutes = new Hono<AuthEnv>()
       ...(body.note && { reason: body.note }),
     });
     return c.json(run);
+  })
+  // #328
+  .get('/:id/bank-file', requirePermission('payroll.bank_file'), async (c) => {
+    const query = bankFileQuery.parse(c.req.query());
+    const file = await makeBankFile(await dbOf(c), c.req.param('id'), query, { exportFiles: exportsOf(c), sign: signerOf(c) });
+    auditDetails(c, { action: 'print', recordType: 'payroll_run', recordId: c.req.param('id') });
+    return c.json(file);
   })
   // #324
   .post('/', requirePermission('payroll.run'), async (c) => {

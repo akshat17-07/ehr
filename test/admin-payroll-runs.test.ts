@@ -2,12 +2,21 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
+import { env } from '../src/config/env.js';
+import { encryptField } from '../src/lib/field-crypto.js';
 import { calculatePay, madhyaPradeshPt, type PayrollRun } from '../src/modules/payroll/runs.js';
 import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
-const app = createApp({ db: async () => db });
+env.EXPORTS_BUCKET = 'exports-test';
+/** What the fake exports bucket holds, by key. */
+const exported = new Map<string, { body: string; mime: string }>();
+const app = createApp({
+  db: async () => db,
+  exportFiles: { put: async (key, body, mime) => void exported.set(key, { body, mime }) },
+  signUrl: async (bucket, key, seconds) => `https://s3.test/${bucket}/${key}?get=${seconds}`,
+});
 
 const asStaff = (sub: string, groups: string[]) =>
   ({ event: { requestContext: { authorizer: { jwt: { claims: { sub, 'cognito:groups': `[${groups.join(' ')}]` } } } } } }) as never;
@@ -339,5 +348,76 @@ describe('GET /admin/payroll/runs and /:id', () => {
     expect((await get('/nope')).status).toBe(404);
     expect((await get('', doctor)).status).toBe(403);
     expect((await get('/77777777-7777-4777-8777-777777777777', doctor)).status).toBe(403);
+  });
+});
+
+describe('GET /admin/payroll/runs/:id/bank-file', () => {
+  const head = asStaff('dev-head-doctor', ['head_doctor']);
+  const ACCOUNT = '123456789012';
+  const file = (id: string, q = '', who = admin) => app.request(`/admin/payroll/runs/${id}/bank-file${q}`, {}, who);
+  const withBank = async (id: string, number = ACCOUNT, ifsc = 'SBIN0001234') =>
+    db.query('UPDATE employees SET bank_enc = $2 WHERE id = $1', [id, await encryptField(JSON.stringify({ name: 'State Bank', number, ifsc }))]);
+  const approved = async (month: string) => {
+    const run = (await (await post({ month })).json()) as PayrollRun;
+    const res = await app.request(`/admin/payroll/runs/${run.id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: 1 }) }, head);
+    expect(res.status).toBe(200);
+    return run;
+  };
+  const keyOf = (url: string) => url.split('/exports-test/')[1]!.split('?')[0]!;
+
+  it('csv: escaped name, rupees from paise, missingBank, signed link, audited without account or amount', async () => {
+    const s = await structure('Bank', { basic: 1234567, hra: 0 });
+    const comma = await employee('Rao, "Asha"', s);
+    const plain = await employee('Plain Person', s);
+    const nobank = await employee('No Bank', s);
+    await withBank(comma, ACCOUNT);
+    await withBank(plain, '998877665544', 'HDFC0000001');
+    const run = await approved('2024-10');
+    const res = await file(run.id);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { url: string; expiresAt: string; missingBank: { employeeId: string; name: string }[] };
+    expect(out.missingBank).toEqual([{ employeeId: nobank, name: 'No Bank' }]);
+    expect(out.url).toMatch(/^https:\/\/s3\.test\/exports-test\/payroll\/.+\.csv\?get=600$/);
+    expect(out.url).toContain(`payroll/${run.id}/`);
+    expect(new Date(out.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    const stored = exported.get(keyOf(out.url))!;
+    expect(stored.mime).toBe('text/csv');
+    expect(stored.body).toBe(
+      ['name,account_number,ifsc,amount_rupees,narration', 'Plain Person,998877665544,HDFC0000001,12345.67,Salary 2024-10', `"Rao, ""Asha""",${ACCOUNT},SBIN0001234,12345.67,Salary 2024-10`, ''].join('\n'),
+    );
+    const audit = await db.query("SELECT * FROM audit_events WHERE record_type = 'payroll_run' AND record_id = $1 AND action = 'print'", [run.id]);
+    expect(audit.rows.length).toBe(1);
+    const text = JSON.stringify(audit.rows[0]);
+    expect(text).not.toContain(ACCOUNT);
+    expect(text).not.toContain('998877665544');
+    expect(text).not.toContain('1234567');
+    expect((await db.query('SELECT status FROM payroll_runs WHERE id = $1', [run.id])).rows[0]?.status).toBe('approved');
+  });
+
+  it('neft: pipe-separated, no header, .txt; a paid run works', async () => {
+    const s = await structure('Neft', { basic: 500005, hra: 0 });
+    const e = await employee('Neft Person', s);
+    await withBank(e);
+    const run = await approved('2024-11');
+    await db.query("UPDATE payroll_runs SET status = 'paid' WHERE id = $1", [run.id]);
+    const res = await file(run.id, '?format=neft');
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { url: string; missingBank: unknown[] };
+    expect(out.missingBank).toEqual([]);
+    expect(out.url).toMatch(/\.txt\?get=600$/);
+    expect(exported.get(keyOf(out.url))?.body).toBe(`Neft Person|${ACCOUNT}|SBIN0001234|5000.05|Salary 2024-11\n`);
+  });
+
+  it('409 run_not_approved for a draft; 403 doctor; 404; 422 bad format', async () => {
+    const s = await structure('Guard2', { basic: 100000, hra: 0 });
+    await employee('Guard2 Person', s);
+    const draft = (await (await post({ month: '2025-03' })).json()) as PayrollRun;
+    const res = await file(draft.id);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'run_not_approved' });
+    expect((await file(draft.id, '', doctor)).status).toBe(403);
+    expect((await file('77777777-7777-4777-8777-777777777777')).status).toBe(404);
+    expect((await file('nope')).status).toBe(404);
+    for (const q of ['?format=pdf', '?x=1']) expect((await file(draft.id, q)).status, q).toBe(422);
   });
 });

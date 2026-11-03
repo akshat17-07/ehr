@@ -3,6 +3,10 @@ import { z } from 'zod';
 import type { Queryable } from '../../db/migrate.js';
 import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
+import type { ExportFiles } from '../../files/exports.js';
+import { LINK_SECONDS, type SignGetUrl } from '../../files/signed-url.js';
+import { requireEnv } from '../../config/env.js';
+import { decryptField } from '../../lib/field-crypto.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
 import { UUID } from '../users/users.js';
@@ -263,4 +267,57 @@ export async function createPayrollRun(db: Queryable, input: NewRun, by: string)
     }
     return toRun(run, payslips);
   });
+}
+
+export const bankFileQuery = z.object({ format: z.enum(['csv', 'neft']).default('csv') }).strict();
+export type BankFileQuery = z.infer<typeof bankFileQuery>;
+
+/** Rupees with two decimals from paise, integer math only. */
+export const rupees = (paise: number): string => `${Math.floor(paise / 100)}.${String(paise % 100).padStart(2, '0')}`;
+
+const csvField = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v);
+const neftField = (v: string) => v.replace(/[|\r\n]+/g, ' ').trim();
+
+export interface BankFile { url: string; expiresAt: string; missingBank: { employeeId: string; name: string }[] }
+
+/**
+ * #328: the bank payment file of an approved or paid run, one line per payslip with net pay above zero.
+ * csv: header name,account_number,ifsc,amount_rupees,narration. neft: the same five fields pipe-separated, one record
+ * per line, no header (bank bulk-upload style). Employees without bank details are left out and returned in missingBank.
+ */
+export async function makeBankFile(
+  db: Queryable,
+  id: string,
+  query: BankFileQuery,
+  files: { exportFiles: ExportFiles; sign: SignGetUrl },
+): Promise<BankFile> {
+  const found = UUID.test(id) ? await db.query('SELECT id, month, status FROM payroll_runs WHERE id = $1 AND voided_at IS NULL', [id]) : { rows: [] };
+  const run = found.rows[0] as Record<string, unknown> | undefined;
+  if (!run) throw new AppError(404, 'not_found');
+  if (run.status !== 'approved' && run.status !== 'paid') throw new AppError(409, 'run_not_approved', 'the run must be approved before a bank file is made');
+
+  const { rows } = await db.query(
+    `SELECT p.employee_id, p.net_paise, e.name, e.bank_enc FROM payslips p LEFT JOIN employees e ON e.id = p.employee_id
+     WHERE p.run_id = $1 AND p.net_paise > 0 ORDER BY e.name, p.id`,
+    [id],
+  );
+  const narration = `Salary ${String(run.month)}`;
+  const lines: string[][] = [];
+  const missingBank: BankFile['missingBank'] = [];
+  for (const r of rows) {
+    const bank = r.bank_enc == null ? null : (JSON.parse(await decryptField(String(r.bank_enc))) as { number?: string; ifsc?: string });
+    if (!bank?.number || !bank.ifsc) {
+      missingBank.push({ employeeId: String(r.employee_id), name: String(r.name ?? '') });
+      continue;
+    }
+    lines.push([String(r.name ?? ''), bank.number, bank.ifsc, rupees(Number(r.net_paise)), narration]);
+  }
+  const body =
+    query.format === 'csv'
+      ? [['name', 'account_number', 'ifsc', 'amount_rupees', 'narration'], ...lines].map((l) => l.map(csvField).join(',')).join('\n') + '\n'
+      : lines.map((l) => l.map(neftField).join('|') + '\n').join('');
+  const key = `payroll/${id}/${randomUUID()}.${query.format === 'csv' ? 'csv' : 'txt'}`;
+  await files.exportFiles.put(key, body, query.format === 'csv' ? 'text/csv' : 'text/plain');
+  const url = await files.sign(requireEnv('EXPORTS_BUCKET'), key, LINK_SECONDS);
+  return { url, expiresAt: new Date(Date.now() + LINK_SECONDS * 1000).toISOString(), missingBank };
 }
