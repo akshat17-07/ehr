@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
+import { UUID } from '../users/users.js';
 
 // Short name lists (api-list.md PartnerHospital, Insurer, Tpa), read whole, A to Z. Inactive insurers and TPAs are
 // still listed, so old records can show their names; pickers offer the active ones.
@@ -9,6 +11,7 @@ export interface PartnerHospital {
   id: string;
   version: number;
   name: string;
+  active: boolean;
 }
 
 /** An insurer or a TPA (third-party administrator). */
@@ -22,6 +25,9 @@ export interface Payer {
 
 const base = (r: Record<string, unknown>) => ({ id: String(r.id), version: Number(r.version), name: String(r.name) });
 
+// Rows made before the active column have null there; they count as active.
+const toPartnerHospital = (r: Record<string, unknown>): PartnerHospital => ({ ...base(r), active: r.active !== false });
+
 const toPayer = (r: Record<string, unknown>): Payer => ({
   ...base(r),
   ...(r.code != null && { code: String(r.code) }),
@@ -30,7 +36,7 @@ const toPayer = (r: Record<string, unknown>): Payer => ({
 
 /** #14 */
 export async function listPartnerHospitals(db: Queryable): Promise<PartnerHospital[]> {
-  return (await db.query('SELECT * FROM partner_hospitals ORDER BY name, id')).rows.map(base);
+  return (await db.query('SELECT * FROM partner_hospitals ORDER BY name, id')).rows.map(toPartnerHospital);
 }
 
 /** #15 */
@@ -49,12 +55,45 @@ export async function addPartnerHospital(db: Queryable, name: string, by: string
   if ((await db.query('SELECT id FROM partner_hospitals WHERE name = $1', [name])).rows[0]) throw taken();
   try {
     const { rows } = await db.query(
-      `INSERT INTO partner_hospitals (id, status, created_by, updated_by, name) VALUES ($1, 'active', $2, $2, $3) RETURNING *`,
+      `INSERT INTO partner_hospitals (id, status, created_by, updated_by, name, active) VALUES ($1, 'active', $2, $2, $3, true) RETURNING *`,
       [randomUUID(), by, name],
     );
-    return base(rows[0] as Record<string, unknown>);
+    return toPartnerHospital(rows[0] as Record<string, unknown>);
   } catch (error) {
     // 23505: another request took the name between the check and the insert.
+    if ((error as { code?: string }).code === '23505') throw taken();
+    throw error;
+  }
+}
+
+export interface PartnerHospitalChange {
+  version: number;
+  name?: string;
+  active?: boolean;
+  reason?: string;
+}
+
+/**
+ * #308 (api-list #196): renames or (de)activates a partner hospital; never removed. 404 if there is none, 409 for a
+ * stale version or a name already taken, 422 if nothing changes.
+ */
+export async function changePartnerHospital(db: Queryable, id: string, change: PartnerHospitalChange, by: string): Promise<PartnerHospital> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM partner_hospitals WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const current = toPartnerHospital(rows[0]);
+  const set: Record<string, unknown> = {};
+  if (change.name !== undefined && change.name !== current.name) set.name = change.name;
+  if (change.active !== undefined && change.active !== current.active) set.active = change.active;
+  if (Object.keys(set).length === 0) throw new AppError(422, 'invalid_input', 'nothing to change');
+  const taken = () => new AppError(409, 'duplicate', 'a partner hospital with this name exists');
+  if (set.name !== undefined) {
+    const same = await db.query('SELECT id FROM partner_hospitals WHERE name = $1 AND id <> $2', [set.name, id]);
+    if (same.rows[0]) throw taken();
+  }
+  try {
+    return toPartnerHospital(await updateRecord(db, 'partner_hospitals', { id, version: change.version, by, set, reason: change.reason }));
+  } catch (error) {
+    // 23505: another request took the name between the check and the save.
     if ((error as { code?: string }).code === '23505') throw taken();
     throw error;
   }

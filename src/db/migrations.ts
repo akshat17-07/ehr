@@ -1329,4 +1329,10 @@ export const migrations: Migration[] = [
       ]),
     ],
   },
+  {
+    // Partner hospitals can be switched off (api-list.md PartnerHospital active). Empty (null) counts as active, so
+    // the rows made before this stay active.
+    id: '0090_partner_hospitals_active',
+    statements: () => ['ALTER TABLE partner_hospitals ADD COLUMN active boolean'],
+  },
 ];
