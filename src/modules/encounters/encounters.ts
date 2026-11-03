@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SUMMARY_SELECT, toDischargeSummary, type DischargeSummary } from '../admissions/discharge.js';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
@@ -134,6 +135,13 @@ export interface EncounterDetail extends Encounter {
   notes: Note[];
   diagnoses: Diagnosis[];
   prescriptions: Prescription[];
+  /** The stay's discharge summary (draft or signed); null when none. */
+  dischargeSummary: DischargeSummary | null;
+}
+
+async function encounterSummary(db: Queryable, encounterId: string): Promise<DischargeSummary | null> {
+  const { rows } = await db.query(`${SUMMARY_SELECT} WHERE encounter_id = $1`, [encounterId]);
+  return rows[0] ? toDischargeSummary(rows[0] as Record<string, unknown>) : null;
 }
 
 export async function encounterDetail(db: Queryable, encounter: Encounter, now = new Date()): Promise<EncounterDetail> {
@@ -145,6 +153,7 @@ export async function encounterDetail(db: Queryable, encounter: Encounter, now =
     notes: await encounterNotes(db, encounter.id),
     diagnoses: await encounterDiagnoses(db, encounter.id),
     prescriptions: await encounterPrescriptions(db, encounter.id),
+    dischargeSummary: await encounterSummary(db, encounter.id),
   };
 }
 

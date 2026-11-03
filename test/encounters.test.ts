@@ -103,6 +103,25 @@ describe('GET /staff/encounters/{id}', () => {
     expect(await res.json()).toMatchObject({ id, type: 'OPD', patient: { uhid: 'U24000001' }, vitals: [], notes: [], diagnoses: [], prescriptions: [] });
   });
 
+  it('returns dischargeSummary: null, then the draft, then the signed one (this stay only)', async () => {
+    const id = await open(seedId('9a710000', 3));
+    const other = await open(seedId('9a710000', 4));
+    expect(await patch(id, { version: 1, type: 'IPD', reason: 'admitted' })).toBeTruthy();
+    expect(await (await get(id)).json()).toMatchObject({ dischargeSummary: null });
+    const body = { diagnosisText: 'Pneumonia', course: 'Improved', medicinesOnDischarge: [], advice: 'Rest' };
+    const made = await app.request(`/staff/encounters/${id}/discharge-summary`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, doctor);
+    expect(made.status).toBe(201);
+    const draft = (await made.json()) as { id: string; version: number };
+    expect(await (await get(id)).json()).toMatchObject({ dischargeSummary: { id: draft.id, status: 'draft', diagnosisText: 'Pneumonia' } });
+    expect(await (await get(other)).json()).toMatchObject({ dischargeSummary: null });
+    const signed = await app.request(`/staff/discharge-summaries/${draft.id}/sign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: draft.version }) }, doctor);
+    expect(signed.status).toBe(200);
+    const detail = (await (await get(id)).json()) as { dischargeSummary: { status: string; signedAt?: string; signedBy?: string } };
+    expect(detail.dischargeSummary.status).toBe('signed');
+    expect(detail.dischargeSummary.signedAt).toBeTruthy();
+    expect(detail.dischargeSummary.signedBy).toBeTruthy();
+  });
+
   it('403 for an inactive patient without access; 404 for none; 403 without encounter.view', async () => {
     const { rows } = await db.query(
       "INSERT INTO encounters (id, status, created_by, updated_by, patient_id, type, department_id, doctor_id, started_at) VALUES ($1, 'closed', 'x', 'x', $2, 'OPD', $3, $4, '2024-01-05T10:00:00Z') RETURNING id",
