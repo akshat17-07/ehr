@@ -1376,4 +1376,19 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC salary_structures_name ON salary_structures (name)',
     ],
   },
+  {
+    // Salary advances (api-list.md Advance, #323). Money is whole paise. Payroll runs (#324) recover
+    // min(recover_per_month_paise, balance) each month and add it to recovered_paise.
+    id: '0093_advances',
+    statements: () => [
+      ...createTable('advances', [
+        'employee_id uuid NOT NULL',
+        'amount_paise bigint NOT NULL',
+        'given_on date NOT NULL',
+        'recover_per_month_paise bigint NOT NULL',
+        'recovered_paise bigint NOT NULL DEFAULT 0',
+      ]),
+      'CREATE INDEX ASYNC advances_employee_given ON advances (employee_id, given_on)',
+    ],
+  },
 ];
