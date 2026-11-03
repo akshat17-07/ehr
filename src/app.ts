@@ -1,4 +1,5 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
+import { adminReferrersRoutes } from './modules/referrals/admin-referrers.routes.js';
 import { adminPatientMergesRoutes, patientMergesRoutes } from './modules/patients/merges.routes.js';
 import { patientsRoutes } from './modules/patients/patients.routes.js';
 import { referenceRoutes } from './modules/reference/reference.routes.js';
@@ -145,6 +146,7 @@ export function createApp({
     .route('/discounts', adminDiscountsRoutes)
     .route('/patient-merges', adminPatientMergesRoutes)
     .route('/patients', adminPatientsRoutes)
+    .route('/referrers', adminReferrersRoutes)
     .route('/break-glass-events', adminBreakGlassRoutes)
     .route('/settings/inactive-access', adminInactiveSettingsRoutes)
     .route('/', permissionsAdminRoutes);

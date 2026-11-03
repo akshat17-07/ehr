@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { AppError } from '../../middleware/errors.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
+import { UUID } from '../users/users.js';
 import type { BaseFields } from '../patients/patients.js';
 
 // Referring doctors and clinics (api-list.md Referrer). No fee or commission is ever kept.
@@ -81,4 +83,28 @@ export async function addReferrer(db: Queryable, input: NewReferrer, by: string)
 export async function assertReferrer(db: Queryable, id: string, field = 'referrerId'): Promise<void> {
   const { rows } = await db.query('SELECT 1 FROM referrers WHERE id = $1 AND merged_into IS NULL AND voided_at IS NULL', [id]);
   if (!rows[0]) throw new AppError(422, 'validation_failed', `${field}: no such referrer`);
+}
+
+/**
+ * #201: links a GP login (users.id, type gp) to a referrer and makes it a real record (pseudo false).
+ * 404 missing; 409 merged / already_attached / user_attached; 422 if the user is not a GP login.
+ */
+export async function attachReferrerUser(db: Queryable, id: string, input: { userId: string; reason: string }, by: string): Promise<Referrer> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM referrers WHERE id = $1', [id]) : { rows: [] };
+  const current = rows[0] as Record<string, unknown> | undefined;
+  if (!current) throw new AppError(404, 'not_found');
+  if (current.merged_into) throw new AppError(409, 'merged', 'this referrer was merged into another');
+  if (current.user_id) throw new AppError(409, 'already_attached', 'this referrer already has a login');
+  const user = (await db.query('SELECT type FROM users WHERE id = $1', [input.userId])).rows[0];
+  if (!user || user.type !== 'gp') throw new AppError(422, 'invalid_input', 'user must be a GP login');
+  const taken = (await db.query('SELECT 1 FROM referrers WHERE user_id = $1 AND id <> $2', [input.userId, id])).rows[0];
+  if (taken) throw new AppError(409, 'user_attached', 'this login is already linked to another referrer');
+  const saved = await updateRecord(db, 'referrers', {
+    id,
+    version: current.version as number,
+    by,
+    reason: input.reason,
+    set: { user_id: input.userId, pseudo: false },
+  });
+  return toReferrer(saved);
 }
