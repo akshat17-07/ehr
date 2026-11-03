@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { AppError } from '../../middleware/errors.js';
@@ -18,6 +19,7 @@ import { toClaim, toClaimEvent, type ClaimKind, type ClaimStatus } from '../insu
 import { createRecordRequest, toRecordRequest, type RecordRequest } from '../records/record-requests.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
 import { isWithdrawable, toConsent, withdrawConsent, type Consent, type ConsentKind } from '../patients/consents.js';
+import { toRightsRequest, type RightsRequest } from '../compliance/rights-requests.js';
 
 // Patient-portal views (api-list.md §8, #239-#241). The caller has been resolved by resolvePortalPatient; these
 // functions only shape what a patient may see: no staff-only fields (who saved what, sensitive labels, staff notes,
@@ -888,6 +890,64 @@ export async function withdrawPortalConsent(
   }
   const consent = await withdrawConsent(db, consentId, { reason, byPatientId: selfPatientId, by }, now);
   return (await toPortalConsents(db, profile.patientId, [consent]))[0] as PortalConsent;
+}
+
+// #257, #258: DPDP rights requests (compliance/rights-requests.ts). The officer answers them (#333); the patient
+// sees the answer here. No version, void fields, requestedBy or respondedBy (staff and portal subs).
+
+export type PortalRightsRequest = Pick<
+  RightsRequest,
+  'id' | 'patientId' | 'kind' | 'text' | 'status' | 'createdAt' | 'dueBy' | 'response' | 'outcome' | 'outcomeReason' | 'respondedAt'
+>;
+
+/** Most open requests one patient may have at a time (409 too_many_open past it). */
+export const MAX_OPEN_RIGHTS_REQUESTS = 10;
+
+function toPortalRightsRequest(r: Record<string, unknown>): PortalRightsRequest {
+  const x = toRightsRequest(r);
+  return {
+    id: x.id, patientId: x.patientId, kind: x.kind, text: x.text, status: x.status, createdAt: x.createdAt, dueBy: x.dueBy,
+    response: x.response, outcome: x.outcome, outcomeReason: x.outcomeReason, respondedAt: x.respondedAt,
+  };
+}
+
+/** #257: the patient's live rights requests, newest first, at most 100. */
+export async function portalRightsRequests(db: Queryable, patientId: string): Promise<PortalRightsRequest[]> {
+  const { rows } = await db.query(
+    'SELECT * FROM rights_requests WHERE patient_id = $1 AND voided_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 100',
+    [patientId],
+  );
+  return rows.map((r) => toPortalRightsRequest(r as Record<string, unknown>));
+}
+
+/**
+ * #258: files a rights request (status open) for the account holder, or for a family member only while a minor
+ * (same rule as #256: 403 adult_family_member). 409 too_many_open at MAX_OPEN_RIGHTS_REQUESTS open requests.
+ * requested_by is the portal sign-in's sub.
+ */
+export async function createPortalRightsRequest(
+  db: Queryable,
+  profile: { patientId: string; relation: string },
+  input: { kind: RightsRequest['kind']; text: string },
+  by: string,
+  now = new Date(),
+): Promise<PortalRightsRequest> {
+  if (profile.relation !== 'self' && !isMinor((await getPatient(db, profile.patientId)).dob, now)) {
+    throw new AppError(403, 'adult_family_member', 'an adult files their own rights request');
+  }
+  const open = await db.query(
+    "SELECT count(*)::int AS n FROM rights_requests WHERE patient_id = $1 AND status = 'open' AND voided_at IS NULL",
+    [profile.patientId],
+  );
+  if (Number(open.rows[0]?.n ?? 0) >= MAX_OPEN_RIGHTS_REQUESTS) {
+    throw new AppError(409, 'too_many_open', `at most ${MAX_OPEN_RIGHTS_REQUESTS} requests may be open at a time`);
+  }
+  const { rows } = await db.query(
+    `INSERT INTO rights_requests (id, status, created_by, updated_by, patient_id, kind, text, requested_by)
+     VALUES ($1, 'open', $2, $2, $3, $4, $5, $2) RETURNING *`,
+    [randomUUID(), by, profile.patientId, input.kind, input.text],
+  );
+  return toPortalRightsRequest(rows[0] as Record<string, unknown>);
 }
 
 /** #244: the patient's prescriptions that were issued (confirmed or dispensed), newest first. */

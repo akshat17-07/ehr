@@ -10,9 +10,12 @@ import { DOCUMENT_TYPES, documentViewUrl } from '../documents/documents.js';
 import { address, mobile } from '../patients/patients.routes.js';
 import { PRINT_LANGUAGES } from '../billing/print.js';
 import { RECORD_SCOPES } from '../records/record-requests.js';
+import { RIGHTS_KINDS } from '../compliance/rights-requests.js';
 import { portalProfiles, resolvePortalPatient } from './portal-access.js';
 import {
   createPortalRecordRequest,
+  createPortalRightsRequest,
+  portalRightsRequests,
   hasSensitiveLabel,
   portalAccessLog,
   portalConsentPatient,
@@ -53,6 +56,11 @@ const newRecordRequest = z
     includeSensitive: z.boolean().optional(),
     email: z.email().max(200).optional(),
   })
+  .strict();
+
+// patientId is resolved by the route first, so a foreign or bad one is the generic 403 before this check.
+const newRightsRequest = z
+  .object({ patientId: z.uuid().optional(), kind: z.enum(RIGHTS_KINDS), text: z.string().trim().min(10).max(2000) })
   .strict();
 
 const withdrawal = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
@@ -218,4 +226,20 @@ export const portalRoutes = new Hono<AuthEnv>()
     const consent = await withdrawPortalConsent(db, profile, self.patientId, id, reason, userOf(c).sub);
     auditDetails(c, { action: 'update', patientId: profile.patientId, recordType: 'consent', recordId: id, reason: reason ?? 'consent withdrawn' });
     return c.json(consent);
+  })
+  // #257
+  .get('/rights-requests', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalRightsRequests(await dbOf(c), profile.patientId));
+  })
+  // #258: as #253, the patient is resolved before the body is checked; for a family member, minors only (#256).
+  .post('/rights-requests', async (c) => {
+    const body = (await bodyOf(c)) as unknown;
+    const raw = body !== null && typeof body === 'object' ? (body as Record<string, unknown>).patientId : undefined;
+    const profile = await resolvePortalPatient(c, raw === undefined || typeof raw === 'string' ? raw : 'invalid');
+    const { kind, text } = newRightsRequest.parse(body);
+    const request = await createPortalRightsRequest(await dbOf(c), profile, { kind, text }, userOf(c).sub);
+    auditDetails(c, { patientId: request.patientId, recordType: 'rights_request', recordId: request.id });
+    return c.json(request, 201);
   });
