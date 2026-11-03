@@ -2,6 +2,7 @@ import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js
 import { adminAuditRoutes } from './audit/audit.routes.js';
 import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
 import { adminInventoryRoutes } from './modules/inventory/admin-items.routes.js';
+import { adminSuppliersRoutes } from './modules/inventory/suppliers.routes.js';
 import { adminLedgerRoutes, adminReportsRoutes } from './modules/reports/finance.routes.js';
 import { adminAccessReviewsRoutes } from './modules/compliance/access-reviews.routes.js';
 import { adminLegalHoldsRoutes } from './modules/compliance/legal-holds.routes.js';
@@ -173,6 +174,7 @@ export function createApp({
     .route('/reports', adminReportsRoutes)
     .route('/ledger', adminLedgerRoutes)
     .route('/inventory', adminInventoryRoutes)
+    .route('/suppliers', adminSuppliersRoutes)
     .route('/audit', adminAuditRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);

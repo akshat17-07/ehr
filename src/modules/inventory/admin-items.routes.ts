@@ -5,9 +5,9 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { changeItem, listAdminItems, setReorderSettings } from './admin-items.js';
+import { changeItem, listAdminItems, setReorderSettings, setReorderSettingsBulk } from './admin-items.js';
 import { ITEM_KINDS } from './items.js';
-import { listReorderChecks, reorderCheckDetail, runReorderCheck } from './reorder-checks.js';
+import { listReorderChecks, reorderCheckDetail, reorderCheckHtml, runReorderCheck } from './reorder-checks.js';
 
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true');
 const itemsQuery = pageQuery.extend({
@@ -55,6 +55,10 @@ const checkBody = z
     onlyNeedingOrder: z.boolean().default(true),
   })
   .strict();
+const bulkBody = z
+  .object({ items: z.array(reorderBody.omit({ version: true }).extend({ itemId: z.uuid() }).strict()).min(1).max(500) })
+  .strict();
+const printQuery = z.object({ groupBy: z.enum(['supplier', 'kind']).default('supplier') });
 const checksQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
 
 /** /admin/inventory */
@@ -78,6 +82,13 @@ export const adminInventoryRoutes = new Hono<AuthEnv>()
     auditDetails(c, { recordType: 'reorder_setting', recordId: setting.itemId, changes });
     return c.json(setting);
   })
+  // #357
+  .put('/reorder-settings', requirePermission('inventory.manage'), async (c) => {
+    const { items } = bulkBody.parse(await c.req.json().catch(() => undefined));
+    const { settings, changed } = await setReorderSettingsBulk(await dbOf(c), items, userOf(c).sub);
+    auditDetails(c, { recordType: 'reorder_settings', changes: { count: [null, items.length], changed: [null, changed] } });
+    return c.json(settings);
+  })
   // #287
   .post('/reorder-check', requirePermission('reorder.check'), async (c) => {
     const input = checkBody.parse(await c.req.json().catch(() => ({})));
@@ -90,4 +101,12 @@ export const adminInventoryRoutes = new Hono<AuthEnv>()
     c.json(await listReorderChecks(await dbOf(c), checksQuery.parse(c.req.query()))),
   )
   // #289
-  .get('/reorder-checks/:id', requirePermission('reorder.check'), async (c) => c.json(await reorderCheckDetail(await dbOf(c), c.req.param('id'))));
+  .get('/reorder-checks/:id', requirePermission('reorder.check'), async (c) => c.json(await reorderCheckDetail(await dbOf(c), c.req.param('id'))))
+  // #356
+  .get('/reorder-checks/:id/print', requirePermission('reorder.check'), async (c) => {
+    const { groupBy } = printQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    const check = await reorderCheckDetail(db, c.req.param('id'));
+    auditDetails(c, { action: 'print', recordType: 'reorder_check', recordId: check.id });
+    return c.html(await reorderCheckHtml(db, check, groupBy));
+  });

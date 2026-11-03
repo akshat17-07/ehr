@@ -4,6 +4,7 @@ import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate, indiaDayStart } from '../../time/india.js';
+import { getHospital } from '../reference/hospital.js';
 import { UUID } from '../users/users.js';
 import { toReorderSetting, type ReorderSetting } from './admin-items.js';
 import { stockByItem, type Batch } from './batches.js';
@@ -222,4 +223,49 @@ export function listReorderChecks(db: Queryable, query: PageQuery & { from?: str
   if (query.from) where.push(`run_at >= $${params.push(indiaDayStart(query.from))}`);
   if (query.to) where.push(`run_at < $${params.push(new Date(indiaDayStart(query.to).getTime() + DAY))}`);
   return pageRows(db, { select: SELECT, where, params, orderBy: ['run_at', 'id'], direction: 'desc' }, query, toCheck);
+}
+
+const escape = (s: string) => s.replace(/[&<>"']/g, (ch) => '&#' + ch.charCodeAt(0) + ';');
+const KIND_NAMES: Record<string, string> = { drug: 'Drugs', consumable: 'Consumables', surgical: 'Surgical', implant: 'Implants', lab_reagent: 'Lab reagents', other: 'Other' };
+
+/**
+ * #290: the saved check's order list as one printable HTML page (A4, no scripts): items with a quantity to order,
+ * grouped by preferred supplier or by kind. Every value is HTML-escaped.
+ */
+export async function reorderCheckHtml(db: Queryable, check: ReorderCheck, groupBy: 'supplier' | 'kind'): Promise<string> {
+  const hospital = await getHospital(db);
+  const toOrder = (check.rows ?? []).filter((r) => r.status !== 'ok' && r.suggestedQty > 0);
+  const supplierIds = [...new Set(toOrder.flatMap((r) => (r.preferredSupplierId ? [r.preferredSupplierId] : [])))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < supplierIds.length; i += CHUNK) {
+    const part = supplierIds.slice(i, i + CHUNK);
+    const { rows } = await db.query(`SELECT id, name FROM suppliers WHERE id IN (${inList(part)})`, part);
+    for (const r of rows) names.set(String(r.id), String(r.name));
+  }
+  const groupOf = (r: ReorderRow) =>
+    groupBy === 'kind'
+      ? (KIND_NAMES[r.item.kind] ?? r.item.kind)
+      : r.preferredSupplierId
+        ? (names.get(r.preferredSupplierId) ?? 'Unknown supplier')
+        : 'No preferred supplier';
+  const groups = new Map<string, ReorderRow[]>();
+  for (const r of toOrder) groups.set(groupOf(r), [...(groups.get(groupOf(r)) ?? []), r]);
+  const ordered = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const when = new Date(check.runAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+  const line = (r: ReorderRow) =>
+    `<tr><td>${escape(r.item.name)}</td><td>${escape(r.item.unit)}</td><td class="n">${r.usableQty}</td><td class="n">${r.reorderPoint}</td><td class="n">${r.daysLeft ?? ''}</td><td class="n">${r.suggestedQty}</td></tr>`;
+  const tables = ordered
+    .map(
+      ([name, rows]) =>
+        `<h2>${escape(name)}</h2>\n<table><thead><tr><th>Item</th><th>Unit</th><th class="n">In stock</th><th class="n">Reorder point</th><th class="n">Days left</th><th class="n">Order qty</th></tr></thead><tbody>${rows.map(line).join('')}</tbody></table>`,
+    )
+    .join('\n');
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Reorder list</title>
+<style>@page{size:A4;margin:12mm}body{font:12px sans-serif;color:#000}h1,h2{margin:0}h2{font-size:15px;margin:12px 0 0}
+table{width:100%;border-collapse:collapse;margin-top:6px}td,th{border:1px solid #888;padding:3px 5px;text-align:left}.n{text-align:right}</style></head><body>
+<h1>${escape(hospital.name)}</h1>
+<div>Reorder list (${groupBy === 'kind' ? 'by kind' : 'by supplier'}) · checked ${escape(when)}</div>
+${tables || '<p>Nothing to order.</p>'}
+</body></html>`;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { updateRecord } from '../../db/records.js';
+import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { UUID } from '../users/users.js';
 import { stockByItem, stockTotals } from './batches.js';
@@ -208,4 +209,38 @@ export async function setReorderSettings(
   }
   const row = (await db.query('SELECT * FROM reorder_settings WHERE item_id = $1', [itemId])).rows[0] as Record<string, unknown>;
   return { setting: toReorderSetting(row), changes };
+}
+
+/**
+ * #357: sets reorder settings for many items at once (up to 500), all or nothing. Same rules as #352 per item; a
+ * failure becomes 422 naming the index (items[3]: ...). The same item twice is a 422. 409 only if someone else
+ * saved the same row at the same moment.
+ */
+export async function setReorderSettingsBulk(
+  db: Queryable,
+  items: (ReorderInput & { itemId: string })[],
+  by: string,
+): Promise<{ settings: ReorderSetting[]; changed: number }> {
+  const seen = new Set<string>();
+  items.forEach((item, i) => {
+    if (seen.has(item.itemId)) throw new AppError(422, 'invalid_input', 'items[' + i + ']: item given twice', { index: i });
+    seen.add(item.itemId);
+  });
+  return withTransaction(db, async (tx) => {
+    const settings: ReorderSetting[] = [];
+    let changed = 0;
+    for (const [i, { itemId, ...input }] of items.entries()) {
+      try {
+        const result = await setReorderSettings(tx, itemId, input, by);
+        settings.push(result.setting);
+        if (Object.keys(result.changes).length > 0) changed++;
+      } catch (error) {
+        if (error instanceof AppError && (error.status === 404 || error.status === 422)) {
+          throw new AppError(422, 'invalid_input', 'items[' + i + ']: ' + (error.status === 404 ? 'unknown item' : error.message), { index: i });
+        }
+        throw error;
+      }
+    }
+    return { settings, changed };
+  });
 }
