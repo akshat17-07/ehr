@@ -1,4 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
+import { AppError } from '../../middleware/errors.js';
+import { UUID } from '../users/users.js';
 
 // The drug list (api-list.md Drug). Every drug is also an inventory item with the same id (batches: #13).
 
@@ -57,4 +61,74 @@ export async function searchDrugs(db: Queryable, search: DrugSearch): Promise<Dr
     params,
   );
   return rows.map(toDrug);
+}
+
+export type AdminDrug = Drug & { ceilingPaise?: number };
+
+// The staff search does not show the purchase ceiling; the Admin's add and edit do.
+function toAdminDrug(r: Record<string, unknown>): AdminDrug {
+  const drug: AdminDrug = { ...toDrug(r), ceilingPaise: optNumber(r.ceiling_paise) };
+  if (drug.ceilingPaise === undefined) delete drug.ceilingPaise;
+  return drug;
+}
+
+export interface NewDrug {
+  name: string;
+  strength?: string;
+  form?: string;
+  schedule: DrugSchedule;
+  hsn?: string;
+  gstRate?: number;
+  mrpPaise?: number;
+  ceilingPaise?: number;
+}
+
+const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+
+function checkCeiling(mrpPaise: number | undefined, ceilingPaise: number | undefined) {
+  if (mrpPaise !== undefined && ceilingPaise !== undefined && mrpPaise > ceilingPaise) throw invalid('mrpPaise cannot be above ceilingPaise');
+}
+
+/** #193: adds a drug (active, version 1). 422 if the MRP is above the ceiling. */
+export async function addDrug(db: Queryable, input: NewDrug, by: string): Promise<AdminDrug> {
+  checkCeiling(input.mrpPaise, input.ceilingPaise);
+  const { rows } = await db.query(
+    `INSERT INTO drugs (id, status, created_by, updated_by, name, strength, form, schedule, hsn, gst_rate, mrp_paise, ceiling_paise, active)
+     VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, true) RETURNING *`,
+    [randomUUID(), by, input.name, input.strength ?? null, input.form ?? null, input.schedule, input.hsn ?? null, input.gstRate ?? null, input.mrpPaise ?? null, input.ceilingPaise ?? null],
+  );
+  return toAdminDrug(rows[0] as Record<string, unknown>);
+}
+
+export interface DrugChange extends Partial<NewDrug> {
+  version: number;
+  active?: boolean;
+  reason?: string;
+}
+
+const COLUMNS = {
+  name: 'name', strength: 'strength', form: 'form', schedule: 'schedule', hsn: 'hsn',
+  gstRate: 'gst_rate', mrpPaise: 'mrp_paise', ceilingPaise: 'ceiling_paise', active: 'active',
+} as const;
+
+/**
+ * #194: edits a drug, or (de)activates it; drugs are never removed. 404 if there is none, 409 for a stale version,
+ * 422 if nothing changes or the merged MRP is above the merged ceiling.
+ */
+export async function changeDrug(db: Queryable, id: string, change: DrugChange, by: string): Promise<AdminDrug> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM drugs WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const current = toAdminDrug(rows[0]);
+  const set: Record<string, unknown> = {};
+  const merged: Record<string, unknown> = { ...current };
+  for (const [field, column] of Object.entries(COLUMNS)) {
+    const value = change[field as keyof typeof COLUMNS];
+    if (value !== undefined && value !== (current as unknown as Record<string, unknown>)[field]) {
+      set[column] = value;
+      merged[field] = value;
+    }
+  }
+  if (Object.keys(set).length === 0) throw invalid('nothing to change');
+  checkCeiling(merged.mrpPaise as number | undefined, merged.ceilingPaise as number | undefined);
+  return toAdminDrug(await updateRecord(db, 'drugs', { id, version: change.version, by, set, reason: change.reason }));
 }

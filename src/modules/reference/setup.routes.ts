@@ -5,6 +5,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { addDepartment, changeDepartment } from './departments.js';
+import { addDrug, changeDrug, DRUG_SCHEDULES } from './drugs.js';
 import { changeHospital } from './hospital-edit.js';
 import { addTariffList, TARIFF_SETTINGS } from './tariffs.js';
 
@@ -38,6 +39,22 @@ const tariffItem = z
   })
   .strict();
 const newTariffList = z.object({ validFrom: z.iso.date(), items: z.array(tariffItem).min(1).max(1000) }).strict();
+
+const newDrug = z
+  .object({
+    name: text(200),
+    strength: text(60).optional(),
+    form: text(40).optional(),
+    schedule: z.enum(DRUG_SCHEDULES),
+    hsn: z.string().trim().regex(/^\d{4,8}$/, '4 to 8 digits').optional(),
+    gstRate: z.union([z.literal(0), z.literal(5), z.literal(12), z.literal(18), z.literal(28)]).optional(),
+    mrpPaise: z.number().int().min(0).max(1_000_000_000).optional(),
+    ceilingPaise: z.number().int().min(0).max(1_000_000_000).optional(),
+  })
+  .strict();
+const drugChange = z
+  .object({ ...newDrug.partial().shape, version: z.number().int().min(1), active: z.boolean().optional(), reason: z.string().trim().min(3).max(500).optional() })
+  .strict();
 
 const address = z
   .object({
@@ -78,6 +95,20 @@ export const setupAdminRoutes = new Hono<AuthEnv>()
     const department = await changeDepartment(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { recordType: 'department', recordId: department.id, ...(input.reason && { reason: input.reason }) });
     return c.json(department);
+  })
+  // #193 (Admin only)
+  .post('/drugs', requirePermission('settings.drugs'), async (c) => {
+    const input = newDrug.parse(await c.req.json().catch(() => undefined));
+    const drug = await addDrug(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'drug', recordId: drug.id });
+    return c.json(drug, 201);
+  })
+  // #194 (Admin only)
+  .patch('/drugs/:id', requirePermission('settings.drugs'), async (c) => {
+    const input = drugChange.parse(await c.req.json().catch(() => undefined));
+    const drug = await changeDrug(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'drug', recordId: drug.id, ...(input.reason && { reason: input.reason }) });
+    return c.json(drug);
   })
   // #192 (Admin only)
   .post('/tariffs', requirePermission('settings.tariffs'), async (c) => {
