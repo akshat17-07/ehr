@@ -114,13 +114,13 @@ describe('POST /admin/payroll/runs', () => {
     expect(res.status).toBe(201);
     const run = (await res.json()) as PayrollRun;
     expect(run).toMatchObject({ version: 1, month: '2026-05', status: 'draft', runBy: 'dev-admin', approvedBy: null, totalNetPaise: 4229200 + 1269500 });
-    expect(run.payslips).toHaveLength(2);
-    const p1 = run.payslips.find((p) => p.employeeId === e1);
+    expect(run.payslips!).toHaveLength(2);
+    const p1 = run.payslips!.find((p) => p.employeeId === e1);
     expect(p1).toMatchObject({
       runId: run.id, month: '2026-05', grossPaise: 4600000, netPaise: 4229200,
       deductions: [{ kind: 'epf', paise: 180000 }, { kind: 'pt', paise: 20800 }, { kind: 'tds', paise: 50000 }, { kind: 'advance', paise: 100000 }, { kind: 'other', paise: 20000 }],
     });
-    const p2 = run.payslips.find((p) => p.employeeId === e2);
+    const p2 = run.payslips!.find((p) => p.employeeId === e2);
     expect(p2).toMatchObject({ grossPaise: 1400000, netPaise: 1269500, deductions: [{ kind: 'epf', paise: 120000 }, { kind: 'esi', paise: 10500 }] });
 
     const stored = await db.query('SELECT status, total_net_paise FROM payroll_runs WHERE id = $1', [run.id]);
@@ -144,7 +144,7 @@ describe('POST /admin/payroll/runs', () => {
     await advance(e, 500000, 480000, 30000); // balance 20000
     await advance(e, 500000, 500000, 30000); // fully recovered
     const run = (await (await post({ month: '2026-03' })).json()) as PayrollRun;
-    expect(run.payslips[0]).toMatchObject({ grossPaise: 4000000, deductions: [{ kind: 'pt', paise: 21200 }, { kind: 'advance', paise: 50000 }], netPaise: 3928800 });
+    expect(run.payslips![0]).toMatchObject({ grossPaise: 4000000, deductions: [{ kind: 'pt', paise: 21200 }, { kind: 'advance', paise: 50000 }], netPaise: 3928800 });
   });
 
   it('409 run_exists for a month that already has a run, whatever its status', async () => {
@@ -218,5 +218,46 @@ describe('POST /admin/payroll/runs', () => {
     expect((await mine()).map((p) => p.runId)).not.toContain(run.id);
     await db.query("UPDATE payroll_runs SET status = 'approved' WHERE id = $1", [run.id]);
     expect((await mine()).map((p) => p.runId)).toContain(run.id);
+  });
+});
+
+describe('GET /admin/payroll/runs and /:id', () => {
+  const get = (path: string, who = admin) => app.request(`/admin/payroll/runs${path}`, {}, who);
+
+  it('lists runs newest month first without payslips, filtered by year; by id has payslips by name', async () => {
+    const s = await structure('Reads', { basic: 100000, hra: 0 });
+    const zed = await employee('Zed Reader', s, '2019-01-01');
+    const amy = await employee('Amy Reader', s, '2019-01-01');
+    const a = (await (await post({ month: '2025-02' })).json()) as PayrollRun;
+    const b = (await (await post({ month: '2025-11' })).json()) as PayrollRun;
+    await post({ month: '2024-12' });
+
+    const all = (await (await get('')).json()) as PayrollRun[];
+    const months = all.map((r) => r.month);
+    expect(months).toEqual([...months].sort().reverse());
+    expect(all.every((r) => !('payslips' in r))).toBe(true);
+
+    const y = (await (await get('?year=2025')).json()) as PayrollRun[];
+    expect(y.map((r) => r.month)).toEqual(['2025-11', '2025-02']);
+    expect(y[0]).toMatchObject({ id: b.id, status: 'draft', totalNetPaise: 200000, approvedBy: null });
+    expect(a.id).toBeTruthy();
+
+    const one = await get(`/${b.id}`);
+    expect(one.status).toBe(200);
+    const run = (await one.json()) as PayrollRun;
+    expect(run.payslips?.map((p) => p.employeeId)).toEqual([amy, zed]);
+    expect(run).toMatchObject({ id: b.id, month: '2025-11' });
+    const audit = await db.query("SELECT 1 FROM audit_events WHERE record_type = 'payroll_run' AND record_id = $1 AND action <> 'create'", [b.id]);
+    expect(audit.rows.length).toBeGreaterThan(0);
+  });
+
+  it('422 for a bad year or extra query; 404 for unknown or malformed id; 403 without payroll.view', async () => {
+    for (const q of ['?year=1999', '?year=2101', '?year=abc', '?x=1']) expect((await get(q)).status, q).toBe(422);
+    const missing = await get('/77777777-7777-4777-8777-777777777777');
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: 'not_found' });
+    expect((await get('/nope')).status).toBe(404);
+    expect((await get('', doctor)).status).toBe(403);
+    expect((await get('/77777777-7777-4777-8777-777777777777', doctor)).status).toBe(403);
   });
 });

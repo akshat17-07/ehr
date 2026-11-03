@@ -4,6 +4,7 @@ import type { Queryable } from '../../db/migrate.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
+import { UUID } from '../users/users.js';
 import { toPayslip, type DEDUCTION_KINDS, type Payslip } from './payslips.js';
 
 // Payroll runs (api-list.md PayrollRun). #324 makes a draft run; the amounts are worked out here and nothing
@@ -21,7 +22,8 @@ export interface PayrollRun {
   runBy: string;
   approvedBy: string | null;
   createdAt: string;
-  payslips: Payslip[];
+  /** Left out of the list. */
+  payslips?: Payslip[];
 }
 
 export const MAX_RUN_EMPLOYEES = 2500;
@@ -81,6 +83,42 @@ export function calculatePay(i: PayInput): { grossPaise: number; deductions: Ded
   ];
   const deductions = all.filter((d) => d.paise > 0);
   return { grossPaise, deductions, netPaise: grossPaise - deductions.reduce((s, d) => s + d.paise, 0) };
+}
+
+export function toRun(r: Record<string, unknown>, payslips?: Payslip[]): PayrollRun {
+  return {
+    id: String(r.id),
+    version: Number(r.version),
+    month: String(r.month),
+    status: String(r.status),
+    totalNetPaise: Number(r.total_net_paise),
+    runBy: String(r.run_by),
+    approvedBy: r.approved_by == null ? null : String(r.approved_by),
+    createdAt: new Date(r.created_at as string | Date).toISOString(),
+    ...(payslips && { payslips }),
+  };
+}
+
+export const runsQuery = z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }).strict();
+export type RunsQuery = z.infer<typeof runsQuery>;
+
+/** #325: runs newest month first, without payslips. */
+export async function listPayrollRuns(db: Queryable, query: RunsQuery): Promise<PayrollRun[]> {
+  const { rows } = query.year === undefined
+    ? await db.query('SELECT * FROM payroll_runs WHERE voided_at IS NULL ORDER BY month DESC, id')
+    : await db.query('SELECT * FROM payroll_runs WHERE voided_at IS NULL AND month LIKE $1 ORDER BY month DESC, id', [`${query.year}-%`]);
+  return rows.map((r) => toRun(r as Record<string, unknown>));
+}
+
+/** #326: one run with its payslips, by employee name. */
+export async function getPayrollRun(db: Queryable, id: string): Promise<PayrollRun> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM payroll_runs WHERE id = $1 AND voided_at IS NULL', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const slips = await db.query(
+    `SELECT p.* FROM payslips p LEFT JOIN employees e ON e.id = p.employee_id WHERE p.run_id = $1 ORDER BY e.name, p.id`,
+    [id],
+  );
+  return toRun(rows[0] as Record<string, unknown>, slips.rows.map((r) => toPayslip(r as Record<string, unknown>)));
 }
 
 /** #324: makes a draft run for `month` with a payslip for every active employee joined by month end. */
@@ -168,16 +206,6 @@ export async function createPayrollRun(db: Queryable, input: NewRun, by: string)
       );
       payslips.push(toPayslip(rows[0] as Record<string, unknown>));
     }
-    return {
-      id: runId,
-      version: Number(run.version),
-      month,
-      status: 'draft',
-      totalNetPaise: total,
-      runBy: String(run.run_by),
-      approvedBy: null,
-      createdAt: new Date(run.created_at as string | Date).toISOString(),
-      payslips,
-    };
+    return toRun(run, payslips);
   });
 }
