@@ -5,6 +5,7 @@ import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import type { BaseFields } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 import { billLevelDiscount, billTotals, getBill, toBill, type Bill } from './bills.js';
 
 // Discounts (api-list.md Discount) on a draft bill. Up to the hospital's limit one is applied at once; above it, it
@@ -62,5 +63,33 @@ export async function addDiscount(db: Queryable, billId: string, input: { amount
       [randomUUID(), status, by, billId, input.amountPaise, input.reason],
     );
     return toDiscount(inserted[0] as Record<string, unknown>);
+  });
+}
+
+/**
+ * #179 / #180: a second person decides a pending discount. 404 if there is none, 403 for whoever raised it, 409 if it
+ * is not pending. Approving takes it off the bill's total (applyToBill); 409 if the bill is no longer a draft or its
+ * total is now less than the discount. Rejecting changes nothing on the bill, which can then be finalised. The note /
+ * reason is kept in the discount's history.
+ */
+export async function decideDiscount(
+  db: Queryable,
+  id: string,
+  decision: { approve: true; note?: string } | { approve: false; reason: string },
+  by: string,
+): Promise<Discount> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM discounts WHERE id = $1', [id]) : { rows: [] };
+  const row = rows[0];
+  if (!row) throw new AppError(404, 'not_found');
+  if (row.created_by === by) throw new AppError(403, 'forbidden', "you can't decide a discount you raised");
+  if (row.status !== 'pending') throw new AppError(409, 'conflict', `this discount is already ${row.status}`);
+  const change = { id, version: Number(row.version), by, reason: decision.approve ? decision.note : decision.reason };
+  return withTransaction(db, async (tx) => {
+    if (!decision.approve) return toDiscount(await updateRecord(tx, 'discounts', { ...change, set: { status: 'rejected' } }));
+    const bill = await getBill(tx, String(row.bill_id));
+    if (bill.status !== 'draft') throw new AppError(409, 'not_draft', 'a discount is applied on a draft bill; this one is ' + bill.status);
+    if (Number(row.amount_paise) > bill.totalPaise) throw new AppError(409, 'conflict', "the bill's total is now less than this discount");
+    await applyToBill(tx, bill, Number(row.amount_paise), by);
+    return toDiscount(await updateRecord(tx, 'discounts', { ...change, set: { status: 'applied', approved_by: by } }));
   });
 }

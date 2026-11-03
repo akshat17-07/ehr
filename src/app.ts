@@ -55,7 +55,7 @@ import { accessRequestsRoutes, adminAccessRequestsRoutes, myAccessRequestsRoutes
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
-import { adminRefundsRoutes } from './modules/billing/decisions.routes.js';
+import { adminDiscountsRoutes, adminRefundsRoutes } from './modules/billing/decisions.routes.js';
 import { approvalsRoutes } from './modules/approvals/approvals.routes.js';
 import { setupAdminRoutes } from './modules/reference/setup.routes.js';
 
@@ -139,6 +139,7 @@ export function createApp({
     .route('/', setupAdminRoutes)
     .route('/access-requests', adminAccessRequestsRoutes)
     .route('/refunds', adminRefundsRoutes)
+    .route('/discounts', adminDiscountsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);
