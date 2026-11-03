@@ -1,4 +1,5 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
+import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
 import { adminReferrersRoutes } from './modules/referrals/admin-referrers.routes.js';
 import { adminPatientMergesRoutes, patientMergesRoutes } from './modules/patients/merges.routes.js';
 import { patientsRoutes } from './modules/patients/patients.routes.js';
@@ -159,6 +160,7 @@ export function createApp({
     .route('/break-glass-events', adminBreakGlassRoutes)
     .route('/settings/inactive-access', adminInactiveSettingsRoutes)
     .route('/incidents', adminIncidentsRoutes)
+    .route('/registers', adminRegistersRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);
