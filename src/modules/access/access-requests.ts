@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
 import { getPatient } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 
 // Access requests (api-list.md AccessRequest): staff ask to open an inactive patient's record (#29), and a
 // Head Doctor or Admin approves for some hours or rejects (#175, #176). The row's status is pending, approved or
@@ -137,4 +139,32 @@ export function listAccessRequests(
   const params: unknown[] = status === 'approved' || status === 'expired' ? [now] : [];
   const spec = { select: ADMIN_SELECT, where: [statusFilter(status, '$1')], params, orderBy: ['created_at', 'id'], direction: status === 'pending' ? ('asc' as const) : ('desc' as const) };
   return pageRows(db, spec, query, (r) => toAdminAccessRequest(r, now));
+}
+
+/** Hours an approval lasts when the approver names none. Replaced by the inactive-access setting (#185). */
+export const DEFAULT_ACCESS_HOURS = 24;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * #175 / #176: a Head Doctor or Admin decides a pending request. The approved row itself is the access: while
+ * valid_until is ahead, the requester opens the patient (patient-access.ts). 404 if there is none, 409 if it is not
+ * pending, 403 for the person who asked. The approver's note (approve) or reason (reject) is kept with the row.
+ */
+export async function decideAccessRequest(
+  db: Queryable,
+  id: string,
+  decision: { approve: true; hours: number; note?: string } | { approve: false; reason: string },
+  by: string,
+  now = new Date(),
+): Promise<AdminAccessRequest> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT version, status, requested_by FROM access_requests WHERE id = $1', [id]) : { rows: [] };
+  const row = rows[0];
+  if (!row) throw new AppError(404, 'not_found');
+  if (row.requested_by === by) throw new AppError(403, 'forbidden', "you can't decide your own request");
+  if (row.status !== 'pending') throw new AppError(409, 'conflict', `this request is already ${row.status}`);
+  const set = decision.approve
+    ? { status: 'approved', approver_id: by, decided_at: now, decision_reason: decision.note ?? null, valid_until: new Date(now.getTime() + decision.hours * HOUR_MS) }
+    : { status: 'rejected', approver_id: by, decided_at: now, decision_reason: decision.reason };
+  await updateRecord(db, 'access_requests', { id, version: Number(row.version), by, set });
+  return getAdminAccessRequest(db, id, now);
 }
