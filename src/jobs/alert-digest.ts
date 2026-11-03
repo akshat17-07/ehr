@@ -1,3 +1,4 @@
+import type { BackupFiles } from '../backup/files.js';
 import type { Queryable } from '../db/migrate.js';
 import { createAlert, type AlertKind } from '../modules/alerts/alerts.js';
 
@@ -7,6 +8,8 @@ import { createAlert, type AlertKind } from '../modules/alerts/alerts.js';
 export interface JobDeps {
   db: Queryable;
   now?: Date;
+  /** Where backup files go; the real backup bucket when not given. */
+  backupFiles?: BackupFiles;
 }
 
 export interface Tally {

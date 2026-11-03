@@ -10,6 +10,8 @@ export interface StageConfig {
   alertEmail?: string;
   /** AWS account 2 ("backup"). When set, files are replicated there and the nightly export can write there. */
   backupAccountId?: string;
+  /** Public age key (age1...) that backup files are encrypted to; passed to the API as BACKUP_AGE_RECIPIENT. */
+  backupAgeRecipient?: string;
   /** GitHub repo of the website (`owner/name`). Its main branch may upload the website, nothing else. */
   frontendRepo: string;
   /** Sender of record-copy emails. Verify it in SES (ap-south-1) and ask AWS for production access first. */
@@ -28,6 +30,7 @@ export function readConfig(app: App): StageConfig {
     prod: stage === 'prod',
     alertEmail: ctx('alertEmail'),
     backupAccountId: ctx('backupAccountId'),
+    backupAgeRecipient: ctx('backupAgeRecipient'),
     frontendRepo: ctx('frontendRepo') ?? 'akshat17-07/ehr-frontend',
     mailFrom: ctx('mailFrom'),
   };

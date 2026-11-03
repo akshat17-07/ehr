@@ -72,6 +72,7 @@ export class Api extends Construct {
         // The website is the first allowed origin; its /share page opens record-copy links.
         SHARE_URL: `${props.allowedOrigins[0]}/share/`,
         ...(config.mailFrom ? { MAIL_FROM: config.mailFrom } : {}),
+        ...(config.backupAgeRecipient ? { BACKUP_AGE_RECIPIENT: config.backupAgeRecipient } : {}),
         ...(config.backupAccountId
           ? { BACKUP_BUCKET: names.backupBucket(config.stage, config.backupAccountId) }
           : {}),

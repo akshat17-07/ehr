@@ -7,7 +7,7 @@ import { AppError } from '../../middleware/errors.js';
 // In-app alerts for one staff member (api-list.md Alert): e.g. a break-glass on a patient, an expiring licence.
 // Only in the app: no email or SMS. Low stock is never an alert (reorder is worked out when asked, #287).
 
-export const ALERT_KINDS = ['rx_check', 'expiry', 'recall', 'claim_timer', 'approval', 'backup', 'licence', 'breakglass'] as const;
+export const ALERT_KINDS = ['rx_check', 'expiry', 'recall', 'claim_timer', 'approval', 'backup', 'licence', 'breakglass', 'audit'] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
 export interface Alert {

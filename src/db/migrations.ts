@@ -1485,4 +1485,22 @@ export const migrations: Migration[] = [
     id: '0100_consent_withdrawal',
     statements: () => ['ALTER TABLE consents ADD COLUMN withdrawn_reason text', 'ALTER TABLE consents ADD COLUMN withdrawn_by_patient_id uuid'],
   },
+  {
+    // One row per scheduled job run that keeps a record of itself (audit_export #501; later backup_export, backup_check).
+    // detail is JSON text; last_seq is the last audit row copied out; s3_key is set only when a file was uploaded.
+    id: '0101_job_runs',
+    statements: () => [
+      ...createTable('job_runs', [
+        'job text NOT NULL',
+        'started_at timestamptz NOT NULL',
+        'finished_at timestamptz',
+        'ok boolean NOT NULL',
+        'detail text',
+        'last_seq bigint',
+        's3_key text',
+        'size_bytes bigint',
+      ]),
+      'CREATE INDEX ASYNC job_runs_job ON job_runs (job, started_at)',
+    ],
+  },
 ];

@@ -7,7 +7,7 @@ import { Construct } from 'constructs';
 // `enabled: false` until the job is built (docs/india/todo.md tasks 500–506); turning one on is a one-line change.
 const JOBS = [
   { job: 'backup_export', schedule: 'cron(30 19 * * ? *)', ist: 'nightly 01:00', enabled: false },
-  { job: 'audit_export', schedule: 'cron(0 20 * * ? *)', ist: 'nightly 01:30', enabled: false },
+  { job: 'audit_export', schedule: 'cron(0 20 * * ? *)', ist: 'nightly 01:30', enabled: true },
   { job: 'stock_scan', schedule: 'cron(30 20 * * ? *)', ist: 'nightly 02:00', enabled: true },
   { job: 'licence_check', schedule: 'cron(0 21 * * ? *)', ist: 'nightly 02:30', enabled: true },
   { job: 'backup_check', schedule: 'cron(30 1 * * ? *)', ist: 'daily 07:00', enabled: false },

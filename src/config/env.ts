@@ -13,6 +13,8 @@ const schema = z.object({
   FILES_BUCKET: z.string().optional(),
   EXPORTS_BUCKET: z.string().optional(),
   BACKUP_BUCKET: z.string().optional(),
+  // Public age key (age1...) the nightly backup files are encrypted to. Not a secret; the private key stays offline.
+  BACKUP_AGE_RECIPIENT: z.string().optional(),
   // Sender of record-copy emails (an SES-verified address or domain in ap-south-1).
   MAIL_FROM: z.string().optional(),
   // Website page that opens a share link; the token is added at the end.

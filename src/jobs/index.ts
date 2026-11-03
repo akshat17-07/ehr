@@ -1,5 +1,6 @@
 import { getDb } from '../db/client.js';
 import type { JobDeps } from './alert-digest.js';
+import { auditExport } from './audit-export.js';
 import { licenceCheck } from './licence-check.js';
 import { stockScan } from './stock-scan.js';
 
@@ -31,7 +32,7 @@ const notBuilt =
 
 const jobs: Record<JobName, Job> = {
   backup_export: notBuilt('backup_export'),
-  audit_export: notBuilt('audit_export'),
+  audit_export: auditExport,
   stock_scan: stockScan,
   licence_check: licenceCheck,
   backup_check: notBuilt('backup_check'),
@@ -50,7 +51,7 @@ export function isJobEvent(event: unknown): event is JobEvent {
 
 export async function runJob(event: JobEvent, deps?: Partial<JobDeps>): Promise<{ job: JobName; ok: true }> {
   console.log(JSON.stringify({ msg: 'job start', job: event.job }));
-  await jobs[event.job]({ db: deps?.db ?? (await getDb()), ...(deps?.now && { now: deps.now }) });
+  await jobs[event.job]({ db: deps?.db ?? (await getDb()), ...(deps?.now && { now: deps.now }), ...(deps?.backupFiles && { backupFiles: deps.backupFiles }) });
   console.log(JSON.stringify({ msg: 'job done', job: event.job }));
   return { job: event.job, ok: true };
 }
