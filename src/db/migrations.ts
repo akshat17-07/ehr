@@ -1469,4 +1469,15 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC reorder_check_lines_check ON reorder_check_lines (check_id, pos)',
     ],
   },
+  {
+    // Patient-portal sign-ins (#372): which patient a patient-pool Cognito sub is. One live link per sub;
+    // a link is voided (voided_at), never deleted, and a voided link signs in to nothing. Family members the
+    // account may act for come from guardians (guardian_patient_id = this patient, portal_access = true).
+    id: '0099_patient_accounts',
+    statements: () => [
+      ...createTable('patient_accounts', ['cognito_sub text NOT NULL', 'patient_id uuid NOT NULL']),
+      'CREATE INDEX ASYNC patient_accounts_sub ON patient_accounts (cognito_sub)',
+      'CREATE INDEX ASYNC patient_accounts_patient ON patient_accounts (patient_id)',
+    ],
+  },
 ];

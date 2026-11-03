@@ -76,6 +76,7 @@ import { permissionsAdminRoutes } from './modules/permissions/permissions.routes
 import { adminDiscountsRoutes, adminRefundsRoutes } from './modules/billing/decisions.routes.js';
 import { approvalsRoutes } from './modules/approvals/approvals.routes.js';
 import { setupAdminRoutes } from './modules/reference/setup.routes.js';
+import { portalRoutes } from './modules/portal/portal.routes.js';
 
 // Route prefixes match API Gateway (infra/constructs/api.ts). Full endpoint list: docs/india/api-list.md
 //   /health             public
@@ -179,7 +180,7 @@ export function createApp({
     .route('/purchase-orders', adminPurchaseOrdersRoutes)
     .route('/audit', adminAuditRoutes)
     .route('/', permissionsAdminRoutes);
-  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
+  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);
   const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me', meRoutes);
 

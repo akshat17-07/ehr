@@ -39,7 +39,7 @@ import { linkAgent } from '../insurance/agent-links.js';
 const searchQuery = pageQuery.extend({ q: z.string().trim().min(1).max(100) });
 
 // Indian mobile numbers: 10 digits starting 6-9 (a +91 or 0 in front is dropped).
-const mobile = z
+export const mobile = z
   .string()
   .trim()
   .transform((v) => v.replace(/[\s-]/g, '').replace(/^(\+91|0)/, ''))
@@ -49,7 +49,7 @@ const name = z.string().trim().min(2).max(100);
 const text = z.string().trim().min(1).max(200);
 const relation = z.string().trim().min(2).max(50);
 
-const address = z
+export const address = z
   .object({
     line1: text,
     line2: text.optional(),
