@@ -119,13 +119,20 @@ export const newEmployeeBody = z
       .object({ name: text(1, 200), number: code(false, /^\d{9,18}$/), ifsc: code(true, /^[A-Z]{4}0[A-Z0-9]{6}$/) })
       .strict()
       .optional(),
-    salaryStructureId: z.uuid(), // task 321 adds the salary_structures table and the existence check here
+    salaryStructureId: z.uuid(),
   })
   .strict();
 export type NewEmployee = z.infer<typeof newEmployeeBody>;
 
+/** The structure must exist and not be voided. */
+async function requireStructure(db: Queryable, id: string): Promise<void> {
+  const { rows } = await db.query('SELECT 1 FROM salary_structures WHERE id = $1 AND voided_at IS NULL', [id]);
+  if (!rows[0]) throw new AppError(422, 'salary_structure_unknown', 'no such salary structure');
+}
+
 /** #205: adds an employee with Aadhaar (required), PAN, UAN, ESIC and bank details encrypted. userId is a users.id; the Cognito sub is stored. */
 export async function addEmployee(db: Queryable, input: NewEmployee, by: string): Promise<Employee> {
+  await requireStructure(db, input.salaryStructureId);
   let sub: string | null = null;
   if (input.userId) {
     const { rows } = await db.query('SELECT cognito_sub FROM users WHERE id = $1 AND voided_at IS NULL', [input.userId]);
@@ -197,6 +204,7 @@ export async function updateEmployee(
     const { rows } = UUID.test(id) ? await tx.query(`${SELECT} WHERE e.id = $1 AND e.voided_at IS NULL`, [id]) : { rows: [] };
     const old = rows[0] as Record<string, unknown> | undefined;
     if (!old) throw new AppError(404, 'not_found');
+    if (fields.salaryStructureId !== undefined) await requireStructure(tx, fields.salaryStructureId);
     const set: Record<string, unknown> = {};
     const changes: Record<string, [unknown, unknown]> = {};
     const oldDate = old.join_date instanceof Date ? old.join_date.toISOString().slice(0, 10) : String(old.join_date).slice(0, 10);

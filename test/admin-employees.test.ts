@@ -20,6 +20,18 @@ async function get(query = '', who = admin) {
   return { status: res.status, text, body: JSON.parse(text) as { items: Employee[]; nextCursor?: string } };
 }
 
+async function makeStructure(name: string) {
+  const { rows } = await db.query(
+    `INSERT INTO salary_structures (id, status, created_by, updated_by, created_at, updated_at, name, basic_paise, hra_paise, allowances, epf, esi, professional_tax)
+     VALUES (gen_random_uuid(), 'active', 'hr', 'hr', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', $1, 3000000, 1200000, '[]', true, false, true) RETURNING id`,
+    [name],
+  );
+  return String(rows[0]?.id);
+}
+const SS = await makeStructure('Employee Test Grade A');
+const SS_OTHER = await makeStructure('Employee Test Grade B');
+const SS_UNKNOWN = '88888888-8888-4888-8888-888888888888';
+
 const PAN = 'ABCDE1234F';
 const UAN = '100200300400';
 const ESIC = '3100123456';
@@ -162,12 +174,21 @@ describe('PATCH /admin/employees/{id}', () => {
   const patch = (id: string, body: unknown, who = admin) =>
     app.request(`/admin/employees/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
 
+  it('422 salary_structure_unknown when the structure does not exist', async () => {
+    const id = await employee('Bad Structure', 'Clerk');
+    const res = await patch(id, { version: 1, salaryStructureId: SS_UNKNOWN });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: 'salary_structure_unknown' });
+    const row = await db.query('SELECT salary_structure_id FROM employees WHERE id = $1', [id]);
+    expect(row.rows[0]).toMatchObject({ salary_structure_id: 's-1' });
+  });
+
   it('updates each field; masked response; audit names sensitive fields, never values', async () => {
     const id = await employee('Patch Me', 'Clerk');
     const { rows: u } = await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-nurse'");
     const userId = String(u[0]?.id);
     const res = await patch(id, {
-      version: 1, name: 'Patched', designation: 'Head Clerk', joinDate: '2023-02-03', salaryStructureId: '88888888-8888-4888-8888-888888888888',
+      version: 1, name: 'Patched', designation: 'Head Clerk', joinDate: '2023-02-03', salaryStructureId: SS_OTHER,
       active: false, userId, aadhaar: AADHAAR_NEW, pan: 'ZZZZZ9999Z', uan: '999888777666', esic: '9999888877',
       bankAccount: { name: 'HDFC', number: '55556666777788', ifsc: 'HDFC0009999' }, reason: 'HR correction',
     });
@@ -234,7 +255,6 @@ describe('PATCH /admin/employees/{id}', () => {
 });
 
 describe('POST /admin/employees', () => {
-  const SS = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
   const body = (over: Record<string, unknown> = {}) => ({
     aadhaar: aadhaarOf(1),
     name: ' Post Person ',
@@ -322,6 +342,15 @@ describe('POST /admin/employees', () => {
     ];
     for (const over of bad) expect((await post(body(over))).status, JSON.stringify(over)).toBe(422);
     expect((await post(undefined)).status).toBe(422);
+  });
+
+  it('422 salary_structure_unknown for a missing or voided structure', async () => {
+    const unknown = await post(body({ aadhaar: aadhaarOf(9), salaryStructureId: SS_UNKNOWN }));
+    expect(unknown.status).toBe(422);
+    expect(await unknown.json()).toMatchObject({ error: 'salary_structure_unknown' });
+    const voided = await makeStructure('Employee Test Voided');
+    await db.query('UPDATE salary_structures SET voided_at = now() WHERE id = $1', [voided]);
+    expect((await post(body({ aadhaar: aadhaarOf(9), salaryStructureId: voided }))).status).toBe(422);
   });
 
   it('user_unknown 422 and user_has_employee 409', async () => {
