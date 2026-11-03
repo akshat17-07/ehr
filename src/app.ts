@@ -57,6 +57,7 @@ import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
 import { adminRefundsRoutes } from './modules/billing/decisions.routes.js';
 import { approvalsRoutes } from './modules/approvals/approvals.routes.js';
+import { setupAdminRoutes } from './modules/reference/setup.routes.js';
 
 // Route prefixes match API Gateway (infra/constructs/api.ts). Full endpoint list: docs/india/api-list.md
 //   /health             public
@@ -135,6 +136,7 @@ export function createApp({
     .route('/me', meRoutes)
     .route('/users', usersRoutes)
     .route('/approvals', approvalsRoutes)
+    .route('/', setupAdminRoutes)
     .route('/access-requests', adminAccessRequestsRoutes)
     .route('/refunds', adminRefundsRoutes)
     .route('/', permissionsAdminRoutes);
