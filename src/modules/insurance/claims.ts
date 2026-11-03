@@ -123,7 +123,7 @@ export interface ClaimQuery extends PageQuery {
 }
 
 /** The events of several claims, by claim, oldest first. */
-async function eventsOf(db: Queryable, ids: string[]): Promise<Map<string, ClaimEvent[]>> {
+export async function eventsOf(db: Queryable, ids: string[]): Promise<Map<string, ClaimEvent[]>> {
   const byClaim = new Map<string, ClaimEvent[]>(ids.map((id) => [id, []]));
   if (ids.length === 0) return byClaim;
   const { rows } = await db.query(`SELECT * FROM claim_events WHERE claim_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')}) ORDER BY created_at, id`, ids);

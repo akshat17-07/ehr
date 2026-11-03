@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
+import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
 await seedDev(db);
@@ -139,7 +140,7 @@ describe('#288 / #289 reads', () => {
     } while (cursor);
     expect(seen.length).toBeGreaterThanOrEqual(4);
     expect([...seen].sort().reverse()).toEqual(seen);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = indiaDate(); // checks are filtered by India day, not UTC
     const some = (await (await send('GET', `/admin/inventory/reorder-checks?from=${today}&to=${today}`)).json()) as { items: Check[] };
     expect(some.items.length).toBeGreaterThan(0);
     const none = (await (await send('GET', '/admin/inventory/reorder-checks?to=2020-01-01')).json()) as { items: Check[] };
