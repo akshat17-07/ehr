@@ -7,7 +7,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { addDepartment, changeDepartment } from './departments.js';
 import { addDrug, changeDrug, DRUG_SCHEDULES } from './drugs.js';
 import { changeHospital } from './hospital-edit.js';
-import { addPartnerHospital, changePartnerHospital } from './payers.js';
+import { addInsurer, addPartnerHospital, changePartnerHospital } from './payers.js';
 import { addTariffList, TARIFF_SETTINGS } from './tariffs.js';
 
 // Hospital setup for the Admin (api-list.md 7.2 "Hospital setup (edit)", #189-#200). Staff read the same data in
@@ -58,6 +58,8 @@ const drugChange = z
   .strict();
 
 const newPartnerHospital = z.object({ name: text(200) }).strict();
+const newInsurer = z.object({ name: text(200), code: text(50).optional() }).strict();
+
 const partnerHospitalChange = z
   .object({ version: z.number().int().min(1), name: text(200).optional(), active: z.boolean().optional(), reason: z.string().trim().min(3).max(500).optional() })
   .strict();
@@ -115,6 +117,13 @@ export const setupAdminRoutes = new Hono<AuthEnv>()
     const hospital = await addPartnerHospital(await dbOf(c), input.name, userOf(c).sub);
     auditDetails(c, { recordType: 'partner_hospital', recordId: hospital.id });
     return c.json(hospital, 201);
+  })
+  // #309 (Admin only)
+  .post('/insurers', requirePermission('settings.manage'), async (c) => {
+    const input = newInsurer.parse(await c.req.json().catch(() => undefined));
+    const insurer = await addInsurer(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'insurer', recordId: insurer.id });
+    return c.json(insurer, 201);
   })
   // #308 (Admin only)
   .patch('/partner-hospitals/:id', requirePermission('settings.manage'), async (c) => {

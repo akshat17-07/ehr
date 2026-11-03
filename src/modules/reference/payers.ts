@@ -98,3 +98,20 @@ export async function changePartnerHospital(db: Queryable, id: string, change: P
     throw error;
   }
 }
+
+/** #309 (api-list #197): adds an insurer (active, version 1). 409 duplicate if the name is taken (names are unique). */
+export async function addInsurer(db: Queryable, input: { name: string; code?: string }, by: string): Promise<Payer> {
+  const taken = () => new AppError(409, 'duplicate', 'an insurer with this name exists');
+  if ((await db.query('SELECT id FROM insurers WHERE name = $1', [input.name])).rows[0]) throw taken();
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO insurers (id, status, created_by, updated_by, name, code, active) VALUES ($1, 'active', $2, $2, $3, $4, true) RETURNING *`,
+      [randomUUID(), by, input.name, input.code ?? null],
+    );
+    return toPayer(rows[0] as Record<string, unknown>);
+  } catch (error) {
+    // 23505: another request took the name between the check and the insert.
+    if ((error as { code?: string }).code === '23505') throw taken();
+    throw error;
+  }
+}
