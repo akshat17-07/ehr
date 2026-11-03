@@ -1,5 +1,6 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
 import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
+import { adminLegalHoldsRoutes } from './modules/compliance/legal-holds.routes.js';
 import { adminRightsRequestsRoutes } from './modules/compliance/rights-requests.routes.js';
 import { adminReferrersRoutes } from './modules/referrals/admin-referrers.routes.js';
 import { adminPatientMergesRoutes, patientMergesRoutes } from './modules/patients/merges.routes.js';
@@ -163,6 +164,7 @@ export function createApp({
     .route('/incidents', adminIncidentsRoutes)
     .route('/registers', adminRegistersRoutes)
     .route('/rights-requests', adminRightsRequestsRoutes)
+    .route('/legal-holds', adminLegalHoldsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);

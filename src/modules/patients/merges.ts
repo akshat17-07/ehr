@@ -79,7 +79,7 @@ export const MERGE_MOVES = [
   'problems', 'orders', 'order_results', 'prescriptions', 'admissions', 'mar_entries', 'discharge_summaries',
   'dental_entries', 'anc_records', 'form_f', 'mtp_register', 'surgeries', 'implants', 'documents', 'dispenses',
   'pharmacy_returns', 'pharmacy_bills', 'indents', 'stock_issues', 'bills', 'payments', 'deposits', 'refunds',
-  'policies', 'claims', 'agent_links', 'referrals', 'record_requests', 'share_links', 'rights_requests',
+  'policies', 'claims', 'agent_links', 'referrals', 'record_requests', 'share_links', 'rights_requests', 'legal_holds',
 ] as const;
 /** Kept as they were written: the merge itself, access / break-glass history, the audit log and generated exports. */
 export const MERGE_STAYS = ['patient_merges', 'access_requests', 'break_glass_events', 'audit_events', 'exports'] as const;

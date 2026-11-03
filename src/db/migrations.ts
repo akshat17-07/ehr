@@ -1412,4 +1412,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC rights_requests_patient_created ON rights_requests (patient_id, created_at)',
     ],
   },
+  {
+    // Legal holds on a patient's record (api-list.md LegalHold, #337). status: active / released. placed_by and
+    // released_by are Cognito subs. The S3 object-lock on the patient's files is infra work, done later.
+    id: '0095_legal_holds',
+    statements: () => [
+      ...createTable('legal_holds', [
+        'patient_id uuid NOT NULL',
+        'reason text NOT NULL',
+        'reference text',
+        'placed_by text',
+        'released_at timestamptz',
+        'released_by text',
+        'release_reason text',
+      ]),
+      'CREATE INDEX ASYNC legal_holds_status_created ON legal_holds (status, created_at)',
+      'CREATE INDEX ASYNC legal_holds_patient_created ON legal_holds (patient_id, created_at)',
+    ],
+  },
 ];
