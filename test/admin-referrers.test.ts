@@ -136,3 +136,47 @@ describe('POST /admin/referrers/:id/merge', () => {
     expect((await merge(a, { intoReferrerId: randomUUID(), reason: 'abc' })).status).toBe(422);
   });
 });
+
+describe('POST /admin/referrers/:id/detach', () => {
+  const detach = (id: string, body: unknown, who = admin) =>
+    app.request(`/admin/referrers/${id}/detach`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('unlinks the login and makes the referrer pseudo; another GP can then be attached', async () => {
+    const id = await insertReferrer({ userId: gpUser });
+    await db.query('UPDATE referrers SET pseudo = false WHERE id = $1', [id]);
+    const res = await detach(id, { reason });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ id, pseudo: true });
+    expect(body).not.toHaveProperty('userId');
+    const audit = (await db.query(`SELECT changes FROM audit_events WHERE record_id = $1 AND changes IS NOT NULL ORDER BY seq DESC LIMIT 1`, [id])).rows[0];
+    expect(JSON.parse(String(audit?.changes))).toEqual({ userId: [gpUser, null] });
+    const other = randomUUID();
+    await db.query(
+      `INSERT INTO users (id, status, created_by, updated_by, cognito_sub, name, email, mobile, type, department_ids, active)
+       VALUES ($1, 'active', 'test', 'test', $2, 'Dr Other GP', 'othergp@dev.local', '9800000099', 'gp', '[]', true)`,
+      [other, `sub-${other}`],
+    );
+    const again = await attach(id, { userId: other, reason });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ userId: other, pseudo: false });
+  });
+
+  it('409 not_attached and merged', async () => {
+    const res = await detach(await insertReferrer(), { reason });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'not_attached' });
+    const merged = await detach(await insertReferrer({ mergedInto: randomUUID(), userId: gpUser }), { reason });
+    expect(merged.status).toBe(409);
+    expect(await merged.json()).toMatchObject({ error: 'merged' });
+  });
+
+  it('404 for unknown and non-UUID ids; 403; 422 bad body', async () => {
+    expect((await detach(randomUUID(), { reason })).status).toBe(404);
+    expect((await detach('not-a-uuid', { reason })).status).toBe(404);
+    const id = await insertReferrer({ userId: gpUser });
+    expect((await detach(id, { reason }, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+    expect((await detach(id, { reason: 'abc' })).status).toBe(422);
+    expect((await detach(id, { reason, extra: 1 })).status).toBe(422);
+  });
+});

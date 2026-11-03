@@ -155,3 +155,19 @@ export async function mergeReferrers(db: Queryable, id: string, input: { intoRef
     return { referrer: toReferrer(saved), movedReferralIds, movedPatientIds };
   });
 }
+
+/** #203: unlinks the GP login and makes the referrer pseudo again. 404 missing; 409 merged / not_attached. Returns the old login id for the audit. */
+export async function detachReferrerUser(db: Queryable, id: string, input: { reason: string }, by: string): Promise<{ referrer: Referrer; oldUserId: string }> {
+  const current = (UUID.test(id) ? await db.query('SELECT * FROM referrers WHERE id = $1', [id]) : { rows: [] }).rows[0];
+  if (!current) throw new AppError(404, 'not_found');
+  if (current.merged_into) throw new AppError(409, 'merged', 'this referrer was merged into another');
+  if (!current.user_id) throw new AppError(409, 'not_attached', 'this referrer has no login');
+  const saved = await updateRecord(db, 'referrers', {
+    id,
+    version: current.version as number,
+    by,
+    reason: input.reason,
+    set: { user_id: null, pseudo: true },
+  });
+  return { referrer: toReferrer(saved), oldUserId: String(current.user_id) };
+}
