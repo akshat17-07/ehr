@@ -1358,4 +1358,22 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC incident_events_incident ON incident_events (incident_id, at)',
     ],
   },
+  {
+    // Salary structures (api-list.md SalaryStructure, #320). Money is whole paise (bigint). allowances is a JSON array
+    // of { name, paise } in a text column. Names are unique (plain name: kept simple, no expression index).
+    id: '0092_salary_structures',
+    statements: () => [
+      ...createTable('salary_structures', [
+        'name text NOT NULL',
+        'basic_paise bigint NOT NULL',
+        'hra_paise bigint NOT NULL',
+        'allowances text NOT NULL',
+        'epf boolean NOT NULL',
+        'esi boolean NOT NULL',
+        'professional_tax boolean NOT NULL',
+        'tds_monthly_paise bigint',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC salary_structures_name ON salary_structures (name)',
+    ],
+  },
 ];
