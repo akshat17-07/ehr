@@ -6,6 +6,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { addDepartment, changeDepartment } from './departments.js';
 import { changeHospital } from './hospital-edit.js';
+import { addTariffList, TARIFF_SETTINGS } from './tariffs.js';
 
 // Hospital setup for the Admin (api-list.md 7.2 "Hospital setup (edit)", #189-#200). Staff read the same data in
 // reference.routes.ts. Each write is audited with the record it changed.
@@ -23,6 +24,20 @@ const newDepartment = z
 const departmentChange = z
   .object({ version: z.number().int().min(1), nameEn: text(100).optional(), nameHi: text(100).optional(), active: z.boolean().optional(), reason: z.string().trim().min(3).max(500).optional() })
   .strict();
+
+const tariffItem = z
+  .object({
+    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9_-]{0,29}$/, 'letters, digits, "-" and "_", up to 30'),
+    nameEn: text(200),
+    nameHi: text(200).optional(),
+    departmentId: z.uuid().optional(),
+    pricePaise: z.number().int().min(0).max(1_000_000_000),
+    gstRate: z.union([z.literal(0), z.literal(5), z.literal(12), z.literal(18), z.literal(28)]),
+    sacCode: z.string().trim().regex(/^\d{4,8}$/, '4 to 8 digits').optional(),
+    setting: z.enum(TARIFF_SETTINGS),
+  })
+  .strict();
+const newTariffList = z.object({ validFrom: z.iso.date(), items: z.array(tariffItem).min(1).max(1000) }).strict();
 
 const address = z
   .object({
@@ -63,6 +78,13 @@ export const setupAdminRoutes = new Hono<AuthEnv>()
     const department = await changeDepartment(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { recordType: 'department', recordId: department.id, ...(input.reason && { reason: input.reason }) });
     return c.json(department);
+  })
+  // #192 (Admin only)
+  .post('/tariffs', requirePermission('settings.tariffs'), async (c) => {
+    const input = newTariffList.parse(await c.req.json().catch(() => undefined));
+    const list = await addTariffList(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'tariff_list', recordId: String(list.version), reason: `${list.count} prices from ${input.validFrom}` });
+    return c.json({ ...list, reminder: 'Tell the CMHO about the new rates and put the new rate board up.' }, 201);
   })
   // #189 (Admin only)
   .patch('/hospital', requirePermission('settings.manage'), async (c) => {

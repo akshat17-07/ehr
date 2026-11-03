@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { withTransaction } from '../../db/transaction.js';
+import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
 
 // The hospital's price list (api-list.md Tariff). Prices are never changed in place: POST /admin/tariffs (#192) adds
@@ -93,4 +96,67 @@ export async function rateBoardRows(db: Queryable, lang: 'en' | 'hi' | 'both'): 
     ...(lang !== 'en' && { nameHi: t.nameHi ?? t.nameEn }),
     pricePaise: t.pricePaise,
   }));
+}
+
+export interface NewTariffItem {
+  code: string;
+  nameEn: string;
+  nameHi?: string;
+  departmentId?: string;
+  pricePaise: number;
+  gstRate: number;
+  sacCode?: string;
+  setting: TariffSetting;
+}
+
+const oneDayBefore = (date: string) => new Date(new Date(`${date}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * #192: a new price list from `validFrom` (today or later). Each item is the price of its code from that date: the
+ * code's price in force then (if any) ends the day before and is kept for old bills; codes not in `items` go on as
+ * they were, so a slip can't drop a price. 422 for a past date, a repeated code or an unknown department; 409
+ * price_conflict if `validFrom` is not after the current list's start. All or nothing.
+ */
+export async function addTariffList(
+  db: Queryable,
+  input: { validFrom: string; items: NewTariffItem[] },
+  by: string,
+  now = new Date(),
+): Promise<{ version: number; count: number }> {
+  const invalid = (message: string) => new AppError(422, 'invalid_input', message);
+  if (input.validFrom < indiaDate(now)) throw invalid('validFrom: a new price list starts today or later');
+  const codes = input.items.map((i) => i.code);
+  if (new Set(codes).size !== codes.length) throw invalid('items: each code once');
+  const departments = [...new Set(input.items.flatMap((i) => (i.departmentId ? [i.departmentId] : [])))];
+  for (const id of departments) {
+    const { rows } = await db.query('SELECT 1 FROM departments WHERE id = $1', [id]);
+    if (!rows[0]) throw invalid(`departmentId ${id}: no such department`);
+  }
+  return withTransaction(db, async (tx) => {
+    const { rows: head } = await tx.query('SELECT COALESCE(MAX(list_version), 0) AS v, MAX(valid_from)::text AS latest FROM tariffs');
+    const latest = opt(head[0]?.latest);
+    if (latest && input.validFrom <= latest) {
+      throw new AppError(409, 'price_conflict', `The current price list starts ${latest}; a new list must start after that`);
+    }
+    const version = Number(head[0]?.v) + 1;
+    // Rows written: 1 end-dated old row + 1 new row per item = at most 2000 for 1000 items, under the 3000-row cap.
+    // (updateRecord is not used for the old rows: its history row would make it 3 per item = 3000.)
+    const { rows: current } = await tx.query(
+      `SELECT id FROM tariffs WHERE valid_to IS NULL AND code IN (${codes.map((_, n) => `$${n + 1}`).join(', ')})`,
+      codes,
+    );
+    for (const old of current) {
+      await tx.query('UPDATE tariffs SET valid_to = $2, version = version + 1, updated_at = now(), updated_by = $3 WHERE id = $1', [
+        old.id, oneDayBefore(input.validFrom), by,
+      ]);
+    }
+    for (const item of input.items) {
+      await tx.query(
+        `INSERT INTO tariffs (id, status, created_by, updated_by, list_version, code, name_en, name_hi, department_id, price_paise, gst_rate, sac_code, setting, valid_from)
+         VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [randomUUID(), by, version, item.code, item.nameEn, item.nameHi ?? null, item.departmentId ?? null, item.pricePaise, item.gstRate, item.sacCode ?? null, item.setting, input.validFrom],
+      );
+    }
+    return { version, count: input.items.length };
+  });
 }
