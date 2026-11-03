@@ -1430,4 +1430,13 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC legal_holds_patient_created ON legal_holds (patient_id, created_at)',
     ],
   },
+  {
+    // Monthly access reviews (api-list.md AccessReview, #342). One per month; findings is a JSON array of strings
+    // as text. reviewed_by is a Cognito sub.
+    id: '0096_access_reviews',
+    statements: () => [
+      ...createTable('access_reviews', ['month text NOT NULL', 'notes text NOT NULL', 'findings text NOT NULL', 'reviewed_by text']),
+      'CREATE UNIQUE INDEX ASYNC access_reviews_month ON access_reviews (month)',
+    ],
+  },
 ];

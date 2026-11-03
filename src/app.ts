@@ -1,6 +1,7 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
 import { adminAuditRoutes } from './audit/audit.routes.js';
 import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
+import { adminAccessReviewsRoutes } from './modules/compliance/access-reviews.routes.js';
 import { adminLegalHoldsRoutes } from './modules/compliance/legal-holds.routes.js';
 import { adminRightsRequestsRoutes } from './modules/compliance/rights-requests.routes.js';
 import { adminReferrersRoutes } from './modules/referrals/admin-referrers.routes.js';
@@ -166,6 +167,7 @@ export function createApp({
     .route('/registers', adminRegistersRoutes)
     .route('/rights-requests', adminRightsRequestsRoutes)
     .route('/legal-holds', adminLegalHoldsRoutes)
+    .route('/access-reviews', adminAccessReviewsRoutes)
     .route('/audit', adminAuditRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
