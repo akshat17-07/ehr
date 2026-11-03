@@ -125,6 +125,32 @@ describe('GET /admin/employees', () => {
   });
 });
 
+describe('GET /admin/employees/{id}', () => {
+  const one = (id: string, who = admin) => app.request(`/admin/employees/${id}`, {}, who);
+
+  it('200 masked, audited with no plaintext', async () => {
+    const id = await employee('Detail Test', 'Nurse');
+    const res = await one(id);
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toMatchObject({ id, name: 'Detail Test', pan: '****234F', bankAccount: { number: '****9012' } });
+    const audit = await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1", [id]);
+    expect(audit.rows.length).toBeGreaterThan(0);
+    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(JSON.stringify(audit.rows)).not.toContain(secret);
+  });
+
+  it('404 for unknown, non-UUID and voided; 403 without payroll.employee', async () => {
+    expect((await one('77777777-7777-4777-8777-777777777777')).status).toBe(404);
+    expect((await one('nope')).status).toBe(404);
+    const id = await employee('Voided One', 'Clerk');
+    await db.query('UPDATE employees SET voided_at = now() WHERE id = $1', [id]);
+    expect((await one(id)).status).toBe(404);
+    const live = await employee('Live One', 'Clerk');
+    expect((await one(live, doctor)).status).toBe(403);
+  });
+});
+
 describe('POST /admin/employees', () => {
   const SS = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
   // A valid Aadhaar number: 11 digits plus the Verhoeff check digit.

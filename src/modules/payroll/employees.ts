@@ -6,6 +6,7 @@ import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { decryptField, encryptField, hashField, maskField } from '../../lib/field-crypto.js';
 import type { BaseFields } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 
 // Employees on the payroll (api-list.md Employee). PAN, UAN, ESIC and bank details are stored encrypted
 // (lib/field-crypto.ts) and leave the API masked: '****' and the last 4 characters. Plaintext is never returned.
@@ -71,6 +72,13 @@ export async function listEmployees(db: Queryable, query: EmployeesQuery): Promi
   const page: PageQuery = { limit: query.limit, ...(query.cursor && { cursor: query.cursor }) };
   const raw = await pageRows(db, { select: SELECT, where, params, orderBy: ['e.name', 'e.id'], direction: 'asc' }, page, (r) => r);
   return { ...raw, items: await Promise.all(raw.items.map(toEmployee)) };
+}
+
+/** #318: one employee, masked like the list; 404 if unknown, voided or not a UUID. */
+export async function getEmployee(db: Queryable, id: string): Promise<Employee> {
+  const { rows } = UUID.test(id) ? await db.query(`${SELECT} WHERE e.id = $1 AND e.voided_at IS NULL`, [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return toEmployee(rows[0] as Record<string, unknown>);
 }
 
 // Verhoeff checksum (the last Aadhaar digit).
