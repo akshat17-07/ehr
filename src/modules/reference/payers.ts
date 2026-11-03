@@ -99,13 +99,16 @@ export async function changePartnerHospital(db: Queryable, id: string, change: P
   }
 }
 
-/** #309 (api-list #197): adds an insurer (active, version 1). 409 duplicate if the name is taken (names are unique). */
-export async function addInsurer(db: Queryable, input: { name: string; code?: string }, by: string): Promise<Payer> {
-  const taken = () => new AppError(409, 'duplicate', 'an insurer with this name exists');
-  if ((await db.query('SELECT id FROM insurers WHERE name = $1', [input.name])).rows[0]) throw taken();
+
+type PayerTable = 'insurers' | 'tpas';
+const LABEL: Record<PayerTable, string> = { insurers: 'an insurer', tpas: 'a TPA' };
+
+async function addPayer(db: Queryable, table: PayerTable, input: { name: string; code?: string }, by: string): Promise<Payer> {
+  const taken = () => new AppError(409, 'duplicate', `${LABEL[table]} with this name exists`);
+  if ((await db.query(`SELECT id FROM ${table} WHERE name = $1`, [input.name])).rows[0]) throw taken();
   try {
     const { rows } = await db.query(
-      `INSERT INTO insurers (id, status, created_by, updated_by, name, code, active) VALUES ($1, 'active', $2, $2, $3, $4, true) RETURNING *`,
+      `INSERT INTO ${table} (id, status, created_by, updated_by, name, code, active) VALUES ($1, 'active', $2, $2, $3, $4, true) RETURNING *`,
       [randomUUID(), by, input.name, input.code ?? null],
     );
     return toPayer(rows[0] as Record<string, unknown>);
@@ -115,3 +118,47 @@ export async function addInsurer(db: Queryable, input: { name: string; code?: st
     throw error;
   }
 }
+
+export interface PayerChange {
+  version: number;
+  name?: string;
+  /** null clears the code. */
+  code?: string | null;
+  active?: boolean;
+  reason?: string;
+}
+
+async function changePayer(db: Queryable, table: PayerTable, id: string, change: PayerChange, by: string): Promise<Payer> {
+  const { rows } = UUID.test(id) ? await db.query(`SELECT * FROM ${table} WHERE id = $1`, [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const current = toPayer(rows[0]);
+  const set: Record<string, unknown> = {};
+  if (change.name !== undefined && change.name !== current.name) set.name = change.name;
+  if (change.code !== undefined && change.code !== (current.code ?? null)) set.code = change.code;
+  if (change.active !== undefined && change.active !== current.active) set.active = change.active;
+  if (Object.keys(set).length === 0) throw new AppError(422, 'invalid_input', 'nothing to change');
+  const taken = () => new AppError(409, 'duplicate', `${LABEL[table]} with this name exists`);
+  if (set.name !== undefined) {
+    const same = await db.query(`SELECT id FROM ${table} WHERE name = $1 AND id <> $2`, [set.name, id]);
+    if (same.rows[0]) throw taken();
+  }
+  try {
+    return toPayer(await updateRecord(db, table, { id, version: change.version, by, set, reason: change.reason }));
+  } catch (error) {
+    // 23505: another request took the name between the check and the save.
+    if ((error as { code?: string }).code === '23505') throw taken();
+    throw error;
+  }
+}
+
+/** #309 (api-list #197): adds an insurer (active, version 1). 409 duplicate if the name is taken (names are unique). */
+export const addInsurer = (db: Queryable, input: { name: string; code?: string }, by: string) => addPayer(db, 'insurers', input, by);
+
+/** #310 (api-list #198): edits an insurer name, code (null clears) or active flag. 404, 409 conflict/duplicate, 422 nothing to change. */
+export const changeInsurer = (db: Queryable, id: string, change: PayerChange, by: string) => changePayer(db, 'insurers', id, change, by);
+
+/** #311 (api-list #199): adds a TPA (active, version 1). 409 duplicate if the name is taken. */
+export const addTpa = (db: Queryable, input: { name: string; code?: string }, by: string) => addPayer(db, 'tpas', input, by);
+
+/** #312 (api-list #200): edits a TPA; same rules as changeInsurer. */
+export const changeTpa = (db: Queryable, id: string, change: PayerChange, by: string) => changePayer(db, 'tpas', id, change, by);

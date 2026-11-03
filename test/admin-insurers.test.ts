@@ -54,3 +54,42 @@ describe('POST /admin/insurers', () => {
     expect(await dup.json()).toMatchObject({ error: 'duplicate' });
   });
 });
+
+const patch = (id: string, body: unknown, who = admin) =>
+  app.request(`/admin/insurers/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+const make = async (name: string, code?: string) => (await (await post({ name, code })).json()) as Insurer;
+
+describe('PATCH /admin/insurers/:id', () => {
+  it('edits, bumps the version, keeps history with the reason, audits, and null clears the code', async () => {
+    const i = await make('Patch Old Insurer', 'OLD');
+    const res = await patch(i.id, { version: 1, name: ' Patch New Insurer ', code: 'NEW', reason: 'rebrand' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: i.id, name: 'Patch New Insurer', code: 'NEW', version: 2, active: true });
+    const hist = await db.query('SELECT reason FROM insurers_versions WHERE record_id = $1', [i.id]);
+    expect(hist.rows[0]!.reason).toBe('rebrand');
+    const audit = await db.query("SELECT 1 FROM audit_events WHERE record_type = 'insurer' AND record_id = $1", [i.id]);
+    expect(audit.rows).toHaveLength(2);
+    const cleared = (await (await patch(i.id, { version: 2, code: null, active: false })).json()) as Insurer;
+    expect(cleared.code).toBeUndefined();
+    expect(cleared).toMatchObject({ active: false, version: 3 });
+  });
+
+  it('403, 404, 409 conflict and duplicate, 422', async () => {
+    const i = await make('Err Insurer');
+    await make('Taken Insurer');
+    expect((await patch(i.id, { version: 1, name: 'X' }, head)).status).toBe(403);
+    expect((await patch('00000000-0000-4000-8000-000000000000', { version: 1, name: 'X' })).status).toBe(404);
+    expect((await patch('nope', { version: 1, name: 'X' })).status).toBe(404);
+    expect((await patch(i.id, { version: 1, name: 'Err Insurer 2' })).status).toBe(200);
+    const stale = await patch(i.id, { version: 1, name: 'Err Insurer 3' });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: 'conflict' });
+    const dup = await patch(i.id, { version: 2, name: 'Taken Insurer' });
+    expect(dup.status).toBe(409);
+    expect(await dup.json()).toMatchObject({ error: 'duplicate' });
+    expect((await patch(i.id, { version: 2, name: 'Err Insurer 2', active: true })).status).toBe(422);
+    expect((await patch(i.id, { name: 'X' })).status).toBe(422);
+    expect((await patch(i.id, { version: 2, name: 'X', reason: 'ab' })).status).toBe(422);
+    expect((await patch(i.id, { version: 2, extra: 1 })).status).toBe(422);
+  });
+});

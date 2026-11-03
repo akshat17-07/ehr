@@ -7,7 +7,7 @@ import { requirePermission } from '../../permissions/check.js';
 import { addDepartment, changeDepartment } from './departments.js';
 import { addDrug, changeDrug, DRUG_SCHEDULES } from './drugs.js';
 import { changeHospital } from './hospital-edit.js';
-import { addInsurer, addPartnerHospital, changePartnerHospital } from './payers.js';
+import { addInsurer, addPartnerHospital, addTpa, changeInsurer, changePartnerHospital, changeTpa } from './payers.js';
 import { addTariffList, TARIFF_SETTINGS } from './tariffs.js';
 
 // Hospital setup for the Admin (api-list.md 7.2 "Hospital setup (edit)", #189-#200). Staff read the same data in
@@ -59,6 +59,16 @@ const drugChange = z
 
 const newPartnerHospital = z.object({ name: text(200) }).strict();
 const newInsurer = z.object({ name: text(200), code: text(50).optional() }).strict();
+
+const payerChange = z
+  .object({
+    version: z.number().int().min(1),
+    name: text(200).optional(),
+    code: text(50).nullable().optional(),
+    active: z.boolean().optional(),
+    reason: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict();
 
 const partnerHospitalChange = z
   .object({ version: z.number().int().min(1), name: text(200).optional(), active: z.boolean().optional(), reason: z.string().trim().min(3).max(500).optional() })
@@ -124,6 +134,27 @@ export const setupAdminRoutes = new Hono<AuthEnv>()
     const insurer = await addInsurer(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { recordType: 'insurer', recordId: insurer.id });
     return c.json(insurer, 201);
+  })
+  // #311 (Admin only)
+  .post('/tpas', requirePermission('settings.manage'), async (c) => {
+    const input = newInsurer.parse(await c.req.json().catch(() => undefined));
+    const tpa = await addTpa(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'tpa', recordId: tpa.id });
+    return c.json(tpa, 201);
+  })
+  // #310 (Admin only)
+  .patch('/insurers/:id', requirePermission('settings.manage'), async (c) => {
+    const input = payerChange.parse(await c.req.json().catch(() => undefined));
+    const insurer = await changeInsurer(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'insurer', recordId: insurer.id, ...(input.reason && { reason: input.reason }) });
+    return c.json(insurer);
+  })
+  // #312 (Admin only)
+  .patch('/tpas/:id', requirePermission('settings.manage'), async (c) => {
+    const input = payerChange.parse(await c.req.json().catch(() => undefined));
+    const tpa = await changeTpa(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'tpa', recordId: tpa.id, ...(input.reason && { reason: input.reason }) });
+    return c.json(tpa);
   })
   // #308 (Admin only)
   .patch('/partner-hospitals/:id', requirePermission('settings.manage'), async (c) => {
