@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
 import { AppError } from '../../middleware/errors.js';
 import { updateRecord } from '../../db/records.js';
+import { withTransaction } from '../../db/transaction.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { UUID } from '../users/users.js';
 import type { BaseFields } from '../patients/patients.js';
@@ -107,4 +108,50 @@ export async function attachReferrerUser(db: Queryable, id: string, input: { use
     set: { user_id: input.userId, pseudo: false },
   });
   return toReferrer(saved);
+}
+
+export interface MergedReferrer {
+  referrer: Referrer;
+  /** Ids of the rows moved to the kept referrer, kept in the audit so the merge can be traced. */
+  movedReferralIds: string[];
+  movedPatientIds: string[];
+}
+
+/**
+ * #202: merges duplicate referrer `id` into `intoReferrerId`. Its referrals and patients move to the kept one; a login on
+ * the duplicate moves too if the kept one has none (409 both_attached if both have one). Nothing is deleted.
+ */
+export async function mergeReferrers(db: Queryable, id: string, input: { intoReferrerId: string; reason: string }, by: string): Promise<MergedReferrer> {
+  const targetId = input.intoReferrerId;
+  if (!UUID.test(id)) throw new AppError(404, 'not_found');
+  if (id === targetId) throw new AppError(422, 'invalid_input', 'intoReferrerId: cannot merge a referrer into itself');
+  return withTransaction(db, async (tx) => {
+    const dup = (await tx.query('SELECT * FROM referrers WHERE id = $1', [id])).rows[0];
+    if (!dup) throw new AppError(404, 'not_found');
+    const target = (await tx.query('SELECT * FROM referrers WHERE id = $1', [targetId])).rows[0];
+    if (!target) throw new AppError(404, 'not_found', 'target referrer not found');
+    if (dup.merged_into || target.merged_into) throw new AppError(409, 'merged', 'a referrer here was already merged into another');
+    if (dup.user_id && target.user_id) throw new AppError(409, 'both_attached', 'both referrers have a login; detach one first');
+    const moveLogin = Boolean(dup.user_id && !target.user_id);
+
+    const movedReferralIds = (await tx.query('UPDATE referrals SET referrer_id = $1 WHERE referrer_id = $2 RETURNING id', [targetId, id])).rows.map((r) => String(r.id));
+    const movedPatientIds = (await tx.query('UPDATE patients SET referrer_id = $1 WHERE referrer_id = $2 RETURNING id', [targetId, id])).rows.map((r) => String(r.id));
+    const saved = await updateRecord(tx, 'referrers', {
+      id,
+      version: dup.version as number,
+      by,
+      reason: `${input.reason} (moved ${movedReferralIds.length} referrals, ${movedPatientIds.length} patients)`,
+      set: { merged_into: targetId, ...(moveLogin && { user_id: null }) },
+    });
+    if (moveLogin) {
+      await updateRecord(tx, 'referrers', {
+        id: targetId,
+        version: target.version as number,
+        by,
+        reason: `login moved from merged referrer ${id}: ${input.reason}`,
+        set: { user_id: dup.user_id, pseudo: false },
+      });
+    }
+    return { referrer: toReferrer(saved), movedReferralIds, movedPatientIds };
+  });
 }
