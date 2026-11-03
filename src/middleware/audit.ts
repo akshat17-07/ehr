@@ -55,7 +55,7 @@ export const auditRequests = (db: () => Promise<Queryable>) =>
     try {
       await appendAudit(await db(), event);
     } catch (error) {
-      console.error(JSON.stringify({ msg: 'audit write failed', path: c.req.path, error: String(error) }));
+      console.error(JSON.stringify({ msg: 'audit write failed', path: c.req.path.replace(/^(\/other\/share\/)[^/]+/, '$1:token'), error: String(error) }));
       c.res = c.json({ error: 'server_error' }, 500);
     }
   });

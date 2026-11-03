@@ -59,6 +59,7 @@ import { agentClaimsRoutes } from './modules/insurance/agent-claims.routes.js';
 import { agentDocumentsRoutes } from './modules/insurance/agent-documents.routes.js';
 import { referralsRoutes, referrersRoutes } from './modules/referrals/referrals.routes.js';
 import { exportsRoutes, fhirRoutes, recordRequestsRoutes } from './modules/records/record-requests.routes.js';
+import { shareRoutes } from './modules/records/share.routes.js';
 import { billsRoutes } from './modules/billing/bills.routes.js';
 import { adminPurchaseOrdersRoutes } from './modules/inventory/admin-purchase-orders.routes.js';
 import { purchaseOrdersRoutes } from './modules/inventory/purchase-orders.routes.js';
@@ -188,6 +189,9 @@ export function createApp({
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
   const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me', meRoutes).route('/referrals', gpReferralsRoutes);
 
+  // No sign-in: the token in the link and the emailed code are the proof (modules/records/share.routes.ts).
+  const share = new Hono<AuthEnv>().route('/', shareRoutes);
+
   // Every request except /health gets an audit row (middleware/audit.ts).
   const audited = new Hono<AuthEnv>()
     .use(async (c, next) => {
@@ -205,6 +209,7 @@ export function createApp({
     .route('/patient', patient)
     .route('/other/insurance', insurance)
     .route('/other/gp', gp)
+    .route('/other/share', share)
     .onError(onError)
     .notFound(onNotFound);
 
