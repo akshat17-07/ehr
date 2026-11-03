@@ -3,7 +3,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { createPayrollRun, getPayrollRun, listPayrollRuns, newRunBody, runsQuery } from './runs.js';
+import { approvePayrollRun, approveRunBody, createPayrollRun, getPayrollRun, listPayrollRuns, newRunBody, runsQuery } from './runs.js';
 
 // Mounted at /admin/payroll/runs.
 export const adminPayrollRunsRoutes = new Hono<AuthEnv>()
@@ -17,6 +17,19 @@ export const adminPayrollRunsRoutes = new Hono<AuthEnv>()
   .get('/:id', requirePermission('payroll.view'), async (c) => {
     const run = await getPayrollRun(await dbOf(c), c.req.param('id'));
     auditDetails(c, { recordType: 'payroll_run', recordId: run.id });
+    return c.json(run);
+  })
+  // #327
+  .post('/:id/approve', requirePermission('approval.payroll'), async (c) => {
+    const body = approveRunBody.parse(await c.req.json().catch(() => undefined));
+    const run = await approvePayrollRun(await dbOf(c), c.req.param('id'), body, userOf(c).sub);
+    auditDetails(c, {
+      action: 'update',
+      recordType: 'payroll_run',
+      recordId: run.id,
+      changes: { status: ['draft', 'approved'] },
+      ...(body.note && { reason: body.note }),
+    });
     return c.json(run);
   })
   // #324

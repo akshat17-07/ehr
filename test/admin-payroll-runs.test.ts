@@ -221,6 +221,86 @@ describe('POST /admin/payroll/runs', () => {
   });
 });
 
+describe('POST /admin/payroll/runs/:id/approve', () => {
+  const head = asStaff('dev-head-doctor', ['head_doctor']);
+  const approve = (id: string, b: unknown, who = head) =>
+    app.request(`/admin/payroll/runs/${id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }, who);
+  const recovered = async (ids: string[]) => {
+    const { rows } = await db.query(`SELECT id, recovered_paise FROM advances WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
+    return Object.fromEntries(rows.map((r) => [r.id, Number(r.recovered_paise)]));
+  };
+
+  it('approves, recovers advances across two advances, shows in payslips, audited without amounts', async () => {
+    const s = await structure('Appr', { basic: 1000000, hra: 0 });
+    const e = await employee('Approve Nurse', s, '2020-01-01', 'dev-reception');
+    const first = await advance(e, 100000, 80000, 50000, '2024-01-05'); // balance 20000 -> runs out
+    const second = await advance(e, 500000, 0, 50000, '2024-01-10');
+    const future = await advance(e, 500000, 0, 50000, '2024-12-10'); // after the month: untouched
+    const run = (await (await post({ month: '2024-06' })).json()) as PayrollRun;
+    expect(run.payslips![0]?.deductions).toEqual([{ kind: 'advance', paise: 70000 }]);
+    const pending = async () =>
+      ((await (await app.request('/admin/approvals?kind=payroll', {}, head)).json()) as { items?: { id: string }[] } | { id: string }[]);
+    expect(JSON.stringify(await pending())).toContain(run.id);
+
+    const res = await approve(run.id, { version: run.version, note: 'looks right' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: run.id, status: 'approved', approvedBy: 'dev-head-doctor', version: 2, payslips: [{ employeeId: e }] });
+    expect(await recovered([first, second, future])).toEqual({ [first]: 100000, [second]: 50000, [future]: 0 });
+    expect(JSON.stringify(await pending())).not.toContain(run.id);
+
+    const mine = (await (await app.request('/staff/me/payslips', {}, asStaff('dev-reception', ['reception']))).json()) as { items: { runId: string }[] };
+    expect(mine.items.map((p) => p.runId)).toContain(run.id);
+
+    const audit = await db.query("SELECT changes FROM audit_events WHERE record_type = 'payroll_run' AND record_id = $1 AND action = 'update'", [run.id]);
+    expect(audit.rows.length).toBe(1);
+    const text = JSON.stringify(audit.rows[0]);
+    expect(text).toContain('approved');
+    expect(text).not.toContain('70000');
+  });
+
+  it('403 without approval.payroll, 403 self_approval, 404, 422', async () => {
+    const s = await structure('Guard', { basic: 100000, hra: 0 });
+    await employee('Guard Person', s);
+    const run = (await (await post({ month: '2024-07' })).json()) as PayrollRun;
+    expect((await approve(run.id, { version: 1 }, doctor)).status).toBe(403);
+    const self = await approve(run.id, { version: 1 }, admin);
+    expect(self.status).toBe(403);
+    expect(await self.json()).toMatchObject({ error: 'self_approval' });
+    expect((await approve('77777777-7777-4777-8777-777777777777', { version: 1 })).status).toBe(404);
+    expect((await approve('nope', { version: 1 })).status).toBe(404);
+    for (const b of [{}, { version: 0 }, { version: 1, note: '' }, { version: 1, x: 1 }]) expect((await approve(run.id, b)).status, JSON.stringify(b)).toBe(422);
+    expect((await db.query('SELECT status FROM payroll_runs WHERE id = $1', [run.id])).rows[0]?.status).toBe('draft');
+  });
+
+  it('409 run_not_draft on a second approval; 409 on a stale version', async () => {
+    const s = await structure('Twice', { basic: 100000, hra: 0 });
+    await employee('Twice Person', s);
+    const run = (await (await post({ month: '2024-08' })).json()) as PayrollRun;
+    const stale = await approve(run.id, { version: 5 });
+    expect(stale.status).toBe(409);
+    expect((await db.query('SELECT status FROM payroll_runs WHERE id = $1', [run.id])).rows[0]?.status).toBe('draft');
+    expect((await approve(run.id, { version: 1 })).status).toBe(200);
+    const again = await approve(run.id, { version: 2 });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: 'run_not_draft' });
+  });
+
+  it('409 advances_changed rolls everything back', async () => {
+    const s = await structure('Changed', { basic: 1000000, hra: 0 });
+    const e1 = await employee('Changed One', s);
+    const e2 = await employee('Changed Two', s);
+    const a1 = await advance(e1, 500000, 0, 40000, '2024-01-05');
+    const a2 = await advance(e2, 500000, 0, 40000, '2024-01-05');
+    const run = (await (await post({ month: '2024-09' })).json()) as PayrollRun;
+    await db.query("UPDATE advances SET recovered_paise = amount_paise WHERE id = $1", [a2]); // fully recovered since the draft
+    const res = await approve(run.id, { version: run.version });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'advances_changed' });
+    expect((await db.query('SELECT status, approved_by FROM payroll_runs WHERE id = $1', [run.id])).rows[0]).toMatchObject({ status: 'draft', approved_by: null });
+    expect((await recovered([a1]))[a1]).toBe(0);
+  });
+});
+
 describe('GET /admin/payroll/runs and /:id', () => {
   const get = (path: string, who = admin) => app.request(`/admin/payroll/runs${path}`, {}, who);
 

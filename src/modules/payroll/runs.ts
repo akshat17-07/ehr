@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -119,6 +120,60 @@ export async function getPayrollRun(db: Queryable, id: string): Promise<PayrollR
     [id],
   );
   return toRun(rows[0] as Record<string, unknown>, slips.rows.map((r) => toPayslip(r as Record<string, unknown>)));
+}
+
+export const approveRunBody = z
+  .object({ version: z.number().int().positive(), note: z.string().trim().min(1).max(500).optional() })
+  .strict();
+export type ApproveRun = z.infer<typeof approveRunBody>;
+
+/** #327: a second person approves a draft run; the advance recovery in its payslips is applied to the advances. */
+export async function approvePayrollRun(db: Queryable, id: string, input: ApproveRun, by: string): Promise<PayrollRun> {
+  const found = UUID.test(id) ? await db.query('SELECT * FROM payroll_runs WHERE id = $1 AND voided_at IS NULL', [id]) : { rows: [] };
+  const run = found.rows[0] as Record<string, unknown> | undefined;
+  if (!run) throw new AppError(404, 'not_found');
+  if (run.status !== 'draft') throw new AppError(409, 'run_not_draft', 'only a draft run can be approved');
+  if (run.run_by === by) throw new AppError(403, 'self_approval', 'the person who ran payroll cannot approve it');
+
+  const month = String(run.month);
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  const monthEnd = `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+
+  await withTransaction(db, async (tx) => {
+    await updateRecord(tx, 'payroll_runs', {
+      id,
+      version: input.version,
+      by,
+      reason: input.note ?? 'approved',
+      set: { status: 'approved', approved_by: by },
+    });
+    const slips = await tx.query('SELECT employee_id, deductions FROM payslips WHERE run_id = $1', [id]);
+    for (const s of slips.rows) {
+      const deductions = JSON.parse(String(s.deductions)) as Deduction[];
+      let remaining = deductions.filter((d) => d.kind === 'advance').reduce((sum, d) => sum + d.paise, 0);
+      if (remaining === 0) continue;
+      const advs = await tx.query(
+        `SELECT id, version, recover_per_month_paise, recovered_paise, amount_paise - recovered_paise AS balance FROM advances
+         WHERE employee_id = $1 AND status = 'active' AND voided_at IS NULL AND given_on <= $2 AND amount_paise - recovered_paise > 0
+         ORDER BY given_on, id`,
+        [s.employee_id, monthEnd],
+      );
+      for (const a of advs.rows) {
+        if (remaining === 0) break;
+        const take = Math.min(Number(a.recover_per_month_paise), Number(a.balance), remaining);
+        await updateRecord(tx, 'advances', {
+          id: String(a.id),
+          version: Number(a.version),
+          by,
+          reason: `payroll ${month}`,
+          set: { recovered_paise: Number(a.recovered_paise) + take },
+        });
+        remaining -= take;
+      }
+      if (remaining > 0) throw new AppError(409, 'advances_changed', 'advances changed since the draft; re-run payroll');
+    }
+  });
+  return getPayrollRun(db, id);
 }
 
 /** #324: makes a draft run for `month` with a payslip for every active employee joined by month end. */
