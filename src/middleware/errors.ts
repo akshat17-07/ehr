@@ -5,7 +5,7 @@ import { ZodError } from 'zod';
 // Every error leaves the API in one shape: { error: <code>, message?: <text> }, plus `details` fields when given.
 export class AppError extends Error {
   constructor(
-    readonly status: 400 | 401 | 403 | 404 | 409 | 422,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 500,
     readonly code: string,
     message?: string,
     readonly details?: Record<string, unknown>,

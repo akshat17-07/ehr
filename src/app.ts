@@ -58,6 +58,7 @@ import { adminIncidentsRoutes } from './modules/compliance/incidents.routes.js';
 import { adminInactiveSettingsRoutes } from './modules/access/inactive-settings.routes.js';
 import { accessRequestsRoutes, adminAccessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
+import { adminEmployeesRoutes } from './modules/payroll/employees.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
 import { adminDiscountsRoutes, adminRefundsRoutes } from './modules/billing/decisions.routes.js';
@@ -148,6 +149,7 @@ export function createApp({
     .route('/patient-merges', adminPatientMergesRoutes)
     .route('/patients', adminPatientsRoutes)
     .route('/referrers', adminReferrersRoutes)
+    .route('/employees', adminEmployeesRoutes)
     .route('/break-glass-events', adminBreakGlassRoutes)
     .route('/settings/inactive-access', adminInactiveSettingsRoutes)
     .route('/incidents', adminIncidentsRoutes)

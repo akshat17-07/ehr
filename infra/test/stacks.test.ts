@@ -44,6 +44,22 @@ describe('app stack', () => {
     expect(deletes).toHaveLength(1);
   });
 
+  it('keeps a generated, retained field-encryption key for the API (value never in the template)', () => {
+    for (const [stage, t] of [['dev', dev], ['prod', prod]] as const) {
+      t.app.hasResource('AWS::SecretsManager::Secret', {
+        Properties: {
+          Name: `ehr-${stage}-field-key`,
+          GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true },
+        },
+        DeletionPolicy: 'Retain',
+      });
+      expect(JSON.stringify(t.app.toJSON())).toContain('FIELD_KEY_SECRET_ARN');
+      expect(JSON.stringify(t.app.toJSON())).not.toMatch(/"FIELD_KEY"/);
+    }
+    const reads = statements(dev.app).filter((s) => actions(s).includes('secretsmanager:GetSecretValue'));
+    expect(reads).toHaveLength(1);
+  });
+
   it('requires 2FA (TOTP, no SMS) and has no self sign-up', () => {
     dev.app.resourceCountIs('AWS::Cognito::UserPool', 2);
     dev.app.allResourcesProperties('AWS::Cognito::UserPool', {
