@@ -3,7 +3,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addSalaryStructure, listSalaryStructures, newSalaryStructureBody } from './salary-structures.js';
+import { addSalaryStructure, listSalaryStructures, newSalaryStructureBody, salaryStructureChange, updateSalaryStructure } from './salary-structures.js';
 
 // Mounted at /admin/salary-structures.
 export const adminSalaryStructuresRoutes = new Hono<AuthEnv>()
@@ -11,6 +11,13 @@ export const adminSalaryStructuresRoutes = new Hono<AuthEnv>()
   .get('/', requirePermission('payroll.employee'), async (c) => {
     auditDetails(c, { recordType: 'salary_structure' });
     return c.json(await listSalaryStructures(await dbOf(c)));
+  })
+  // #322
+  .patch('/:id', requirePermission('payroll.employee'), async (c) => {
+    const body = salaryStructureChange.parse(await c.req.json().catch(() => undefined));
+    const { structure, changes } = await updateSalaryStructure(await dbOf(c), c.req.param('id'), body, userOf(c).sub);
+    auditDetails(c, { action: 'update', recordType: 'salary_structure', recordId: structure.id, changes, ...(body.reason && { reason: body.reason }) });
+    return c.json(structure);
   })
   // #321
   .post('/', requirePermission('payroll.employee'), async (c) => {

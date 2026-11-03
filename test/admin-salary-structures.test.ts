@@ -90,3 +90,64 @@ describe('POST /admin/salary-structures', () => {
     expect((await post(body({ name: 'Nope' }), doctor)).status).toBe(403);
   });
 });
+
+describe('PATCH /admin/salary-structures/{id}', () => {
+  const patch = (id: string, b: unknown, who = admin) =>
+    app.request(`/admin/salary-structures/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }, who);
+
+  it('changes each field, audits changed fields only', async () => {
+    const id = await structure('Patch Grade', { tds: 100 });
+    const res = await patch(id, {
+      version: 1, name: ' Patch Grade 2 ', basicPaise: 5000000, hraPaise: 2000000, allowances: [{ name: 'Travel', paise: 1000 }],
+      epf: false, esi: true, professionalTax: false, tdsMonthlyPaise: 300, reason: 'Pay revision',
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id, version: 2, name: 'Patch Grade 2', basicPaise: 5000000, hraPaise: 2000000, allowances: [{ name: 'Travel', paise: 1000 }],
+      epf: false, esi: true, professionalTax: false, tdsMonthlyPaise: 300,
+    });
+    const audit = JSON.stringify((await db.query("SELECT * FROM audit_events WHERE record_type = 'salary_structure' AND record_id = $1 AND action = 'update'", [id])).rows);
+    expect(audit).toContain('Pay revision');
+    expect(audit).toContain('basicPaise');
+    expect((await patch(id, { version: 2, epf: true })).status).toBe(200);
+    const all = (await db.query("SELECT changes FROM audit_events WHERE record_id = $1 AND action = 'update'", [id])).rows.map((r) => JSON.stringify(r));
+    expect(all.some((a) => a.includes('epf') && !a.includes('hraPaise'))).toBe(true);
+  });
+
+  it('null clears tds', async () => {
+    const id = await structure('Tds Grade', { tds: 500 });
+    const res = await patch(id, { version: 1, tdsMonthlyPaise: null });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tdsMonthlyPaise: null, version: 2 });
+  });
+
+  it('409 duplicate on rename to an existing name in another case, but own name is fine', async () => {
+    await structure('Taken Name');
+    const id = await structure('Other Name');
+    const res = await patch(id, { version: 1, name: 'TAKEN name' });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'duplicate' });
+    expect((await patch(id, { version: 1, name: 'OTHER NAME' })).status).toBe(200);
+  });
+
+  it('409 stale version', async () => {
+    const id = await structure('Stale Grade');
+    expect((await patch(id, { version: 1, basicPaise: 1 })).status).toBe(200);
+    expect((await patch(id, { version: 1, basicPaise: 2 })).status).toBe(409);
+  });
+
+  it('404 for unknown, bad id and voided; 403; 422 for empty or bad input', async () => {
+    const gone = await structure('Gone Grade', { voided: true });
+    expect((await patch('77777777-7777-4777-8777-777777777777', { version: 1, basicPaise: 1 })).status).toBe(404);
+    expect((await patch('nope', { version: 1, basicPaise: 1 })).status).toBe(404);
+    expect((await patch(gone, { version: 1, basicPaise: 1 })).status).toBe(404);
+    const id = await structure('Guard Grade');
+    expect((await patch(id, { version: 1, basicPaise: 1 }, doctor)).status).toBe(403);
+    const bad: unknown[] = [
+      { version: 1 }, { basicPaise: 1 }, { version: 1, basicPaise: -1 }, { version: 1, hraPaise: 1.5 }, { version: 1, name: ' ' },
+      { version: 1, tdsMonthlyPaise: -1 }, { version: 1, extra: 1 }, { version: 1, reason: '' },
+      { version: 1, allowances: [{ name: 'A', paise: 1 }, { name: 'a', paise: 2 }] },
+    ];
+    for (const b of bad) expect((await patch(id, b)).status, JSON.stringify(b)).toBe(422);
+  });
+});
