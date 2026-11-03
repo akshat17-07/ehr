@@ -55,6 +55,7 @@ import { accessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/a
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
+import { approvalsRoutes } from './modules/approvals/approvals.routes.js';
 
 // Route prefixes match API Gateway (infra/constructs/api.ts). Full endpoint list: docs/india/api-list.md
 //   /health             public
@@ -132,6 +133,7 @@ export function createApp({
     .use(requireUser('staff', MANAGEMENT_GROUPS))
     .route('/me', meRoutes)
     .route('/users', usersRoutes)
+    .route('/approvals', approvalsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);
