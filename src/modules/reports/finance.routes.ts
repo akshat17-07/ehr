@@ -4,6 +4,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import { dbOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { ledger, ledgerQuery } from './ledger.js';
+import { expiryQuery, expiryReport, stockValuation, stockVariance, valuationQuery, varianceQuery } from './stock.js';
 import { collections, collectionsQuery, surgeryMargin, surgeryMarginQuery } from './finance.js';
 
 // Mounted at /admin/reports.
@@ -19,6 +20,24 @@ export const adminReportsRoutes = new Hono<AuthEnv>()
     const query = collectionsQuery.parse(c.req.query());
     auditDetails(c, { recordType: 'report', reason: `collections from=${query.from} to=${query.to} groupBy=${query.groupBy}` });
     return c.json(await collections(await dbOf(c), query));
+  })
+  // #302
+  .get('/stock-valuation', requirePermission('inventory.manage'), async (c) => {
+    const query = valuationQuery.parse(c.req.query());
+    auditDetails(c, { recordType: 'report', reason: `stock-valuation${query.on ? ` on=${query.on}` : ''}${query.kind ? ` kind=${query.kind}` : ''}` });
+    return c.json(await stockValuation(await dbOf(c), query));
+  })
+  // #303
+  .get('/expiry', requirePermission('inventory.manage'), async (c) => {
+    const query = expiryQuery.parse(c.req.query());
+    auditDetails(c, { recordType: 'report', reason: `expiry withinDays=${query.withinDays ?? query.days ?? 90}` });
+    return c.json(await expiryReport(await dbOf(c), query));
+  })
+  // #304
+  .get('/stock-variance', requirePermission('inventory.manage'), async (c) => {
+    const query = varianceQuery.parse(c.req.query());
+    auditDetails(c, { recordType: 'report', reason: `stock-variance${query.from ? ` from=${query.from}` : ''}${query.to ? ` to=${query.to}` : ''}${query.itemId ? ` itemId=${query.itemId}` : ''}` });
+    return c.json(await stockVariance(await dbOf(c), query));
   });
 
 // Mounted at /admin/ledger.
