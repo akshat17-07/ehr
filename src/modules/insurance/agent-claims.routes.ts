@@ -4,11 +4,15 @@ import type { Queryable } from '../../db/migrate.js';
 import { pageQuery, pageRows } from '../../db/page.js';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf, userOf } from '../../middleware/context.js';
+import { dbOf, uploadsOf, userOf } from '../../middleware/context.js';
+import { requireEnv } from '../../config/env.js';
+import { AppError } from '../../middleware/errors.js';
+import { completeUpload } from '../documents/documents.js';
 import { indiaDate } from '../../time/india.js';
 import { UUID } from '../users/users.js';
 import { assertAgentPatient, LIVE_LINK, notLinked } from './agent-access.js';
-import { addClaimEvent, eventsOf, getClaim, toClaim, type Claim, type ClaimEvent } from './claims.js';
+import { OWN_DOCUMENT } from './agent-documents.routes.js';
+import { addClaimDocuments, addClaimEvent, eventsOf, getClaim, toClaim, type Claim, type ClaimEvent } from './claims.js';
 
 // /other/insurance/claims (api-list.md 8.x, #264-#266): an insurance agent's view of its linked patients' claims.
 // Drafts are the hospital's own work in progress: the agent never sees them. A draft, missing, malformed or
@@ -50,6 +54,8 @@ const newEvent = z
     message: 'needed for approved and settled',
     path: ['amountPaise'],
   });
+
+const attach = z.object({ documentIds: z.array(z.uuid()).min(1).max(50) }).strict();
 
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
@@ -99,4 +105,21 @@ export const agentClaimsRoutes = new Hono<AuthEnv>()
     const event = await addClaimEvent(db, id, input, userOf(c).sub);
     auditDetails(c, { patientId, recordType: 'claim', recordId: event.claimId });
     return c.json(toAgentClaimEvent(event), 201);
+  })
+  // #401 (api-list #268): access first, then the body; only the agent's own uploads for this patient can be attached.
+  .post('/:id/documents', async (c) => {
+    const id = c.req.param('id');
+    const db = await dbOf(c);
+    const patientId = await agentClaimPatient(c, db, id);
+    const ids = [...new Set(attach.parse(await bodyOf(c)).documentIds)];
+    const by = userOf(c).sub;
+    const { rows } = await db.query(
+      `SELECT id, status FROM documents WHERE patient_id = $1 AND status IN ('pending', 'ready') AND ${OWN_DOCUMENT('$2')} AND id IN (${ids.map((_, i) => `$${i + 3}`).join(', ')})`,
+      [patientId, by, ...ids],
+    );
+    if (rows.length !== ids.length) throw new AppError(422, 'invalid_input', 'documentIds: each must be a file you uploaded for this patient');
+    for (const r of rows) if (r.status === 'pending') await completeUpload(db, uploadsOf(c), requireEnv('FILES_BUCKET'), String(r.id), by);
+    await addClaimDocuments(db, id, { documentIds: ids }, by);
+    auditDetails(c, { patientId, recordType: 'claim', recordId: id });
+    return c.json(toAgentClaim(await getClaim(db, id)));
   });
