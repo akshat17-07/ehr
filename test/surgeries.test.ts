@@ -3,6 +3,8 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
+import { saveCustomPermissions } from '../src/permissions/custom.js';
+import { CHECKLIST_ITEMS } from '../src/modules/surgeries/surgeries.js';
 import { indiaDate } from '../src/time/india.js';
 
 const db = await openLocalDb();
@@ -245,6 +247,38 @@ describe('POST /staff/surgeries/{id}/venue-payments', () => {
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({ surgeryId: id, partnerHospitalId: partner, ...payment, version: 1 });
     expect(await (await app.request(`/staff/surgeries/${id}`, {}, doctor)).json()).toMatchObject({ venuePayments: [{ amountPaise: 2000000, paidOn: '2026-10-30' }] });
+  });
+
+  it('venue payments only with surgery.venue_payment: not on the detail, list or write responses for anyone else', async () => {
+    const viewer = asStaff('surgery-viewer', ['nurse']);
+    const allow = ['surgery.view', 'surgery.update', 'surgery.op_note'];
+    await saveCustomPermissions(db, { userId: 'surgery-viewer', version: 0, allow, deny: [], by: 'dev-admin', reason: 'OT coordinator' });
+    const id = await planned({ venue: 'partner', partnerHospitalId: partner });
+    expect((await pay(id, payment)).status).toBe(201);
+    expect((await pay(id, payment, viewer)).status).toBe(403);
+    const detail = (await (await app.request(`/staff/surgeries/${id}`, {}, viewer)).json()) as Record<string, unknown>;
+    expect(detail).toMatchObject({ id, implants: [] });
+    expect(detail).not.toHaveProperty('venuePayments');
+    expect(await (await app.request(`/staff/surgeries/${id}`, {}, doctor)).json()).toMatchObject({ venuePayments: [{ amountPaise: 2000000 }] });
+    const day = indiaDate(new Date(Date.now() + 3_600_000));
+    const listed = (await (await app.request(`/staff/surgeries?from=${day}&to=${day}`, {}, viewer)).json()) as Record<string, unknown>[];
+    expect(listed.find((s) => s.id === id)).toBeDefined();
+    for (const s of listed) expect(s).not.toHaveProperty('venuePayments');
+    const send = async (path: string, body: object, method = 'POST') =>
+      (await (await app.request(`/staff/surgeries/${id}${path}`, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, viewer)).json()) as Record<string, unknown>;
+    const patched = await send('', { version: 1, chargesPaise: 9100000 }, 'PATCH');
+    expect(patched).toMatchObject({ chargesPaise: 9100000 });
+    expect(patched).not.toHaveProperty('venuePayments');
+    const checked = await send('/checklist', { signIn: Object.fromEntries(CHECKLIST_ITEMS.signIn.map((k) => [k, true])) });
+    expect(checked).toMatchObject({ checklist: { signIn: { by: 'surgery-viewer' } } });
+    expect(checked).not.toHaveProperty('venuePayments');
+    const noted = await send('/op-note', { findings: 'Stable fixation.', procedureDone: 'Posterior spinal fixation.' });
+    expect(noted).toMatchObject({ status: 'done' });
+    expect(noted).not.toHaveProperty('venuePayments');
+    const other = await planned({ venue: 'partner', partnerHospitalId: partner });
+    const cancelled = (await (await app.request(`/staff/surgeries/${other}/cancel`, json({ reason: 'Patient unfit for anaesthesia' }), viewer)).json()) as Record<string, unknown>;
+    expect(cancelled).toMatchObject({ status: 'cancelled' });
+    expect(cancelled).not.toHaveProperty('venuePayments');
   });
 
   it('422 for our own theatre, a future date or a bad mode; 403 for a nurse; 404 for none', async () => {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
-import { requirePermission } from '../../permissions/check.js';
+import { permissionsOf, requirePermission } from '../../permissions/check.js';
 import { assertPatientAccess } from '../access/patient-access.js';
 import { addImplant, surgeryImplants } from '../departments/implants.js';
 import { getPatient } from '../patients/patients.js';
@@ -115,13 +115,16 @@ export const surgeriesRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     return c.json(surgery, 201);
   })
-  // #88: a clinical read, so the inactive-patient rule applies.
+  // #88: a clinical read, so the inactive-patient rule applies. Venue payments are money: only with surgery.venue_payment.
+  // The list and the write responses (#86, #89-#91, #93) carry no venue payments at all.
   .get('/:id', requirePermission('surgery.view'), async (c) => {
     const db = await dbOf(c);
     const surgery = await getSurgery(db, c.req.param('id'));
     auditDetails(c, { patientId: surgery.patientId, recordType: 'surgery', recordId: surgery.id });
     await assertPatientAccess(db, userOf(c), await getPatient(db, surgery.patientId));
-    return c.json({ ...surgery, implants: await surgeryImplants(db, surgery.id), venuePayments: await venuePayments(db, surgery.id) });
+    const implants = await surgeryImplants(db, surgery.id);
+    if (!(await permissionsOf(c)).effective.includes('surgery.venue_payment')) return c.json({ ...surgery, implants });
+    return c.json({ ...surgery, implants, venuePayments: await venuePayments(db, surgery.id) });
   })
   // #89
   .patch('/:id', requirePermission('surgery.update'), async (c) => {
