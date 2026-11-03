@@ -3,7 +3,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addEmployee, employeesQuery, getEmployee, listEmployees, newEmployeeBody } from './employees.js';
+import { addEmployee, employeeChange, employeesQuery, getEmployee, listEmployees, newEmployeeBody, updateEmployee } from './employees.js';
 
 // Mounted at /admin/employees.
 export const adminEmployeesRoutes = new Hono<AuthEnv>()
@@ -17,6 +17,14 @@ export const adminEmployeesRoutes = new Hono<AuthEnv>()
   .get('/:id', requirePermission('payroll.employee'), async (c) => {
     const employee = await getEmployee(await dbOf(c), c.req.param('id'));
     auditDetails(c, { recordType: 'employee', recordId: employee.id });
+    return c.json(employee);
+  })
+  // #319
+  .patch('/:id', requirePermission('payroll.employee'), async (c) => {
+    const body = employeeChange.parse(await c.req.json().catch(() => undefined));
+    const { employee, changes } = await updateEmployee(await dbOf(c), c.req.param('id'), body, userOf(c).sub);
+    // Sensitive fields are named in `changes`, never their values.
+    auditDetails(c, { action: 'update', recordType: 'employee', recordId: employee.id, changes, ...(body.reason && { reason: body.reason }) });
     return c.json(employee);
   })
   // #205

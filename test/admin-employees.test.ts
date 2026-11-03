@@ -24,6 +24,13 @@ const PAN = 'ABCDE1234F';
 const UAN = '100200300400';
 const ESIC = '3100123456';
 const ACCOUNT = '000123456789012';
+// A valid Aadhaar number: 11 digits plus the Verhoeff check digit.
+const aadhaarOf = (n: number) => {
+  const base = `${2 + (n % 8)}${String(n).padStart(10, '0')}`;
+  return base + [...'0123456789'].find((d) => verhoeffValid(base + d));
+};
+const AADHAAR_NEW = aadhaarOf(41);
+const AADHAAR_DUP = aadhaarOf(42);
 
 async function employee(name: string, designation: string, opts: { active?: boolean; userId?: string | null; full?: boolean } = {}) {
   const bank = await encryptField(JSON.stringify({ name: 'State Bank', number: ACCOUNT, ifsc: 'SBIN0001234' }));
@@ -151,13 +158,83 @@ describe('GET /admin/employees/{id}', () => {
   });
 });
 
+describe('PATCH /admin/employees/{id}', () => {
+  const patch = (id: string, body: unknown, who = admin) =>
+    app.request(`/admin/employees/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('updates each field; masked response; audit names sensitive fields, never values', async () => {
+    const id = await employee('Patch Me', 'Clerk');
+    const { rows: u } = await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-nurse'");
+    const userId = String(u[0]?.id);
+    const res = await patch(id, {
+      version: 1, name: 'Patched', designation: 'Head Clerk', joinDate: '2023-02-03', salaryStructureId: '88888888-8888-4888-8888-888888888888',
+      active: false, userId, aadhaar: AADHAAR_NEW, pan: 'ZZZZZ9999Z', uan: '999888777666', esic: '9999888877',
+      bankAccount: { name: 'HDFC', number: '55556666777788', ifsc: 'HDFC0009999' }, reason: 'HR correction',
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toMatchObject({
+      version: 2, name: 'Patched', designation: 'Head Clerk', joinDate: '2023-02-03', active: false, userId,
+      aadhaar: `****${AADHAAR_NEW.slice(-4)}`, pan: '****999Z', uan: '****7666', esic: '****8877', bankAccount: { name: 'HDFC', number: '****7788', ifsc: 'HDFC0009999' },
+    });
+    const audit = JSON.stringify((await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1 AND action = 'update'", [id])).rows);
+    expect(audit).toContain('HR correction');
+    for (const secret of [AADHAAR_NEW, 'ZZZZZ9999Z', '999888777666', '9999888877', '55556666777788', '999Z', '7666', '8877', '7788', ...[PAN, UAN, ESIC, ACCOUNT]])
+      expect(audit, secret).not.toContain(secret);
+    for (const key of ['pan', 'uan', 'esic', 'bankAccount', 'aadhaar']) expect(audit).toContain(key);
+    const stored = await db.query('SELECT pan_enc, aadhaar_enc FROM employees WHERE id = $1', [id]);
+    expect(await decryptField(String(stored.rows[0]?.pan_enc))).toBe('ZZZZZ9999Z');
+    // null detaches the login
+    const again = await patch(id, { version: 2, userId: null });
+    expect(((await again.json()) as Employee).userId).toBeNull();
+  });
+
+  it('null clears pan and bank; aadhaar null is 422; empty change is 422', async () => {
+    const id = await employee('Clear Me', 'Clerk');
+    const res = await patch(id, { version: 1, pan: null, bankAccount: null, uan: null });
+    expect(await res.json()).toMatchObject({ pan: null, bankAccount: null, uan: null, esic: '****3456' });
+    expect((await patch(id, { version: 2, aadhaar: null })).status).toBe(422);
+    expect((await patch(id, { version: 2 })).status).toBe(422);
+    expect((await patch(id, { version: 2, reason: 'x' })).status).toBe(422);
+    expect((await patch(id, { version: 2, bogus: 1 })).status).toBe(422);
+    expect((await patch(id, { version: 2, pan: 'bad' })).status).toBe(422);
+  });
+
+  it('409 duplicate_aadhaar, user_has_employee; 422 user_unknown; same Aadhaar on itself is fine', async () => {
+    const a = await employee('Dup A', 'Clerk');
+    const b = await employee('Dup B', 'Clerk');
+    expect((await patch(a, { version: 1, aadhaar: AADHAAR_DUP })).status).toBe(200);
+    const dup = await patch(b, { version: 1, aadhaar: AADHAAR_DUP });
+    expect(dup.status).toBe(409);
+    expect(await dup.json()).toMatchObject({ error: 'duplicate_aadhaar' });
+    expect((await patch(a, { version: 2, aadhaar: AADHAAR_DUP })).status).toBe(200);
+    const { rows } = await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-reception'");
+    const userId = String(rows[0]?.id);
+    expect((await patch(a, { version: 3, userId })).status).toBe(200);
+    const taken = await patch(b, { version: 1, userId });
+    expect(taken.status).toBe(409);
+    expect(await taken.json()).toMatchObject({ error: 'user_has_employee' });
+    expect((await patch(a, { version: 4, userId })).status).toBe(200);
+    expect((await patch(b, { version: 1, userId: '77777777-7777-4777-8777-777777777777' })).status).toBe(422);
+  });
+
+  it('409 stale version, 404, 403', async () => {
+    const id = await employee('Stale', 'Clerk');
+    expect((await patch(id, { version: 1, name: 'One' })).status).toBe(200);
+    const stale = await patch(id, { version: 1, name: 'Two' });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: 'conflict' });
+    expect((await patch('77777777-7777-4777-8777-777777777777', { version: 1, name: 'X' })).status).toBe(404);
+    expect((await patch('nope', { version: 1, name: 'X' })).status).toBe(404);
+    const gone = await employee('Gone', 'Clerk');
+    await db.query('UPDATE employees SET voided_at = now() WHERE id = $1', [gone]);
+    expect((await patch(gone, { version: 1, name: 'X' })).status).toBe(404);
+    expect((await patch(id, { version: 2, name: 'Three' }, doctor)).status).toBe(403);
+  });
+});
+
 describe('POST /admin/employees', () => {
   const SS = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
-  // A valid Aadhaar number: 11 digits plus the Verhoeff check digit.
-  const aadhaarOf = (n: number) => {
-    const base = `${2 + (n % 8)}${String(n).padStart(10, '0')}`;
-    return base + [...'0123456789'].find((d) => verhoeffValid(base + d));
-  };
   const body = (over: Record<string, unknown> = {}) => ({
     aadhaar: aadhaarOf(1),
     name: ' Post Person ',

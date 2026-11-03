@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Queryable } from '../../db/migrate.js';
 import { pageQuery, pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { updateRecord } from '../../db/records.js';
+import { withTransaction } from '../../db/transaction.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { decryptField, encryptField, hashField, maskField } from '../../lib/field-crypto.js';
@@ -160,4 +162,101 @@ export async function addEmployee(db: Queryable, input: NewEmployee, by: string)
     }
     throw err;
   }
+}
+
+const s_ = newEmployeeBody.shape;
+export const employeeChange = z
+  .object({
+    version: z.number().int().min(1),
+    name: s_.name.optional(),
+    designation: s_.designation.optional(),
+    joinDate: s_.joinDate.optional(),
+    salaryStructureId: s_.salaryStructureId.optional(),
+    active: z.boolean().optional(),
+    userId: z.uuid().nullable().optional(),
+    aadhaar: s_.aadhaar.optional(), // required on file: can be changed, never cleared
+    pan: s_.pan.nullable(),
+    uan: s_.uan.nullable(),
+    esic: s_.esic.nullable(),
+    bankAccount: s_.bankAccount.nullable(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+export type EmployeeChange = z.infer<typeof employeeChange>;
+
+/** #319: edits an employee. Returns the saved employee and audit `changes`: values for plain fields, only ['changed'] / ['cleared'] for sensitive ones. */
+export async function updateEmployee(
+  db: Queryable,
+  id: string,
+  input: EmployeeChange,
+  by: string,
+): Promise<{ employee: Employee; changes: Record<string, [unknown, unknown]> }> {
+  const { version, reason, ...fields } = input;
+  if (Object.values(fields).every((v) => v === undefined)) throw new AppError(422, 'invalid_input', 'nothing to change');
+  return withTransaction(db, async (tx) => {
+    const { rows } = UUID.test(id) ? await tx.query(`${SELECT} WHERE e.id = $1 AND e.voided_at IS NULL`, [id]) : { rows: [] };
+    const old = rows[0] as Record<string, unknown> | undefined;
+    if (!old) throw new AppError(404, 'not_found');
+    const set: Record<string, unknown> = {};
+    const changes: Record<string, [unknown, unknown]> = {};
+    const oldDate = old.join_date instanceof Date ? old.join_date.toISOString().slice(0, 10) : String(old.join_date).slice(0, 10);
+    const plain = (key: string, col: string, now: unknown, was: unknown) => {
+      if (now === undefined) return;
+      set[col] = now;
+      changes[key] = [was, now];
+    };
+    plain('name', 'name', fields.name, old.name);
+    plain('designation', 'designation', fields.designation, old.designation);
+    plain('joinDate', 'join_date', fields.joinDate, oldDate);
+    plain('salaryStructureId', 'salary_structure_id', fields.salaryStructureId, old.salary_structure_id);
+    plain('active', 'active', fields.active, old.active);
+
+    if (fields.userId !== undefined) {
+      let sub: string | null = null;
+      if (fields.userId) {
+        const u = await tx.query('SELECT cognito_sub FROM users WHERE id = $1 AND voided_at IS NULL', [fields.userId]);
+        if (!u.rows[0]) throw new AppError(422, 'user_unknown', 'no such user');
+        sub = String(u.rows[0].cognito_sub);
+        const taken = await tx.query('SELECT 1 FROM employees WHERE user_id = $1 AND id <> $2', [sub, id]);
+        if (taken.rows.length > 0) throw new AppError(409, 'user_has_employee', 'this user already has an employee record');
+      }
+      set.user_id = sub;
+      changes.userId = [old.user_uuid ?? null, fields.userId];
+    }
+    if (fields.aadhaar !== undefined) {
+      const hash = await hashField('aadhaar:', fields.aadhaar);
+      const same = await tx.query('SELECT 1 FROM employees WHERE aadhaar_hash = $1 AND id <> $2', [hash, id]);
+      if (same.rows.length > 0) throw new AppError(409, 'duplicate_aadhaar', 'an employee with this Aadhaar number is on file');
+      set.aadhaar_enc = await encryptField(fields.aadhaar);
+      set.aadhaar_hash = hash;
+      changes.aadhaar = ['changed', 'changed'];
+    }
+    const secret = async (key: string, col: string, v: unknown) => {
+      if (v === undefined) return;
+      set[col] = v === null ? null : await encryptField(typeof v === 'string' ? v : JSON.stringify(v));
+      changes[key] = v === null ? ['cleared', 'cleared'] : ['changed', 'changed'];
+    };
+    await secret('pan', 'pan_enc', fields.pan);
+    await secret('uan', 'uan_enc', fields.uan);
+    await secret('esic', 'esic_enc', fields.esic);
+    await secret(
+      'bankAccount',
+      'bank_enc',
+      fields.bankAccount && { name: fields.bankAccount.name, number: fields.bankAccount.number, ifsc: fields.bankAccount.ifsc },
+    );
+    if (fields.bankAccount === null) await secret('bankAccount', 'bank_enc', null);
+
+    try {
+      const row = await updateRecord(tx, 'employees', { id, version, by, set, ...(reason && { reason }) });
+      const userUuid = 'userId' in fields && fields.userId !== undefined ? fields.userId : old.user_uuid;
+      return { employee: await toEmployee({ ...row, user_uuid: userUuid }), changes };
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        const msg = String((err as { message?: string }).message);
+        if (/aadhaar/.test(msg)) throw new AppError(409, 'duplicate_aadhaar', 'an employee with this Aadhaar number is on file');
+        throw new AppError(409, 'user_has_employee', 'this user already has an employee record');
+      }
+      throw err;
+    }
+  });
 }
