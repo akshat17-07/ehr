@@ -97,3 +97,44 @@ export async function createAccessRequest(
   );
   return toAccessRequest(rows[0] as Record<string, unknown>, now);
 }
+
+/** An access request as the admin screens show it: requestedBy / approverId as users.id, with the UHID and name. */
+export interface AdminAccessRequest extends AccessRequest {
+  uhid?: string;
+  requestedByName?: string;
+}
+
+// users.id and the names come from joins; the stored sub is kept when no user row has it.
+const ADMIN_SELECT = `SELECT * FROM (SELECT a.*, p.uhid, u.id AS user_row_id, u.name AS user_name, ap.id AS approver_row_id
+  FROM access_requests a LEFT JOIN patients p ON p.id::text = a.patient_id
+  LEFT JOIN users u ON u.cognito_sub = a.requested_by LEFT JOIN users ap ON ap.cognito_sub = a.approver_id) x`;
+
+function toAdminAccessRequest(r: Record<string, unknown>, now: Date): AdminAccessRequest {
+  const request = toAccessRequest(r, now);
+  return {
+    ...request,
+    requestedBy: String(r.user_row_id ?? r.requested_by),
+    ...(request.approverId !== undefined && { approverId: String(r.approver_row_id ?? r.approver_id) }),
+    ...(r.uhid != null && { uhid: String(r.uhid) }),
+    ...(r.user_name != null && { requestedByName: String(r.user_name) }),
+  };
+}
+
+/** One request as the admin screens show it; 404 if there is none. */
+export async function getAdminAccessRequest(db: Queryable, id: string, now = new Date()): Promise<AdminAccessRequest> {
+  const { rows } = await db.query(`${ADMIN_SELECT} WHERE id = $1`, [id]);
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return toAdminAccessRequest(rows[0] as Record<string, unknown>, now);
+}
+
+/** #174: by status (default pending). Pending ones oldest first, so none waits unseen; the rest newest first. */
+export function listAccessRequests(
+  db: Queryable,
+  query: PageQuery & { status?: AccessRequestStatus },
+  now = new Date(),
+): Promise<Page<AdminAccessRequest>> {
+  const status = query.status ?? 'pending';
+  const params: unknown[] = status === 'approved' || status === 'expired' ? [now] : [];
+  const spec = { select: ADMIN_SELECT, where: [statusFilter(status, '$1')], params, orderBy: ['created_at', 'id'], direction: status === 'pending' ? ('asc' as const) : ('desc' as const) };
+  return pageRows(db, spec, query, (r) => toAdminAccessRequest(r, now));
+}

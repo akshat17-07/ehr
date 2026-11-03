@@ -51,7 +51,7 @@ import { registersRoutes } from './modules/pharmacy/registers.routes.js';
 import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
-import { accessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
+import { accessRequestsRoutes, adminAccessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { permissionsAdminRoutes } from './modules/permissions/permissions.routes.js';
@@ -134,6 +134,7 @@ export function createApp({
     .route('/me', meRoutes)
     .route('/users', usersRoutes)
     .route('/approvals', approvalsRoutes)
+    .route('/access-requests', adminAccessRequestsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);

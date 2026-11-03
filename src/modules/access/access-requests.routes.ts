@@ -5,9 +5,10 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { ACCESS_REQUEST_STATUSES, createAccessRequest, listMyAccessRequests } from './access-requests.js';
+import { ACCESS_REQUEST_STATUSES, createAccessRequest, listAccessRequests, listMyAccessRequests } from './access-requests.js';
 
 // /staff/me/access-requests: the access requests the caller made. /staff/access-requests: asking for one.
+// /admin/access-requests: deciding them.
 
 const listQuery = pageQuery.extend({ status: z.enum(ACCESS_REQUEST_STATUSES).optional() });
 
@@ -26,3 +27,7 @@ export const accessRequestsRoutes = new Hono<AuthEnv>()
     auditDetails(c, { patientId: request.patientId, recordType: 'access_request', recordId: request.id, reason: request.reason });
     return c.json(request, 201);
   });
+
+export const adminAccessRequestsRoutes = new Hono<AuthEnv>()
+  // #174
+  .get('/', requirePermission('approval.access'), async (c) => c.json(await listAccessRequests(await dbOf(c), listQuery.parse(c.req.query()))));
