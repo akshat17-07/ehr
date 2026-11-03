@@ -7,6 +7,7 @@ import { AppError } from '../../middleware/errors.js';
 import type { BaseFields } from '../patients/patients.js';
 import { indiaDate } from '../../time/india.js';
 import { ITEMS } from './items.js';
+import { OPEN_PO_STATUSES, purchaseOrderDetail, type PurchaseOrder } from './purchase-orders.js';
 
 // Goods received (api-list.md Grn): a supplier's invoice comes in and its lines go into batches. A batch number
 // already on file for the item gets the stock added (its expiry and MRP must match); a new one becomes a batch.
@@ -105,6 +106,7 @@ export async function receiveGoods(db: Queryable, input: NewGrn, by: string, now
   });
 
   return withTransaction(db, async (tx) => {
+    const order = input.purchaseOrderId ? await checkPurchaseOrder(tx, input.purchaseOrderId, input.lines, items) : undefined;
     const batchIds = new Map<string, string>();
     for (const [key, { first, qty }] of totals) {
       const batch = onFile.get(key);
@@ -127,6 +129,49 @@ export async function receiveGoods(db: Queryable, input: NewGrn, by: string, now
        VALUES ($1, 'active', $2, $2, $3, $4, $5, $6, $7, $2) RETURNING *, invoice_date::text AS invoice_date_text`,
       [randomUUID(), by, input.supplierId, input.purchaseOrderId ?? null, input.invoiceNo, input.invoiceDate, JSON.stringify(lines)],
     );
+    if (order) await receiveAgainst(tx, order, input.lines, by);
     return toGrn(rows[0] as Record<string, unknown>);
+  });
+}
+
+/** 404 unknown order; 409 po_not_placed unless placed / part received; 422 item_not_on_po or over_receipt. */
+async function checkPurchaseOrder(
+  db: Queryable,
+  id: string,
+  lines: NewGrn['lines'],
+  items: Map<string, Record<string, unknown>>,
+): Promise<PurchaseOrder> {
+  const order = await purchaseOrderDetail(db, id);
+  if (!(OPEN_PO_STATUSES as readonly string[]).includes(order.status)) {
+    throw new AppError(409, 'po_not_placed', 'the purchase order is not open for receiving');
+  }
+  const name = (itemId: string) => String(items.get(itemId)?.name ?? itemId);
+  const arriving = new Map<string, number>();
+  for (const l of lines) {
+    if (!order.lines.some((p) => p.itemId === l.itemId)) {
+      throw new AppError(422, 'item_not_on_po', `${name(l.itemId)} is not on the purchase order`);
+    }
+    arriving.set(l.itemId, (arriving.get(l.itemId) ?? 0) + l.qty);
+  }
+  for (const [itemId, qty] of arriving) {
+    const ordered = order.lines.find((p) => p.itemId === itemId)!.qty;
+    const got = order.receivedQty[itemId] ?? 0;
+    if (got + qty > ordered) {
+      throw new AppError(422, 'over_receipt', `${name(itemId)}: ${got + qty} would exceed the ${ordered} ordered`);
+    }
+  }
+  return order;
+}
+
+/** Adds the received quantities to the order and sets part_received / received. */
+async function receiveAgainst(db: Queryable, order: PurchaseOrder, lines: NewGrn['lines'], by: string): Promise<void> {
+  const receivedQty = { ...order.receivedQty };
+  for (const l of lines) receivedQty[l.itemId] = (receivedQty[l.itemId] ?? 0) + l.qty;
+  const complete = order.lines.every((p) => (receivedQty[p.itemId] ?? 0) >= p.qty);
+  await updateRecord(db, 'purchase_orders', {
+    id: order.id,
+    version: order.version,
+    by,
+    set: { received_qty: JSON.stringify(receivedQty), status: complete ? 'received' : 'part_received' },
   });
 }
