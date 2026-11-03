@@ -4,7 +4,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addDepartment } from './departments.js';
+import { addDepartment, changeDepartment } from './departments.js';
 import { changeHospital } from './hospital-edit.js';
 
 // Hospital setup for the Admin (api-list.md 7.2 "Hospital setup (edit)", #189-#200). Staff read the same data in
@@ -18,6 +18,10 @@ const newDepartment = z
     nameEn: text(100),
     nameHi: text(100),
   })
+  .strict();
+
+const departmentChange = z
+  .object({ version: z.number().int().min(1), nameEn: text(100).optional(), nameHi: text(100).optional(), active: z.boolean().optional(), reason: z.string().trim().min(3).max(500).optional() })
   .strict();
 
 const address = z
@@ -53,6 +57,13 @@ const hospitalChange = z
   .strict();
 
 export const setupAdminRoutes = new Hono<AuthEnv>()
+  // #191 (Admin only)
+  .patch('/departments/:id', requirePermission('settings.manage'), async (c) => {
+    const input = departmentChange.parse(await c.req.json().catch(() => undefined));
+    const department = await changeDepartment(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'department', recordId: department.id, ...(input.reason && { reason: input.reason }) });
+    return c.json(department);
+  })
   // #189 (Admin only)
   .patch('/hospital', requirePermission('settings.manage'), async (c) => {
     const input = hospitalChange.parse(await c.req.json().catch(() => undefined));

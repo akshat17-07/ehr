@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { AppError } from '../../middleware/errors.js';
+import { UUID } from '../users/users.js';
 
 // Hospital departments (api-list.md Department). Few rows, so lists are not paged.
 
@@ -54,4 +56,28 @@ export async function addDepartment(db: Queryable, input: NewDepartment, by: str
     if ((error as { code?: string }).code === '23505') throw new AppError(409, 'duplicate', 'a department with this code exists');
     throw error;
   }
+}
+
+export interface DepartmentChange {
+  version: number;
+  nameEn?: string;
+  nameHi?: string;
+  active?: boolean;
+  reason?: string;
+}
+
+/**
+ * #191: renames or (de)activates a department; the code never changes. 404 if there is none, 409 for a stale version,
+ * 422 if nothing changes. Departments are never removed: an inactive one drops out of new choices, old records keep it.
+ */
+export async function changeDepartment(db: Queryable, id: string, change: DepartmentChange, by: string): Promise<Department> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM departments WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const current = toDepartment(rows[0]);
+  const set: Record<string, unknown> = {};
+  if (change.nameEn !== undefined && change.nameEn !== current.nameEn) set.name_en = change.nameEn;
+  if (change.nameHi !== undefined && change.nameHi !== current.nameHi) set.name_hi = change.nameHi;
+  if (change.active !== undefined && change.active !== current.active) set.active = change.active;
+  if (Object.keys(set).length === 0) throw new AppError(422, 'invalid_input', 'nothing to change');
+  return toDepartment(await updateRecord(db, 'departments', { id, version: change.version, by, set, reason: change.reason }));
 }

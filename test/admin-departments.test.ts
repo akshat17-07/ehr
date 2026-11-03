@@ -54,3 +54,37 @@ describe('POST /admin/departments', () => {
     expect((await post({ code: 'ENT', nameEn: 'ENT', nameHi: 'कान' }, doctor)).status).toBe(403);
   });
 });
+
+describe('PATCH /admin/departments/{id}', () => {
+  const patch = (id: string, body: unknown, who = admin) => send('PATCH', `/admin/departments/${id}`, body, who);
+  type Dept = { id: string; version: number; code: string; nameEn: string; nameHi: string; active: boolean };
+  const find = async (code: string) => ((await (await app.request('/staff/departments', {}, doctor)).json()) as Dept[]).find((d) => d.code === code)!;
+
+  it('renames and deactivates; the code stays, the history keeps the old name and reason', async () => {
+    const dept = await find('RAD');
+    const res = await patch(dept.id, { version: dept.version, nameEn: 'Imaging', active: false, reason: 'Merged with surgery' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ code: 'RAD', nameEn: 'Imaging', nameHi: dept.nameHi, active: false, version: dept.version + 1 });
+    expect((await find('RAD')).active).toBe(false);
+    const active = (await (await app.request('/staff/departments?active=true', {}, doctor)).json()) as Dept[];
+    expect(active.map((d) => d.code)).not.toContain('RAD');
+    const history = await db.query('SELECT reason FROM departments_versions WHERE record_id = $1', [dept.id]);
+    expect(history.rows[0]).toMatchObject({ reason: 'Merged with surgery' });
+    const back = await patch(dept.id, { version: dept.version + 1, active: true });
+    expect(await back.json()).toMatchObject({ active: true });
+  });
+
+  it('409 for a stale version; 404; 422 for no change, a bad body or a code; 403 for anyone but the Admin', async () => {
+    const dept = await find('SUR');
+    expect((await patch(dept.id, { version: dept.version + 5, nameEn: 'X ray' })).status).toBe(409);
+    expect((await patch('00000000-0000-4000-8000-000000000999', { version: 1, nameEn: 'Nothing' })).status).toBe(404);
+    expect((await patch('nope', { version: 1, nameEn: 'Nothing' })).status).toBe(404);
+    expect((await patch(dept.id, { version: dept.version, nameEn: dept.nameEn })).status).toBe(422);
+    expect((await patch(dept.id, { version: dept.version })).status).toBe(422);
+    expect((await patch(dept.id, { version: dept.version, code: 'NEW' })).status).toBe(422);
+    expect((await patch(dept.id, { nameEn: 'No version' })).status).toBe(422);
+    expect((await patch(dept.id, { version: dept.version, nameEn: 'Not allowed' }, head)).status).toBe(403);
+    expect((await patch(dept.id, { version: dept.version, nameEn: 'Not allowed' }, doctor)).status).toBe(403);
+    expect((await find('SUR')).nameEn).toBe(dept.nameEn);
+  });
+});
