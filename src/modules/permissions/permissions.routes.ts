@@ -15,7 +15,7 @@ import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from 
 import { addGrantRule, changeGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
 import { pageQuery } from '../../db/page.js';
 import { GRANT_SCOPES, GRANT_STATUSES, listGrants } from '../../permissions/grants.js';
-import { giveGrant } from './admin-grants.js';
+import { giveGrant, takeBackGrant } from './admin-grants.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -122,6 +122,13 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
     const grant = await giveGrant(await dbOf(c), userOf(c), (await permissionsOf(c)).effective, body);
     auditDetails(c, { action: 'grant', recordType: 'grant', recordId: grant.id, reason: body.reason });
     return c.json(grant, 201);
+  })
+  // #172
+  .post('/grants/:id/revoke', requirePermission('grant.revoke'), async (c) => {
+    const body = z.object({ reason }).strict().parse(await c.req.json().catch(() => undefined));
+    const grant = await takeBackGrant(await dbOf(c), userOf(c), c.req.param('id'), body.reason);
+    auditDetails(c, { action: 'grant', recordType: 'grant', recordId: grant.id, reason: body.reason });
+    return c.json(grant);
   })
   // #168 (Admin only)
   .post('/grant-rules', requirePermission('grant_rule.manage'), async (c) => {

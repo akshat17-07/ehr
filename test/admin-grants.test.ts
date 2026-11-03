@@ -119,3 +119,32 @@ describe('POST /admin/grants', () => {
     expect((await post(hd, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });
+
+describe('POST /admin/grants/{id}/revoke', () => {
+  const revoke = (id: string, who = admin, reason = 'duty is over') =>
+    app.request(`/admin/grants/${id}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) }, who);
+
+  it('ends a grant now; the reason is kept in its history', async () => {
+    const res = await revoke(active.id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: active.id, userId: doctorId, status: 'revoked', version: 2 });
+    const { rows } = await db.query('SELECT reason FROM grants_versions WHERE record_id = $1', [active.id]);
+    expect(rows.map((r) => r.reason)).toContain('duty is over');
+    expect((await revoke(active.id)).status).toBe(409);
+  });
+
+  it('409 for an ended grant; 404 for none; 422 without a reason', async () => {
+    expect((await revoke(expired.id)).status).toBe(409);
+    expect((await revoke(randomUUID())).status).toBe(404);
+    expect((await revoke('nope')).status).toBe(404);
+    expect((await revoke(expired.id, admin, 'x')).status).toBe(422);
+  });
+
+  it('a Head Doctor takes back only the grants they gave', async () => {
+    const mine = await give('dev-doctor', 'mtp.view');
+    const theirs = await createGrant(db, { userId: 'dev-doctor', permission: 'mtp.write', scope: 'all', end: days(5), grantorId: 'dev-admin', reason: 'cover for leave' });
+    expect((await revoke(theirs.id, head)).status).toBe(403);
+    expect((await revoke(mine.id, head)).status).toBe(200);
+    expect((await revoke(theirs.id, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});

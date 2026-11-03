@@ -1,8 +1,8 @@
 import type { Queryable } from '../../db/migrate.js';
 import type { CurrentUser } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/errors.js';
-import { createGrant, grantForAdmin, type Grant, type GrantScope } from '../../permissions/grants.js';
-import { checkDepartments, getUser } from '../users/users.js';
+import { createGrant, grantForAdmin, revokeGrant, type Grant, type GrantScope } from '../../permissions/grants.js';
+import { checkDepartments, getUser, UUID } from '../users/users.js';
 import { assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
 import { listGrantRules } from './grant-rules.js';
 
@@ -67,4 +67,18 @@ export async function giveGrant(
 
   const grant = await createGrant(db, { ...input, userId: user.cognitoSub, grantorId: caller.sub }, now);
   return grantForAdmin(db, grant.id, now);
+}
+
+/**
+ * #172: ends a grant now, with the reason kept in its history. An Admin revokes any grant; a Head Doctor only the
+ * ones they gave. 409 if it was already revoked or has ended.
+ */
+export async function takeBackGrant(db: Queryable, caller: CurrentUser, id: string, reason: string, now = new Date()): Promise<Grant> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT version, status, grantor_id, ends_at FROM grants WHERE id = $1', [id]) : { rows: [] };
+  const row = rows[0];
+  if (!row) throw new AppError(404, 'not_found');
+  if (!isAdmin(caller) && row.grantor_id !== caller.sub) throw refuse('a Head Doctor takes back only the grants they gave');
+  if (row.status !== 'revoked' && (row.ends_at as Date) <= now) throw new AppError(409, 'conflict', 'this grant has already ended');
+  await revokeGrant(db, { id, version: Number(row.version), by: caller.sub, reason }, now);
+  return grantForAdmin(db, id, now);
 }
