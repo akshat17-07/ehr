@@ -1,4 +1,4 @@
-import { patientMergesRoutes } from './modules/patients/merges.routes.js';
+import { adminPatientMergesRoutes, patientMergesRoutes } from './modules/patients/merges.routes.js';
 import { patientsRoutes } from './modules/patients/patients.routes.js';
 import { referenceRoutes } from './modules/reference/reference.routes.js';
 import { Hono } from 'hono';
@@ -140,6 +140,7 @@ export function createApp({
     .route('/access-requests', adminAccessRequestsRoutes)
     .route('/refunds', adminRefundsRoutes)
     .route('/discounts', adminDiscountsRoutes)
+    .route('/patient-merges', adminPatientMergesRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes);

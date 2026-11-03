@@ -1308,4 +1308,9 @@ export const migrations: Migration[] = [
     id: '0087_refunds_approved_at',
     statements: () => ['ALTER TABLE refunds ADD COLUMN approved_at timestamptz'],
   },
+  {
+    // Which rows an approved patient merge moved to the kept UHID, by table (JSON text), so it can be audited and undone.
+    id: '0088_patient_merges_moved_rows',
+    statements: () => ['ALTER TABLE patient_merges ADD COLUMN moved_rows text'],
+  },
 ];
