@@ -1391,4 +1391,25 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC advances_employee_given ON advances (employee_id, given_on)',
     ],
   },
+  {
+    // Patient rights requests under the DPDP Act (api-list.md RightsRequest, #332). status: open / closed.
+    // requested_by is the Cognito sub of the patient-portal user who filed it. The response fields are set when
+    // the compliance officer responds (#333).
+    id: '0094_rights_requests',
+    statements: () => [
+      ...createTable('rights_requests', [
+        'patient_id uuid NOT NULL',
+        'kind text NOT NULL',
+        'text text NOT NULL',
+        'requested_by text',
+        'response text',
+        'outcome text',
+        'outcome_reason text',
+        'responded_at timestamptz',
+        'responded_by text',
+      ]),
+      'CREATE INDEX ASYNC rights_requests_status_created ON rights_requests (status, created_at)',
+      'CREATE INDEX ASYNC rights_requests_patient_created ON rights_requests (patient_id, created_at)',
+    ],
+  },
 ];
