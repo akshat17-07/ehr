@@ -8,9 +8,15 @@ import { dbOf, signerOf, userOf } from '../../middleware/context.js';
 import { AppError } from '../../middleware/errors.js';
 import { DOCUMENT_TYPES, documentViewUrl } from '../documents/documents.js';
 import { address, mobile } from '../patients/patients.routes.js';
+import { PRINT_LANGUAGES } from '../billing/print.js';
 import { portalProfiles, resolvePortalPatient } from './portal-access.js';
 import {
   hasSensitiveLabel,
+  PORTAL_BILL_STATUSES,
+  portalBillDetail,
+  portalBillHtml,
+  portalBillPatient,
+  portalBills,
   portalDocumentPatient,
   portalDocuments,
   portalHome,
@@ -27,6 +33,7 @@ import {
 const patientQuery = z.object({ patientId: z.string().max(100).optional() });
 const patientPage = pageQuery.extend({ patientId: z.string().max(100).optional() });
 const documentPage = patientPage.extend({ type: z.enum(DOCUMENT_TYPES).optional() });
+const billPage = patientPage.extend({ status: z.enum(PORTAL_BILL_STATUSES).optional() });
 
 // Contact details only: name, sex and DOB are corrected by the staff (#258). Same checks as the staff edit (#23).
 const profileChange = z
@@ -39,6 +46,17 @@ const profileChange = z
   .strict();
 
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
+
+const notYours = () => new AppError(403, 'forbidden', 'not a patient this account may see');
+
+/** A bill the portal may show, of a patient this account may act for; else the generic 403. Returns its id. */
+async function resolvePortalBill(c: Context<AuthEnv>): Promise<string> {
+  const id = c.req.param('id') ?? '';
+  const patientId = z.uuid().safeParse(id).success ? await portalBillPatient(await dbOf(c), id) : undefined;
+  if (!patientId) throw notYours();
+  await resolvePortalPatient(c, patientId);
+  return id;
+}
 
 export const portalRoutes = new Hono<AuthEnv>()
   // #239
@@ -104,6 +122,25 @@ export const portalRoutes = new Hono<AuthEnv>()
     const { document, ...link } = await documentViewUrl(db, signerOf(c), requireEnv('FILES_BUCKET'), id);
     auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
     return c.json(link);
+  })
+  // #247: issued bills only (final, part paid, paid); a draft or void status filter is a 422.
+  .get('/bills', async (c) => {
+    const { patientId, ...query } = billPage.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalBills(await dbOf(c), profile.patientId, query));
+  })
+  // #248: another patient's, unknown, draft or voided bills are all the same generic 403.
+  .get('/bills/:id', async (c) => {
+    const id = await resolvePortalBill(c);
+    auditDetails(c, { recordType: 'bill', recordId: id });
+    return c.json(await portalBillDetail(await dbOf(c), id));
+  })
+  // #249: the staff print (#125), audited as a print like it.
+  .get('/bills/:id/print', async (c) => {
+    const { lang } = z.object({ lang: z.enum(PRINT_LANGUAGES).default('en') }).parse(c.req.query());
+    const id = await resolvePortalBill(c);
+    auditDetails(c, { action: 'print', recordType: 'bill', recordId: id });
+    return c.html(await portalBillHtml(await dbOf(c), id, lang));
   })
   // #250
   .get('/surgeries', async (c) => {

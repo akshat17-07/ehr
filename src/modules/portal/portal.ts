@@ -10,6 +10,9 @@ import { toPrescription, type Prescription, type RxSource, type RxStatus } from 
 import type { RxLine } from '../prescriptions/rx-checks.js';
 import { toAppointment } from '../appointments/appointments.js';
 import { toSurgery } from '../surgeries/surgeries.js';
+import { getBill, toBill, type Bill, type BillLine, type BillSeries, type BillStatus } from '../billing/bills.js';
+import { billPayments, type PaymentMode } from '../billing/payments.js';
+import { billHtml, type PrintLanguage } from '../billing/print.js';
 
 // Patient-portal views (api-list.md §8, #239-#241). The caller has been resolved by resolvePortalPatient; these
 // functions only shape what a patient may see: no staff-only fields (who saved what, sensitive labels, staff notes,
@@ -398,6 +401,166 @@ export async function portalSurgeries(db: Queryable, patientId: string): Promise
       consentDocumentIds: s.consentDocumentIds.filter((id) => visible.has(id)),
     };
   });
+}
+
+// #247-#249: bills. Only bills the hospital has issued: final, part paid or paid. A draft is not a bill yet and a
+// voided bill is gone (its credit note is the staff's record); both, and anything voided, are never shown. Money is
+// as the staff bill has it (toBill), integer paise. No staff fields: version, created/updated by, the price-list id,
+// the stock issue or pharmacy bill a line came from, discount reasons or approvers, who took a payment.
+// A patient with any sensitive label gets every line's text replaced by its category ("Hospital services",
+// "Medicines", "Medical supplies"): a test, procedure or drug name could reveal the labelled condition. Qty, rate and
+// amounts stay, so the bill still adds up to what the patient owes.
+
+export const PORTAL_BILL_STATUSES = ['final', 'part_paid', 'paid'] as const satisfies readonly BillStatus[];
+export type PortalBillStatus = (typeof PORTAL_BILL_STATUSES)[number];
+
+export const BILL_LINE_CATEGORIES = ['service', 'medicine', 'supply'] as const;
+export type BillLineCategory = (typeof BILL_LINE_CATEGORIES)[number];
+
+/** Category names used in place of a labelled patient's line text. */
+export const BILL_CATEGORY_TEXT: Record<PrintLanguage, Record<BillLineCategory, string>> = {
+  en: { service: 'Hospital services', medicine: 'Medicines', supply: 'Medical supplies' },
+  hi: { service: 'अस्पताल सेवाएँ', medicine: 'दवाइयाँ', supply: 'चिकित्सा सामग्री' },
+};
+
+const lineCategory = (l: BillLine): BillLineCategory =>
+  l.source?.kind === 'pharmacy_bill' ? 'medicine' : l.source?.kind === 'stock_issue' ? 'supply' : 'service';
+
+export interface PortalBillLine {
+  category: BillLineCategory;
+  text: string;
+  qty: number;
+  unitPaise: number;
+  discountPaise: number;
+  gstRate: number;
+  amountPaise: number;
+}
+
+export interface PortalBill {
+  id: string;
+  status: PortalBillStatus;
+  patientId: string;
+  encounterId?: string;
+  admissionId?: string;
+  series: BillSeries;
+  number?: string;
+  lines: PortalBillLine[];
+  subtotalPaise: number;
+  gstPaise: number;
+  discountPaise: number;
+  totalPaise: number;
+  paidPaise: number;
+  duePaise: number;
+  createdAt: string;
+  finalisedAt?: string;
+}
+
+export interface PortalPayment {
+  id: string;
+  mode: PaymentMode;
+  amountPaise: number;
+  at: string;
+  /** The UPI or card reference. */
+  reference?: string;
+  /** The deposit receipt, when the payment was made from an advance deposit. */
+  receiptNo?: string;
+}
+
+export interface PortalBillDetail extends PortalBill {
+  payments: PortalPayment[];
+}
+
+export function toPortalBill(b: Bill, labelled: boolean): PortalBill {
+  return {
+    id: b.id,
+    status: b.status as PortalBillStatus,
+    patientId: b.patientId,
+    ...(b.encounterId !== undefined && { encounterId: b.encounterId }),
+    ...(b.admissionId !== undefined && { admissionId: b.admissionId }),
+    series: b.series,
+    ...(b.number !== undefined && { number: b.number }),
+    lines: b.lines.map((l) => {
+      const category = lineCategory(l);
+      return {
+        category,
+        text: labelled ? BILL_CATEGORY_TEXT.en[category] : l.text,
+        qty: l.qty,
+        unitPaise: l.unitPaise,
+        discountPaise: l.discountPaise,
+        gstRate: l.gstRate,
+        amountPaise: l.amountPaise,
+      };
+    }),
+    subtotalPaise: b.subtotalPaise,
+    gstPaise: b.gstPaise,
+    discountPaise: b.discountPaise,
+    totalPaise: b.totalPaise,
+    paidPaise: b.paidPaise,
+    duePaise: b.duePaise,
+    createdAt: b.createdAt,
+    ...(b.finalisedAt !== undefined && { finalisedAt: b.finalisedAt }),
+  };
+}
+
+const VISIBLE_BILL = `status IN (${PORTAL_BILL_STATUSES.map((s) => `'${s}'`).join(', ')}) AND voided_at IS NULL`;
+
+/** #247: the patient's issued bills, newest first. */
+export async function portalBills(db: Queryable, patientId: string, query: PageQuery & { status?: PortalBillStatus }): Promise<Page<PortalBill>> {
+  const labelled = await hasSensitiveLabel(db, patientId);
+  const params: unknown[] = [patientId];
+  const where = ['patient_id = $1', VISIBLE_BILL];
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  return pageRows(db, { select: 'SELECT * FROM bills', where, params, orderBy: ['created_at', 'id'] }, query, (r) => toPortalBill(toBill(r), labelled));
+}
+
+/** The patient of a bill the portal may show, or undefined (unknown, draft, voided). The caller checks the account. */
+export async function portalBillPatient(db: Queryable, billId: string): Promise<string | undefined> {
+  const { rows } = await db.query(`SELECT patient_id FROM bills WHERE id = $1 AND ${VISIBLE_BILL}`, [billId]);
+  return rows[0] ? String(rows[0].patient_id) : undefined;
+}
+
+/** A bill the portal may show, read again after the access check; the generic 403 if it has just been voided. */
+async function visibleBill(db: Queryable, billId: string): Promise<Bill> {
+  const bill = await getBill(db, billId);
+  if (!(PORTAL_BILL_STATUSES as readonly string[]).includes(bill.status)) throw new AppError(403, 'forbidden', 'not a patient this account may see');
+  return bill;
+}
+
+/** #248: one bill with its payments. The caller has resolved the bill's patient through portalBillPatient. */
+export async function portalBillDetail(db: Queryable, billId: string): Promise<PortalBillDetail> {
+  const bill = await visibleBill(db, billId);
+  const { rows } = await db.query(
+    `SELECT p.id, p.amount_paise, p.mode, p.reference, p.created_at, d.receipt_no FROM payments p
+     LEFT JOIN deposits d ON d.id = p.deposit_id WHERE p.bill_id = $1 AND p.voided_at IS NULL ORDER BY p.created_at, p.id`,
+    [billId],
+  );
+  return {
+    ...toPortalBill(bill, await hasSensitiveLabel(db, bill.patientId)),
+    payments: rows.map((r) => ({
+      id: String(r.id),
+      mode: r.mode as PaymentMode,
+      amountPaise: Number(r.amount_paise),
+      at: (r.created_at as Date).toISOString(),
+      ...(r.reference != null && { reference: String(r.reference) }),
+      ...(r.receipt_no != null && { receiptNo: String(r.receipt_no) }),
+    })),
+  };
+}
+
+/** #249: the staff print (#125) of the bill; a labelled patient's lines are printed as their categories. */
+export async function portalBillHtml(db: Queryable, billId: string, lang: PrintLanguage): Promise<string> {
+  const bill = await visibleBill(db, billId);
+  // Without the tariff id the renderer can't look up a Hindi test name either.
+  const masked = (l: BillLine): BillLine => ({
+    text: BILL_CATEGORY_TEXT[lang][lineCategory(l)],
+    qty: l.qty,
+    unitPaise: l.unitPaise,
+    discountPaise: l.discountPaise,
+    gstRate: l.gstRate,
+    amountPaise: l.amountPaise,
+  });
+  const printed: Bill = (await hasSensitiveLabel(db, bill.patientId)) ? { ...bill, lines: bill.lines.map(masked) } : bill;
+  return billHtml(db, printed, await billPayments(db, billId), lang);
 }
 
 /** #244: the patient's prescriptions that were issued (confirmed or dispensed), newest first. */
