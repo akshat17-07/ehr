@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
+import { AppError } from '../../middleware/errors.js';
 import { pageQuery, pageRows, type Page } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 
@@ -57,6 +59,40 @@ export function toRightsRequest(r: Record<string, unknown>): RightsRequest {
     respondedBy: r.responded_by == null ? null : String(r.responder_row_id ?? r.responded_by),
     dueBy: new Date(createdAt.getTime() + RESPONSE_DAYS * 86_400_000).toISOString(),
   };
+}
+
+export const rightsRespondBody = z
+  .object({
+    response: z.string().trim().min(1).max(5000),
+    outcome: z.enum(RIGHTS_OUTCOMES),
+    reason: z.string().trim().min(1).max(1000).optional(),
+  })
+  .strict()
+  .refine((b) => b.outcome === 'done' || !!b.reason, { path: ['reason'], message: 'reason is required unless the outcome is done' });
+export type RightsRespondBody = z.infer<typeof rightsRespondBody>;
+
+/** #333: the officer closes an open request with the response, outcome and (unless done) the reason. */
+export async function respondToRightsRequest(db: Queryable, id: string, input: RightsRespondBody, by: string): Promise<RightsRequest> {
+  if (!z.uuid().safeParse(id).success) throw new AppError(404, 'not_found');
+  const current = (await db.query('SELECT version, status, voided_at FROM rights_requests WHERE id = $1', [id])).rows[0];
+  if (!current || current.voided_at) throw new AppError(404, 'not_found');
+  if (current.status !== 'open') throw new AppError(409, 'not_open', 'this request is already closed');
+  await updateRecord(db, 'rights_requests', {
+    id,
+    version: Number(current.version),
+    by,
+    ...(input.reason && { reason: input.reason }),
+    set: {
+      response: input.response,
+      outcome: input.outcome,
+      outcome_reason: input.reason ?? null,
+      responded_at: new Date(),
+      responded_by: by,
+      status: 'closed',
+    },
+  });
+  const row = (await db.query(`${SELECT} WHERE r.id = $1`, [id])).rows[0];
+  return toRightsRequest(row as Record<string, unknown>);
 }
 
 /** #332: oldest first, so none waits unseen. */

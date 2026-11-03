@@ -83,3 +83,39 @@ describe('GET /admin/rights-requests', () => {
     for (const q of ['?status=pending', '?kind=other', '?limit=0', '?limit=101', '?x=1', '?cursor=zzz']) expect((await get(q)).status, q).toBe(422);
   });
 });
+
+describe('POST /admin/rights-requests/:id/respond', () => {
+  const respond = (id: string, body: unknown, who = admin) =>
+    app.request(`/admin/rights-requests/${id}/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+
+  it('closes an open request (done) and returns the list shape', async () => {
+    const id = await request('2034-01-01T00:00:00Z');
+    const res = await respond(id, { response: 'Copy sent', outcome: 'done' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id, status: 'closed', response: 'Copy sent', outcome: 'done', outcomeReason: null, version: 2,
+      respondedBy: seedId('a0000000', 1), patientId: kavita, dueBy: '2034-04-01T00:00:00.000Z',
+    });
+    const audit = await db.query("SELECT 1 FROM audit_events WHERE record_type = 'rights_request' AND record_id = $1", [id]);
+    expect(audit.rows.length).toBeGreaterThan(0);
+  });
+
+  it('422 when partly_done or refused has no reason; refused with a reason is ok', async () => {
+    const id = await request('2034-01-02T00:00:00Z');
+    expect((await respond(id, { response: 'x', outcome: 'partly_done' })).status).toBe(422);
+    expect((await respond(id, { response: 'x', outcome: 'refused', reason: '  ' })).status).toBe(422);
+    expect((await respond(id, { response: '', outcome: 'done' })).status).toBe(422);
+    const ok = await respond(id, { response: 'No', outcome: 'refused', reason: 'Record is required by law' });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ outcome: 'refused', outcomeReason: 'Record is required by law', status: 'closed' });
+  });
+
+  it('409 when already closed; 404 unknown id; 403 without compliance.rights', async () => {
+    const id = await request('2034-01-03T00:00:00Z');
+    expect((await respond(id, { response: 'x', outcome: 'done' }, doctor)).status).toBe(403);
+    expect((await respond(id, { response: 'x', outcome: 'done' })).status).toBe(200);
+    expect((await respond(id, { response: 'again', outcome: 'done' })).status).toBe(409);
+    expect((await respond(seedId('9a710000', 99), { response: 'x', outcome: 'done' })).status).toBe(404);
+    expect((await respond('nope', { response: 'x', outcome: 'done' })).status).toBe(404);
+  });
+});
