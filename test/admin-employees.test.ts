@@ -124,3 +124,78 @@ describe('GET /admin/employees', () => {
     expect(third.body.nextCursor).toBeUndefined();
   });
 });
+
+describe('POST /admin/employees', () => {
+  const SS = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
+  const body = (over: Record<string, unknown> = {}) => ({
+    name: ' Post Person ',
+    designation: 'Clerk',
+    joinDate: '2025-05-01',
+    pan: ' abcde 1234f ',
+    uan: '1002 0030 0400',
+    esic: '3100123456',
+    bankAccount: { name: 'HDFC', number: '5020 0012 3456 78', ifsc: ' hdfc0001234 ' },
+    salaryStructureId: SS,
+    ...over,
+  });
+  const post = (b: unknown, who = admin) =>
+    app.request('/admin/employees', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }, who);
+
+  it('201 masked; the row holds ciphertext of the normalized values; audit has no plaintext', async () => {
+    const res = await post(body());
+    const text = await res.text();
+    expect(res.status).toBe(201);
+    const e = JSON.parse(text) as Employee;
+    expect(e).toMatchObject({
+      version: 1, userId: null, name: 'Post Person', designation: 'Clerk', joinDate: '2025-05-01', pan: '****234F', uan: '****0400',
+      esic: '****3456', bankAccount: { name: 'HDFC', number: '****5678', ifsc: 'HDFC0001234' }, salaryStructureId: SS, active: true,
+    });
+    for (const s of ['ABCDE1234F', '100200300400', '50200012345678']) expect(text).not.toContain(s);
+    const { rows } = await db.query('SELECT * FROM employees WHERE id = $1', [e.id]);
+    const row = rows[0] as Record<string, string>;
+    expect(JSON.stringify(row)).not.toContain('ABCDE1234F');
+    expect(await decryptField(row.pan_enc as string)).toBe('ABCDE1234F');
+    expect(await decryptField(row.uan_enc as string)).toBe('100200300400');
+    expect(await decryptField(row.esic_enc as string)).toBe('3100123456');
+    expect(JSON.parse(await decryptField(row.bank_enc as string))).toEqual({ name: 'HDFC', number: '50200012345678', ifsc: 'HDFC0001234' });
+    const audit = await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1", [e.id]);
+    expect(audit.rows).toHaveLength(1);
+    const stored = JSON.stringify(audit.rows);
+    for (const s of ['ABCDE1234F', '1234F', '100200300400', '3100123456', '50200012345678', '45678', 'HDFC0001234']) expect(stored).not.toContain(s);
+    expect(stored).toContain('Post Person');
+  });
+
+  it('uan and esic are optional', async () => {
+    const { uan: _u, esic: _e, ...rest } = body({ name: 'Sparse Post' });
+    const e = (await (await post(rest)).json()) as Employee;
+    expect(e).toMatchObject({ uan: null, esic: null });
+  });
+
+  it('403, and 422 for each bad format or extra field', async () => {
+    expect((await post(body(), doctor)).status).toBe(403);
+    const bad: Record<string, unknown>[] = [
+      { pan: 'ABCDE12345' }, { pan: 'ABCD1234F' }, { uan: '12345' }, { esic: '12345678901' }, { esic: 'abc' },
+      { bankAccount: { name: 'B', number: '12345678', ifsc: 'HDFC0001234' } },
+      { bankAccount: { name: 'B', number: '123456789', ifsc: 'HDFC1001234' } },
+      { bankAccount: { name: 'B', number: '123456789', ifsc: 'HDFC0001234', extra: 1 } },
+      { name: '  ' }, { designation: 'x'.repeat(101) }, { joinDate: '2025-02-30' }, { joinDate: '01-05-2025' },
+      { salaryStructureId: 'nope' }, { userId: 'nope' }, { active: false },
+    ];
+    for (const over of bad) expect((await post(body(over))).status, JSON.stringify(over)).toBe(422);
+    expect((await post(undefined)).status).toBe(422);
+  });
+
+  it('user_unknown 422 and user_has_employee 409', async () => {
+    const unknown = await post(body({ userId: '77777777-7777-4777-8777-777777777777' }));
+    expect(unknown.status).toBe(422);
+    expect(await unknown.json()).toMatchObject({ error: 'user_unknown' });
+    const { rows } = await db.query("SELECT id FROM users WHERE cognito_sub = 'dev-doctor'");
+    const userId = String(rows[0]?.id);
+    const ok = await post(body({ name: 'Linked Post', userId }));
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as Employee).userId).toBe(userId);
+    const dup = await post(body({ name: 'Linked Twice', userId }));
+    expect(dup.status).toBe(409);
+    expect(await dup.json()).toMatchObject({ error: 'user_has_employee' });
+  });
+});

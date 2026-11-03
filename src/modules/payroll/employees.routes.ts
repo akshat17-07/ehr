@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
-import { dbOf } from '../../middleware/context.js';
+import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { employeesQuery, listEmployees } from './employees.js';
+import { addEmployee, employeesQuery, listEmployees, newEmployeeBody } from './employees.js';
 
 // Mounted at /admin/employees.
 export const adminEmployeesRoutes = new Hono<AuthEnv>()
@@ -12,4 +12,23 @@ export const adminEmployeesRoutes = new Hono<AuthEnv>()
     const query = employeesQuery.parse(c.req.query());
     auditDetails(c, { recordType: 'employee' });
     return c.json(await listEmployees(await dbOf(c), query));
+  })
+  // #205
+  .post('/', requirePermission('payroll.employee'), async (c) => {
+    const body = newEmployeeBody.parse(await c.req.json().catch(() => undefined));
+    const employee = await addEmployee(await dbOf(c), body, userOf(c).sub);
+    // Never PAN, UAN, ESIC or bank values in the audit row.
+    auditDetails(c, {
+      action: 'create',
+      recordType: 'employee',
+      recordId: employee.id,
+      changes: {
+        name: [null, employee.name],
+        designation: [null, employee.designation],
+        joinDate: [null, employee.joinDate],
+        salaryStructureId: [null, employee.salaryStructureId],
+        ...(body.userId && { userId: [null, body.userId] }),
+      },
+    });
+    return c.json(employee, 201);
   });
