@@ -32,6 +32,11 @@ const SS = await makeStructure('Employee Test Grade A');
 const SS_OTHER = await makeStructure('Employee Test Grade B');
 const SS_UNKNOWN = '88888888-8888-4888-8888-888888888888';
 
+// Audit rows as text for plaintext searches: without the hash, id and time columns, whose random hex
+// would otherwise match short fragments by chance.
+const auditText = (rows: unknown[]): string =>
+  JSON.stringify(rows.map((r) => Object.fromEntries(Object.entries(r as Record<string, unknown>).filter(([k]) => !['seq', 'id', 'at', 'record_id', 'prev_hash', 'hash'].includes(k)))));
+
 const PAN = 'ABCDE1234F';
 const UAN = '100200300400';
 const ESIC = '3100123456';
@@ -108,7 +113,7 @@ describe('GET /admin/employees', () => {
     });
     expect(body.items.find((e) => e.id === sparse)).toMatchObject({ uan: null, esic: null, aadhaar: null });
     const { rows } = await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND path LIKE '%/admin/employees%'").catch(() => ({ rows: [] }));
-    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(JSON.stringify(rows)).not.toContain(secret);
+    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(auditText(rows)).not.toContain(secret);
     const audit = await db.query("SELECT 1 FROM audit_events WHERE record_type = 'employee' AND action = 'view'");
     expect(audit.rows.length).toBeGreaterThan(0);
   });
@@ -156,7 +161,7 @@ describe('GET /admin/employees/{id}', () => {
     expect(JSON.parse(text)).toMatchObject({ id, name: 'Detail Test', pan: '****234F', bankAccount: { number: '****9012' } });
     const audit = await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1", [id]);
     expect(audit.rows.length).toBeGreaterThan(0);
-    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(JSON.stringify(audit.rows)).not.toContain(secret);
+    for (const secret of [PAN, UAN, ESIC, ACCOUNT]) expect(auditText(audit.rows)).not.toContain(secret);
   });
 
   it('404 for unknown, non-UUID and voided; 403 without payroll.employee', async () => {
@@ -198,7 +203,7 @@ describe('PATCH /admin/employees/{id}', () => {
       version: 2, name: 'Patched', designation: 'Head Clerk', joinDate: '2023-02-03', active: false, userId,
       aadhaar: `****${AADHAAR_NEW.slice(-4)}`, pan: '****999Z', uan: '****7666', esic: '****8877', bankAccount: { name: 'HDFC', number: '****7788', ifsc: 'HDFC0009999' },
     });
-    const audit = JSON.stringify((await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1 AND action = 'update'", [id])).rows);
+    const audit = auditText((await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1 AND action = 'update'", [id])).rows);
     expect(audit).toContain('HR correction');
     for (const secret of [AADHAAR_NEW, 'ZZZZZ9999Z', '999888777666', '9999888877', '55556666777788', '999Z', '7666', '8877', '7788', ...[PAN, UAN, ESIC, ACCOUNT]])
       expect(audit, secret).not.toContain(secret);
@@ -292,7 +297,7 @@ describe('POST /admin/employees', () => {
     expect(JSON.parse(await decryptField(row.bank_enc as string))).toEqual({ name: 'HDFC', number: '50200012345678', ifsc: 'HDFC0001234' });
     const audit = await db.query("SELECT * FROM audit_events WHERE record_type = 'employee' AND record_id = $1", [e.id]);
     expect(audit.rows).toHaveLength(1);
-    const stored = JSON.stringify(audit.rows);
+    const stored = auditText(audit.rows);
     for (const s of [aadhaarOf(1), aadhaarOf(1).slice(-4), 'ABCDE1234F', '1234F', '100200300400', '3100123456', '50200012345678', '45678', 'HDFC0001234']) expect(stored).not.toContain(s);
     expect(stored).toContain('Post Person');
   });
