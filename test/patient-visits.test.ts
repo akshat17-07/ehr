@@ -129,10 +129,11 @@ describe('GET /patient/visits/{id}', () => {
       vitals: [{ bpSys: 130, pulse: 82, spo2: 98, takenAt: '2026-10-01T04:00:00.000Z' }],
       diagnoses: [{ icd10: 'J06.9', text: 'Acute upper respiratory infection' }],
       notes: [{ id: signedNote, kind: 'consult', text: 'Viral URTI, rest and fluids.', addenda: [{ text: 'Review if fever persists', at: AT }] }],
-      prescriptions: [
+      // Same created_at, random ids: either order.
+      prescriptions: expect.arrayContaining([
         expect.objectContaining({ id: rxConfirmed, status: 'confirmed', lines }),
         expect.objectContaining({ id: rxDispensed, status: 'dispensed' }),
-      ],
+      ]),
     });
     expect(body.diagnoses).toHaveLength(1);
     expect(body.notes).toHaveLength(1);

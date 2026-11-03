@@ -1,7 +1,8 @@
 import type { Queryable } from '../../db/migrate.js';
 import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { AppError } from '../../middleware/errors.js';
-import type { Address } from '../reference/hospital.js';
+import { getHospital, type Address } from '../reference/hospital.js';
+import { toDocument, type Document, type DocumentType } from '../documents/documents.js';
 import { getPatient, updatePatient, type Patient } from '../patients/patients.js';
 import { toEncounter, type EncounterStatus, type EncounterType } from '../encounters/encounters.js';
 import { encounterVitals, VITAL_FIELDS, type Vital } from '../encounters/vitals.js';
@@ -281,6 +282,122 @@ export async function portalVisitDetail(db: Queryable, encounterId: string): Pro
     }),
     prescriptions: rx.rows.map((r) => toPortalPrescription(toPrescription(r as Record<string, unknown>))),
   };
+}
+
+// #245, #246: documents. Only uploaded (ready), non-voided files; never a pending upload or a misfiled one. A file
+// filed with a Form F (PCPNDT) or an MTP register entry is never shown: those are statutory registers. A patient with
+// any sensitive label sees only administrative files (ID proof, insurance): every other type (prescription, lab
+// report, imaging, consent, discharge, other) may name the labelled condition. No uploader, hash or misfile link.
+
+export const PORTAL_ADMIN_DOCUMENT_TYPES = ['id_proof', 'insurance'] as const satisfies readonly DocumentType[];
+
+export interface PortalDocument {
+  id: string;
+  patientId: string;
+  type: DocumentType;
+  fileName: string;
+  mime: Document['mime'];
+  sizeBytes: number;
+  createdAt: string;
+  uploadedAt?: string;
+}
+
+export function toPortalDocument(d: Document): PortalDocument {
+  return {
+    id: d.id,
+    patientId: d.patientId,
+    type: d.type,
+    fileName: d.fileName,
+    mime: d.mime,
+    sizeBytes: d.sizeBytes,
+    createdAt: d.createdAt,
+    ...(d.uploadedAt !== undefined && { uploadedAt: d.uploadedAt }),
+  };
+}
+
+/** WHERE parts (on `documents d`) for the files the portal may show; `labelled` narrows to administrative types. */
+function visibleDocuments(labelled: boolean): string[] {
+  return [
+    "d.status = 'ready'",
+    'd.voided_at IS NULL',
+    'NOT EXISTS (SELECT 1 FROM form_f f WHERE f.document_id = d.id)',
+    'NOT EXISTS (SELECT 1 FROM mtp_register m WHERE m.document_id = d.id)',
+    ...(labelled ? [`d.type IN (${PORTAL_ADMIN_DOCUMENT_TYPES.map((t) => `'${t}'`).join(', ')})`] : []),
+  ];
+}
+
+/** #245: the patient's documents, newest first. */
+export async function portalDocuments(
+  db: Queryable,
+  patientId: string,
+  query: PageQuery & { type?: DocumentType },
+): Promise<Page<PortalDocument>> {
+  const params: unknown[] = [patientId];
+  const where = ['d.patient_id = $1', ...visibleDocuments(await hasSensitiveLabel(db, patientId))];
+  if (query.type) where.push(`d.type = $${params.push(query.type)}`);
+  return pageRows(db, { select: 'SELECT d.* FROM documents d', where, params, orderBy: ['d.created_at', 'd.id'] }, query, (r) =>
+    toPortalDocument(toDocument(r)),
+  );
+}
+
+/**
+ * The patient of a document the portal may show, or undefined (unknown, pending, misfiled, voided, or hidden by the
+ * rules above). The caller still checks that the account may act for that patient.
+ */
+export async function portalDocumentPatient(db: Queryable, documentId: string): Promise<string | undefined> {
+  const { rows } = await db.query(`SELECT d.patient_id FROM documents d WHERE d.id = $1 AND ${visibleDocuments(false).join(' AND ')}`, [documentId]);
+  if (!rows[0]) return undefined;
+  const patientId = String(rows[0].patient_id);
+  if (await hasSensitiveLabel(db, patientId)) {
+    const { rows: admin } = await db.query(`SELECT d.id FROM documents d WHERE d.id = $1 AND ${visibleDocuments(true).join(' AND ')}`, [documentId]);
+    if (!admin[0]) return undefined;
+  }
+  return patientId;
+}
+
+/** Of `ids`, those the portal would show for this patient (same rules as #245). */
+async function visibleDocumentIds(db: Queryable, patientId: string, ids: string[], labelled: boolean): Promise<Set<string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Set();
+  const { rows } = await db.query(
+    `SELECT d.id FROM documents d WHERE d.patient_id = $1 AND d.id IN (${unique.map((_, i) => `$${i + 2}`).join(', ')})
+       AND ${visibleDocuments(labelled).join(' AND ')}`,
+    [patientId, ...unique],
+  );
+  return new Set(rows.map((r) => String(r.id)));
+}
+
+// #250: surgeries as the patient sees them: where, who, when, instructions, the estimate and the consent files.
+// Never the team, checklist, op note, staff fields or anything paid to a partner venue. Cancelled and voided ones
+// are left out. Consent ids are only those #246 would open (a labelled patient's consents are hidden, see above).
+
+export interface PortalSurgeryItem extends PortalSurgery {
+  consentDocumentIds: string[];
+}
+
+/** #250: newest first. */
+export async function portalSurgeries(db: Queryable, patientId: string): Promise<PortalSurgeryItem[]> {
+  const { rows } = await db.query(
+    `SELECT s.*, u.name AS surgeon_name, h.name AS hospital_name FROM surgeries s
+     LEFT JOIN users u ON u.id = s.surgeon_id LEFT JOIN partner_hospitals h ON h.id = s.partner_hospital_id
+     WHERE s.patient_id = $1 AND s.status <> 'cancelled' AND s.voided_at IS NULL ORDER BY s.scheduled_at DESC, s.id DESC`,
+    [patientId],
+  );
+  if (rows.length === 0) return [];
+  const ownName = (await getHospital(db)).name;
+  const surgeries = rows.map((r) => ({ row: r as Record<string, unknown>, s: toSurgery(r as Record<string, unknown>) }));
+  const visible = await visibleDocumentIds(db, patientId, surgeries.flatMap(({ s }) => s.consentDocumentIds), await hasSensitiveLabel(db, patientId));
+  return surgeries.map(({ row, s }) => {
+    const hospitalName = s.venue === 'own' ? ownName || undefined : opt(row.hospital_name);
+    return {
+      id: s.id, status: s.status, patientId: s.patientId, procedure: s.procedure,
+      ...(s.site !== undefined && { site: s.site }), ...(s.side !== undefined && { side: s.side }),
+      scheduledAt: s.scheduledAt, venue: s.venue, ...(hospitalName && { hospitalName }),
+      surgeonId: s.surgeonId, ...(opt(row.surgeon_name) && { surgeonName: String(row.surgeon_name) }),
+      chargesPaise: s.chargesPaise, ...(s.instructions !== undefined && { instructions: s.instructions }),
+      consentDocumentIds: s.consentDocumentIds.filter((id) => visible.has(id)),
+    };
+  });
 }
 
 /** #244: the patient's prescriptions that were issued (confirmed or dispensed), newest first. */

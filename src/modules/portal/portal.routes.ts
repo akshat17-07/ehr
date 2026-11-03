@@ -3,17 +3,30 @@ import { z } from 'zod';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { pageQuery } from '../../db/page.js';
-import { dbOf, userOf } from '../../middleware/context.js';
+import { requireEnv } from '../../config/env.js';
+import { dbOf, signerOf, userOf } from '../../middleware/context.js';
 import { AppError } from '../../middleware/errors.js';
+import { DOCUMENT_TYPES, documentViewUrl } from '../documents/documents.js';
 import { address, mobile } from '../patients/patients.routes.js';
 import { portalProfiles, resolvePortalPatient } from './portal-access.js';
-import { hasSensitiveLabel, portalHome, portalPrescriptions, portalVisitDetail, portalVisits, updatePortalProfile } from './portal.js';
+import {
+  hasSensitiveLabel,
+  portalDocumentPatient,
+  portalDocuments,
+  portalHome,
+  portalPrescriptions,
+  portalSurgeries,
+  portalVisitDetail,
+  portalVisits,
+  updatePortalProfile,
+} from './portal.js';
 
 // /patient (api-list.md §8): own record or a linked family member only, resolved by resolvePortalPatient.
 // No permission keys: the patient pool (requireUser('patient') in app.ts) is the gate.
 
 const patientQuery = z.object({ patientId: z.string().max(100).optional() });
 const patientPage = pageQuery.extend({ patientId: z.string().max(100).optional() });
+const documentPage = patientPage.extend({ type: z.enum(DOCUMENT_TYPES).optional() });
 
 // Contact details only: name, sex and DOB are corrected by the staff (#258). Same checks as the staff edit (#23).
 const profileChange = z
@@ -73,4 +86,28 @@ export const portalRoutes = new Hono<AuthEnv>()
     const db = await dbOf(c);
     if (await hasSensitiveLabel(db, profile.patientId)) return c.json({ items: [] });
     return c.json(await portalPrescriptions(db, profile.patientId, page));
+  })
+  // #245
+  .get('/documents', async (c) => {
+    const { patientId, ...query } = documentPage.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalDocuments(await dbOf(c), profile.patientId, query));
+  })
+  // #246: another patient's, unknown, pending, misfiled, voided or hidden documents are all the same generic 403.
+  // The same 10-minute signed link as the staff view (#97); audited as a view of the document.
+  .get('/documents/:id/view-url', async (c) => {
+    const db = await dbOf(c);
+    const id = c.req.param('id');
+    const patientId = z.uuid().safeParse(id).success ? await portalDocumentPatient(db, id) : undefined;
+    if (!patientId) throw new AppError(403, 'forbidden', 'not a patient this account may see');
+    await resolvePortalPatient(c, patientId);
+    const { document, ...link } = await documentViewUrl(db, signerOf(c), requireEnv('FILES_BUCKET'), id);
+    auditDetails(c, { patientId: document.patientId, recordType: 'document', recordId: document.id });
+    return c.json(link);
+  })
+  // #250
+  .get('/surgeries', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalSurgeries(await dbOf(c), profile.patientId));
   });
