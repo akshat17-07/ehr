@@ -1480,4 +1480,9 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC patient_accounts_patient ON patient_accounts (patient_id)',
     ],
   },
+  {
+    // A withdrawn consent (#256) keeps why and which portal patient withdrew it (self, or a parent for a minor).
+    id: '0100_consent_withdrawal',
+    statements: () => ['ALTER TABLE consents ADD COLUMN withdrawn_reason text', 'ALTER TABLE consents ADD COLUMN withdrawn_by_patient_id uuid'],
+  },
 ];

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../../db/migrate.js';
+import { updateRecord } from '../../db/records.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { assertPatientDocuments } from '../documents/documents.js';
@@ -22,6 +23,9 @@ export interface Consent extends BaseFields {
   given: boolean;
   givenAt: string;
   withdrawnAt?: string;
+  withdrawnReason?: string;
+  /** The portal patient who withdrew it: the patient, or a parent for a minor. */
+  withdrawnByPatientId?: string;
   documentId?: string;
 }
 
@@ -44,8 +48,55 @@ export function toConsent(r: Record<string, unknown>): Consent {
     given: r.given === true,
     givenAt: (r.given_at as Date).toISOString(),
     ...(r.withdrawn_at instanceof Date && { withdrawnAt: r.withdrawn_at.toISOString() }),
+    ...(r.withdrawn_reason != null && { withdrawnReason: String(r.withdrawn_reason) }),
+    ...(r.withdrawn_by_patient_id != null && { withdrawnByPatientId: String(r.withdrawn_by_patient_id) }),
     ...(r.document_id != null && { documentId: String(r.document_id) }),
   };
+}
+
+// Which consents a patient may withdraw (DPDP s.6(4): as easy as giving it; withdrawal does not undo what was done
+// before). Only purpose consents that go on being used: sharing updates with the referring doctor and research.
+// A treatment consent covers care already given (to refuse more, the patient tells the doctor), and the privacy
+// notice consent records that the notice was shown; care itself is a legitimate use (DPDP s.7), so objecting to
+// processing is a rights request (#258, kind withdraw_consent) for the grievance officer, not a click.
+export const WITHDRAWABLE_KINDS: readonly ConsentKind[] = ['share_with_referrer', 'research'];
+
+export const isWithdrawable = (c: Consent) => c.given && !c.withdrawnAt && WITHDRAWABLE_KINDS.includes(c.kind);
+
+/**
+ * #256: withdraws a given consent; the row stays, marked withdrawn (status 'withdrawn', withdrawn_at, reason, who).
+ * 409 already_withdrawn; 422 not_given for a refusal (nothing to withdraw); 422 not_withdrawable for a treatment
+ * or privacy notice consent. Downstream: nothing reads share_with_referrer or research consents yet, so a reader
+ * added later must check withdrawn_at.
+ */
+export async function withdrawConsent(
+  db: Queryable,
+  id: string,
+  input: { reason?: string; byPatientId: string; by: string },
+  now = new Date(),
+): Promise<Consent> {
+  const { rows } = await db.query('SELECT * FROM consents WHERE id = $1 AND voided_at IS NULL', [id]);
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const consent = toConsent(rows[0] as Record<string, unknown>);
+  if (consent.withdrawnAt) throw new AppError(409, 'already_withdrawn', 'this consent is already withdrawn', { withdrawnAt: consent.withdrawnAt });
+  if (!consent.given) throw new AppError(422, 'not_given', 'this consent was refused; there is nothing to withdraw');
+  if (!WITHDRAWABLE_KINDS.includes(consent.kind)) {
+    throw new AppError(
+      422,
+      'not_withdrawable',
+      consent.kind === 'treatment'
+        ? 'a treatment consent covers care already given; to refuse further treatment, tell your doctor'
+        : 'the privacy notice consent records that the notice was shown; to object to processing, file a rights request',
+    );
+  }
+  const row = await updateRecord(db, 'consents', {
+    id,
+    version: consent.version,
+    by: input.by,
+    reason: input.reason ?? 'withdrawn by the patient',
+    set: { status: 'withdrawn', withdrawn_at: now, withdrawn_reason: input.reason ?? null, withdrawn_by_patient_id: input.byPatientId },
+  });
+  return toConsent(row);
 }
 
 /** #27: records the patient's answer, given or refused, as of now. */

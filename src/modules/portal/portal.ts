@@ -16,7 +16,8 @@ import { billHtml, type PrintLanguage } from '../billing/print.js';
 import { patientPolicies } from '../insurance/policies.js';
 import { toClaim, toClaimEvent, type ClaimKind, type ClaimStatus } from '../insurance/claims.js';
 import { createRecordRequest, toRecordRequest, type RecordRequest } from '../records/record-requests.js';
-import { indiaDayStart } from '../../time/india.js';
+import { indiaDate, indiaDayStart } from '../../time/india.js';
+import { isWithdrawable, toConsent, withdrawConsent, type Consent, type ConsentKind } from '../patients/consents.js';
 
 // Patient-portal views (api-list.md §8, #239-#241). The caller has been resolved by resolvePortalPatient; these
 // functions only shape what a patient may see: no staff-only fields (who saved what, sensitive labels, staff notes,
@@ -797,6 +798,96 @@ export async function portalAccessLog(db: Queryable, patientId: string, query: P
       action: r.record_type === 'break_glass_event' && r.action === 'create' ? 'emergency_access' : String(r.action),
     }),
   );
+}
+
+// #255, #256: consents (patients/consents.ts). What each covers is a fixed, generic sentence per kind, so it never
+// names a procedure or condition; a labelled patient's signed forms are hidden like #245 (documentId only when the
+// portal would open it). Given by: consents (#27) don't record a guardian signer, so it is the patient's name
+// (gap). No staff ids, version or void fields; withdrawnBy is a name (the patient, or the parent who withdrew it).
+
+export type PortalConsentStatus = 'active' | 'refused' | 'withdrawn';
+
+export interface PortalConsent {
+  id: string;
+  kind: ConsentKind;
+  covers: string;
+  status: PortalConsentStatus;
+  noticeVersion?: string;
+  language: Consent['language'];
+  givenAt: string;
+  givenBy: string;
+  withdrawable: boolean;
+  withdrawnAt?: string;
+  withdrawnReason?: string;
+  withdrawnBy?: string;
+  documentId?: string;
+}
+
+const CONSENT_COVERS: Record<ConsentKind, string> = {
+  privacy_notice: 'You were shown the hospital privacy notice and agreed to it',
+  treatment: 'Treatment at the hospital',
+  share_with_referrer: 'Sharing updates about your care with the doctor who referred you',
+  research: 'Use of your health records for research',
+};
+
+async function toPortalConsents(db: Queryable, patientId: string, consents: Consent[]): Promise<PortalConsent[]> {
+  const labelled = await hasSensitiveLabel(db, patientId);
+  const visible = await visibleDocumentIds(db, patientId, consents.flatMap((c) => (c.documentId ? [c.documentId] : [])), labelled);
+  const ids = [...new Set([patientId, ...consents.flatMap((c) => (c.withdrawnByPatientId ? [c.withdrawnByPatientId] : []))])];
+  const { rows } = await db.query(`SELECT id, name FROM patients WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
+  const names = new Map(rows.map((r) => [String(r.id), String(r.name)]));
+  return consents.map((c) => ({
+    id: c.id,
+    kind: c.kind,
+    covers: CONSENT_COVERS[c.kind],
+    status: c.withdrawnAt ? 'withdrawn' : c.given ? 'active' : 'refused',
+    ...(c.noticeVersion !== undefined && { noticeVersion: c.noticeVersion }),
+    language: c.language,
+    givenAt: c.givenAt,
+    givenBy: names.get(patientId) ?? '',
+    withdrawable: isWithdrawable(c),
+    ...(c.withdrawnAt !== undefined && { withdrawnAt: c.withdrawnAt }),
+    ...(c.withdrawnReason !== undefined && { withdrawnReason: c.withdrawnReason }),
+    ...(c.withdrawnByPatientId !== undefined && { withdrawnBy: names.get(c.withdrawnByPatientId) ?? '' }),
+    ...(c.documentId !== undefined && visible.has(c.documentId) && { documentId: c.documentId }),
+  }));
+}
+
+/** #255: the patient's consents, newest first; voided ones left out. */
+export async function portalConsents(db: Queryable, patientId: string): Promise<PortalConsent[]> {
+  const { rows } = await db.query('SELECT * FROM consents WHERE patient_id = $1 AND voided_at IS NULL ORDER BY given_at DESC, id DESC', [patientId]);
+  return toPortalConsents(db, patientId, rows.map((r) => toConsent(r as Record<string, unknown>)));
+}
+
+/** The patient of a live consent, or undefined (the route answers the generic 403 either way). */
+export async function portalConsentPatient(db: Queryable, consentId: string): Promise<string | undefined> {
+  const { rows } = await db.query('SELECT patient_id FROM consents WHERE id = $1 AND voided_at IS NULL', [consentId]);
+  return rows[0] ? String(rows[0].patient_id) : undefined;
+}
+
+/** Under 18 today (India date). An unknown DOB is not a minor. */
+export const isMinor = (dob: string | undefined, now = new Date()) =>
+  dob !== undefined && `${Number(dob.slice(0, 4)) + 18}${dob.slice(4, 10)}` > indiaDate(now);
+
+/**
+ * #256: withdraws a consent for the account holder, or for a family member only while they are a minor: DPDP s.9
+ * lets a parent act for a child, but an adult's consent is theirs to withdraw, and portal access to a spouse's or
+ * parent's record is not a power to act for them (403 adult_family_member). Rules as withdrawConsent.
+ */
+export async function withdrawPortalConsent(
+  db: Queryable,
+  profile: { patientId: string; relation: string },
+  selfPatientId: string,
+  consentId: string,
+  reason: string | undefined,
+  by: string,
+  now = new Date(),
+): Promise<PortalConsent> {
+  if (profile.relation !== 'self' && !isMinor((await getPatient(db, profile.patientId)).dob, now)) {
+    throw new AppError(403, 'adult_family_member', 'an adult withdraws their own consent');
+  }
+  const consent = await withdrawConsent(db, consentId, { reason, byPatientId: selfPatientId, by }, now);
+  return (await toPortalConsents(db, profile.patientId, [consent]))[0] as PortalConsent;
 }
 
 /** #244: the patient's prescriptions that were issued (confirmed or dispensed), newest first. */

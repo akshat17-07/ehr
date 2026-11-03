@@ -15,7 +15,10 @@ import {
   createPortalRecordRequest,
   hasSensitiveLabel,
   portalAccessLog,
+  portalConsentPatient,
+  portalConsents,
   portalInsurance,
+  withdrawPortalConsent,
   portalRecordRequests,
   PORTAL_BILL_STATUSES,
   portalBillDetail,
@@ -51,6 +54,8 @@ const newRecordRequest = z
     email: z.email().max(200).optional(),
   })
   .strict();
+
+const withdrawal = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
 
 // Contact details only: name, sex and DOB are corrected by the staff (#258). Same checks as the staff edit (#23).
 const profileChange = z
@@ -193,4 +198,24 @@ export const portalRoutes = new Hono<AuthEnv>()
     const { patientId, ...query } = accessLogQuery.parse(c.req.query());
     const profile = await resolvePortalPatient(c, patientId);
     return c.json(await portalAccessLog(await dbOf(c), profile.patientId, query));
+  })
+  // #255
+  .get('/consents', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalConsents(await dbOf(c), profile.patientId));
+  })
+  // #256: another patient's, unknown or voided consents are all the same generic 403. Audited as an update of the
+  // consent, with the patient's reason.
+  .post('/consents/:id/withdraw', async (c) => {
+    const db = await dbOf(c);
+    const id = c.req.param('id');
+    const patientId = z.uuid().safeParse(id).success ? await portalConsentPatient(db, id) : undefined;
+    if (!patientId) throw notYours();
+    const profile = await resolvePortalPatient(c, patientId);
+    const { reason } = withdrawal.parse((await bodyOf(c)) ?? {});
+    const self = (await portalProfiles(db, userOf(c).sub))[0]!;
+    const consent = await withdrawPortalConsent(db, profile, self.patientId, id, reason, userOf(c).sub);
+    auditDetails(c, { action: 'update', patientId: profile.patientId, recordType: 'consent', recordId: id, reason: reason ?? 'consent withdrawn' });
+    return c.json(consent);
   });
