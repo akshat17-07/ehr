@@ -7,6 +7,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { changeItem, listAdminItems, setReorderSettings } from './admin-items.js';
 import { ITEM_KINDS } from './items.js';
+import { listReorderChecks, reorderCheckDetail, runReorderCheck } from './reorder-checks.js';
 
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true');
 const itemsQuery = pageQuery.extend({
@@ -45,6 +46,17 @@ export const reorderBody = z
   })
   .strict();
 
+const checkBody = z
+  .object({
+    kind: z.enum(ITEM_KINDS).optional(),
+    itemIds: z.array(z.uuid()).min(1).max(500).optional(),
+    usageDays: z.number().int().min(7).max(180).default(30),
+    excludeExpiringWithinDays: z.number().int().min(0).max(180).default(30),
+    onlyNeedingOrder: z.boolean().default(true),
+  })
+  .strict();
+const checksQuery = pageQuery.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
+
 /** /admin/inventory */
 export const adminInventoryRoutes = new Hono<AuthEnv>()
   // #350
@@ -65,4 +77,17 @@ export const adminInventoryRoutes = new Hono<AuthEnv>()
     const { setting, changes } = await setReorderSettings(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { recordType: 'reorder_setting', recordId: setting.itemId, changes });
     return c.json(setting);
-  });
+  })
+  // #287
+  .post('/reorder-check', requirePermission('reorder.check'), async (c) => {
+    const input = checkBody.parse(await c.req.json().catch(() => ({})));
+    const check = await runReorderCheck(await dbOf(c), input, userOf(c).sub);
+    auditDetails(c, { recordType: 'reorder_check', recordId: check.id, changes: { counts: [null, check.counts], settings: [null, check.settings] } });
+    return c.json(check, 201);
+  })
+  // #288
+  .get('/reorder-checks', requirePermission('reorder.check'), async (c) =>
+    c.json(await listReorderChecks(await dbOf(c), checksQuery.parse(c.req.query()))),
+  )
+  // #289
+  .get('/reorder-checks/:id', requirePermission('reorder.check'), async (c) => c.json(await reorderCheckDetail(await dbOf(c), c.req.param('id'))));

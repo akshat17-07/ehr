@@ -29,10 +29,10 @@ export interface MovementQuery extends PageQuery {
   to?: string;
 }
 
-type Line = { itemId?: string; drugId?: string; batchId?: string; qty: number; freeQty?: number };
+export type Line = { itemId?: string; drugId?: string; batchId?: string; qty: number; freeQty?: number };
 
 /** Where each kind is read from, and how a stored line becomes a signed quantity. */
-const SOURCES: { kind: MovementKind; sql: string; sign: 1 | -1; qty?: (l: Line) => number }[] = [
+export const SOURCES: { kind: MovementKind; sql: string; sign: 1 | -1; qty?: (l: Line) => number }[] = [
   { kind: 'grn', sql: 'SELECT id, created_at AS at, created_by AS by, lines FROM grns', sign: 1, qty: (l) => l.qty + (l.freeQty ?? 0) },
   { kind: 'dispense', sql: 'SELECT id, dispensed_at AS at, created_by AS by, lines FROM dispenses', sign: -1 },
   // Counter sales: the stock left with the bill (#104 without a dispense).

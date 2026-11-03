@@ -1457,4 +1457,16 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC reorder_settings_item ON reorder_settings (item_id)',
     ],
   },
+  {
+    // Reorder checks (api-list.md ReorderCheck, #287): a saved snapshot of one run of the button. settings and
+    // counts are JSON text; created_by is the Cognito sub of who ran it. Each line keeps one ReorderRow as JSON
+    // (pos = its place in the sorted list), so later edits to items or settings never change an old check.
+    id: '0098_reorder_checks',
+    statements: () => [
+      ...createTable('reorder_checks', ['run_at timestamptz NOT NULL', 'settings text NOT NULL', 'counts text NOT NULL']),
+      'CREATE INDEX ASYNC reorder_checks_run_at ON reorder_checks (run_at)',
+      ...createTable('reorder_check_lines', ['check_id uuid NOT NULL', 'pos integer NOT NULL', 'data text NOT NULL']),
+      'CREATE INDEX ASYNC reorder_check_lines_check ON reorder_check_lines (check_id, pos)',
+    ],
+  },
 ];
