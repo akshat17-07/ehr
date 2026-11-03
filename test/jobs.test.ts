@@ -10,7 +10,7 @@ describe('jobs', () => {
   });
 
   it('fails loudly for a job that is not built yet', async () => {
-    for (const job of JOB_NAMES) {
+    for (const job of JOB_NAMES.filter((j) => j !== 'stock_scan' && j !== 'licence_check')) {
       await expect(runJob({ job })).rejects.toThrow(`Job ${job} is not built yet`);
     }
   });

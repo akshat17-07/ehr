@@ -114,9 +114,13 @@ describe('app stack', () => {
     expect(JSON.stringify(denies)).toContain('config.json');
   });
 
-  it('keeps scheduled jobs switched off until they are built', () => {
+  it('switches a scheduled job on only once it is built', () => {
     dev.app.resourceCountIs('AWS::Events::Rule', 7);
-    dev.app.allResourcesProperties('AWS::Events::Rule', { State: 'DISABLED' });
+    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'ENABLED' }, 2);
+    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'DISABLED' }, 5);
+    for (const job of ['stock_scan', 'licence_check']) {
+      dev.app.hasResourceProperties('AWS::Events::Rule', { State: 'ENABLED', Targets: [{ Input: JSON.stringify({ job }) }] });
+    }
   });
 
   it('records account activity in every region', () => {

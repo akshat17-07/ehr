@@ -137,3 +137,18 @@ export async function assertPermission(c: Context<AuthEnv>, permission: Permissi
   );
   if (!scoped) throw forbidden(permission);
 }
+
+/**
+ * Active staff whose effective permissions include `permission` (same sum as requirePermission: type + bundles + custom
+ * allow + grants for "all" minus custom deny), as Cognito subs, which is how alerts and permissions key users. For jobs
+ * that raise alerts with no signed-in caller.
+ */
+export async function usersWithPermission(db: Queryable, permission: Permission, now = new Date()): Promise<string[]> {
+  const { rows } = await db.query('SELECT cognito_sub, type FROM users WHERE active = true AND voided_at IS NULL ORDER BY created_at, id');
+  const found: string[] = [];
+  for (const r of rows) {
+    const perms = await loadPermissions(db, String(r.cognito_sub), [String(r.type)], now);
+    if (perms.effective.includes(permission)) found.push(String(r.cognito_sub));
+  }
+  return found;
+}
