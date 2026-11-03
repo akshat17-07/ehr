@@ -19,7 +19,8 @@ export const policyFields = {
   documentIds: z.array(z.uuid()).max(20).optional(),
 };
 
-const policyChange = z
+/** The #133 body (also #263). */
+export const policyChange = z
   .object({
     ...policyFields,
     tpaId: policyFields.tpaId.unwrap().nullable(),
