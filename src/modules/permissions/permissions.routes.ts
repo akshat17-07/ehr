@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { PERMISSIONS } from '../../permissions/catalog.js';
-import { loadPermissions, requirePermission } from '../../permissions/check.js';
+import { loadPermissions, permissionsOf, requirePermission } from '../../permissions/check.js';
 import { addBundle, bundlesNamed, changeBundle, listBundles } from '../../permissions/bundles.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { checkCustomLists, getCustomPermissions, saveBundles, saveCustomPermissions } from '../../permissions/custom.js';
@@ -14,7 +14,8 @@ import { AppError } from '../../middleware/errors.js';
 import { assertAdminRemains, assertMayChangeUser, assertMayGive, isAdmin } from './admin-rules.js';
 import { addGrantRule, changeGrantRule, GRANT_RULE_SCOPES, listGrantRules } from './grant-rules.js';
 import { pageQuery } from '../../db/page.js';
-import { GRANT_STATUSES, listGrants } from '../../permissions/grants.js';
+import { GRANT_SCOPES, GRANT_STATUSES, listGrants } from '../../permissions/grants.js';
+import { giveGrant } from './admin-grants.js';
 
 // Custom permissions, for Admin and Head Doctor (api-list.md #305-#309, rules in section 4 and admin-rules.ts).
 
@@ -79,6 +80,18 @@ const grantsQuery = pageQuery.extend({
   status: z.enum(GRANT_STATUSES).optional(),
 });
 
+const newGrant = z
+  .object({
+    userId: z.string().uuid(),
+    permission: z.string().min(1).max(100),
+    scope: z.enum(GRANT_SCOPES),
+    scopeId: z.string().uuid().optional(),
+    start: z.coerce.date().optional(),
+    end: z.coerce.date(),
+    reason,
+  })
+  .strict();
+
 const split = ({ limit, cursor, ...filter }: z.infer<typeof grantsQuery>) => [filter, { limit, cursor }] as const;
 
 export const permissionsAdminRoutes = new Hono<AuthEnv>()
@@ -103,6 +116,13 @@ export const permissionsAdminRoutes = new Hono<AuthEnv>()
   .get('/grant-rules', requirePermission('grant.view'), async (c) => c.json(await listGrantRules(await dbOf(c), c.req.query('grantorUserId'))))
   // #170
   .get('/grants', requirePermission('grant.view'), async (c) => c.json(await listGrants(await dbOf(c), ...split(grantsQuery.parse(c.req.query())))))
+  // #171
+  .post('/grants', requirePermission('grant.create'), async (c) => {
+    const body = newGrant.parse(await c.req.json().catch(() => undefined));
+    const grant = await giveGrant(await dbOf(c), userOf(c), (await permissionsOf(c)).effective, body);
+    auditDetails(c, { action: 'grant', recordType: 'grant', recordId: grant.id, reason: body.reason });
+    return c.json(grant, 201);
+  })
   // #168 (Admin only)
   .post('/grant-rules', requirePermission('grant_rule.manage'), async (c) => {
     const body = newGrantRule.parse(await c.req.json().catch(() => undefined));

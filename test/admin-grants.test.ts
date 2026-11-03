@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { openLocalDb } from '../src/db/local.js';
 import { seedId } from '../src/db/table.js';
 import { seedDev } from '../src/db/seed-dev.js';
+import { randomUUID } from 'node:crypto';
 import { createGrant, revokeGrant } from '../src/permissions/grants.js';
 
 const db = await openLocalDb();
@@ -68,5 +69,53 @@ describe('GET /admin/grants', () => {
     expect((await list('?status=gone')).status).toBe(422);
     expect((await list('', head)).status).toBe(200);
     expect((await list('', asStaff('dev-doctor', ['doctor']))).status).toBe(403);
+  });
+});
+
+describe('POST /admin/grants', () => {
+  const adminId = seedId('a0000000', 1);
+  const med = seedId('de000000', 1);
+  const post = (body: unknown, who = admin) =>
+    app.request('/admin/grants', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
+  const inDays = (n: number) => days(n).toISOString();
+  const good = { userId: doctorId, permission: 'pcpndt.view', scope: 'all', end: inDays(30), reason: 'USG duty this month' };
+
+  it('an Admin gives any grantable permission; users.id comes back', async () => {
+    const res = await post(good);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ userId: doctorId, grantorId: adminId, permission: 'pcpndt.view', scope: 'all', status: 'active', version: 1 });
+    const perms = (await (await app.request(`/admin/users/${doctorId}/permissions`, {}, admin)).json()) as { effective: string[] };
+    expect(perms.effective).toContain('pcpndt.view');
+  });
+
+  it('422 for an unknown user or permission, role.*, a bad scope, or an end in the past', async () => {
+    expect((await post({ ...good, userId: randomUUID() })).status).toBe(422);
+    expect((await post({ ...good, permission: 'no.such' })).status).toBe(422);
+    expect((await post({ ...good, permission: 'role.promote_head_doctor' })).status).toBe(422);
+    expect((await post({ ...good, scope: 'department' })).status).toBe(422);
+    expect((await post({ ...good, scope: 'department', scopeId: randomUUID() })).status).toBe(422);
+    expect((await post({ ...good, scope: 'patient', scopeId: randomUUID() })).status).toBe(422);
+    expect((await post({ ...good, end: inDays(-1) })).status).toBe(422);
+    expect((await post({ ...good, reason: 'x' })).status).toBe(422);
+  });
+
+  it('a Head Doctor gives only within an active rule and only what they hold', async () => {
+    const hd = { ...good, permission: 'sensitive.label', scope: 'department', scopeId: med, end: inDays(10) };
+    expect((await post(hd, head)).status).toBe(403); // no rule yet
+    const rule = await app.request('/admin/grant-rules', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grantorUserId: headId, mayGrant: ['sensitive.label', 'pcpndt.view'], scope: 'department', departmentId: med, maxDays: 14 }),
+    }, admin);
+    expect(rule.status).toBe(201);
+    const res = await post(hd, head);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ userId: doctorId, grantorId: headId, scope: 'department', scopeId: med });
+    expect((await post({ ...hd, scope: 'all', scopeId: undefined }, head)).status).toBe(403); // rule is for one department
+    expect((await post({ ...hd, end: inDays(20) }, head)).status).toBe(403); // longer than the rule
+    expect((await post({ ...hd, permission: 'patient.merge' }, head)).status).toBe(403); // not in the rule
+    expect((await post({ ...hd, permission: 'pcpndt.view' }, head)).status).toBe(403); // in the rule, but not held
+    expect((await post({ ...hd, userId: adminId }, head)).status).toBe(403); // an Admin
+    expect((await post({ ...hd, userId: headId }, head)).status).toBe(403); // themselves
+    expect((await post(hd, asStaff('dev-doctor', ['doctor']))).status).toBe(403);
   });
 });

@@ -117,10 +117,25 @@ export interface GrantFilter {
   status?: GrantStatus;
 }
 
-/**
- * #170: grants, newest first. userId and grantorId come back as users.id (the stored sub when no user row has it,
- * e.g. a system account). A userId nobody has gives an empty page.
- */
+// The admin API (#170-#172) speaks users.id; grants are stored by Cognito sub. The stored sub is kept when no user
+// row has it (e.g. a system account).
+const ADMIN_SELECT = `SELECT g.*, u.id AS user_row_id, gu.id AS grantor_row_id FROM grants g
+  LEFT JOIN users u ON u.cognito_sub = g.user_id LEFT JOIN users gu ON gu.cognito_sub = g.grantor_id`;
+
+const adminView = (row: Record<string, unknown>, now: Date): Grant => ({
+  ...fromRow(row, now),
+  userId: String(row.user_row_id ?? row.user_id),
+  grantorId: String(row.grantor_row_id ?? row.grantor_id),
+});
+
+/** One grant as the admin API shows it; 404 if there is none. */
+export async function grantForAdmin(db: Queryable, id: string, now = new Date()): Promise<Grant> {
+  const { rows } = await db.query(`${ADMIN_SELECT} WHERE g.id = $1`, [id]);
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return adminView(rows[0] as Record<string, unknown>, now);
+}
+
+/** #170: grants, newest first. A userId nobody has gives an empty page. */
 export async function listGrants(db: Queryable, filter: GrantFilter, page: PageQuery, now = new Date()): Promise<Page<Grant>> {
   if (filter.permission !== undefined && !isPermission(filter.permission)) invalid(`unknown permission: ${filter.permission}`);
   const where: string[] = [];
@@ -134,20 +149,5 @@ export async function listGrants(db: Queryable, filter: GrantFilter, page: PageQ
   if (filter.status === 'revoked') where.push("g.status = 'revoked'");
   if (filter.status === 'active') add("g.status <> 'revoked' AND g.ends_at > ?", now);
   if (filter.status === 'expired') add("g.status <> 'revoked' AND g.ends_at <= ?", now);
-  return pageRows(
-    db,
-    {
-      select: `SELECT g.*, u.id AS user_row_id, gu.id AS grantor_row_id FROM grants g
-               LEFT JOIN users u ON u.cognito_sub = g.user_id LEFT JOIN users gu ON gu.cognito_sub = g.grantor_id`,
-      where,
-      params,
-      orderBy: ['g.created_at', 'g.id'],
-    },
-    page,
-    (row) => ({
-      ...fromRow(row, now),
-      userId: String(row.user_row_id ?? row.user_id),
-      grantorId: String(row.grantor_row_id ?? row.grantor_id),
-    }),
-  );
+  return pageRows(db, { select: ADMIN_SELECT, where, params, orderBy: ['g.created_at', 'g.id'] }, page, (row) => adminView(row, now));
 }
