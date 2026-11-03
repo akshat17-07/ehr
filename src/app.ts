@@ -59,6 +59,7 @@ import { adminInactiveSettingsRoutes } from './modules/access/inactive-settings.
 import { accessRequestsRoutes, adminAccessRequestsRoutes, myAccessRequestsRoutes } from './modules/access/access-requests.routes.js';
 import { myPayslipsRoutes } from './modules/payroll/payslips.routes.js';
 import { adminAdvancesRoutes } from './modules/payroll/advances.routes.js';
+import { adminPayrollRunsRoutes } from './modules/payroll/runs.routes.js';
 import { adminSalaryStructuresRoutes } from './modules/payroll/salary-structures.routes.js';
 import { adminEmployeesRoutes } from './modules/payroll/employees.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
@@ -154,6 +155,7 @@ export function createApp({
     .route('/employees', adminEmployeesRoutes)
     .route('/salary-structures', adminSalaryStructuresRoutes)
     .route('/advances', adminAdvancesRoutes)
+    .route('/payroll/runs', adminPayrollRunsRoutes)
     .route('/break-glass-events', adminBreakGlassRoutes)
     .route('/settings/inactive-access', adminInactiveSettingsRoutes)
     .route('/incidents', adminIncidentsRoutes)
