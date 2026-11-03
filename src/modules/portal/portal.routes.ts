@@ -9,9 +9,14 @@ import { AppError } from '../../middleware/errors.js';
 import { DOCUMENT_TYPES, documentViewUrl } from '../documents/documents.js';
 import { address, mobile } from '../patients/patients.routes.js';
 import { PRINT_LANGUAGES } from '../billing/print.js';
+import { RECORD_SCOPES } from '../records/record-requests.js';
 import { portalProfiles, resolvePortalPatient } from './portal-access.js';
 import {
+  createPortalRecordRequest,
   hasSensitiveLabel,
+  portalAccessLog,
+  portalInsurance,
+  portalRecordRequests,
   PORTAL_BILL_STATUSES,
   portalBillDetail,
   portalBillHtml,
@@ -34,6 +39,18 @@ const patientQuery = z.object({ patientId: z.string().max(100).optional() });
 const patientPage = pageQuery.extend({ patientId: z.string().max(100).optional() });
 const documentPage = patientPage.extend({ type: z.enum(DOCUMENT_TYPES).optional() });
 const billPage = patientPage.extend({ status: z.enum(PORTAL_BILL_STATUSES).optional() });
+const accessLogQuery = patientPage.extend({ from: z.iso.date().optional(), to: z.iso.date().optional() });
+
+// As the counter's request (#146), with the email optional (the one on file) and patientId resolved by the route.
+const newRecordRequest = z
+  .object({
+    patientId: z.string().max(100).optional(),
+    scope: z.enum(RECORD_SCOPES),
+    encounterIds: z.array(z.uuid()).min(1).max(50).optional(),
+    includeSensitive: z.boolean().optional(),
+    email: z.email().max(200).optional(),
+  })
+  .strict();
 
 // Contact details only: name, sex and DOB are corrected by the staff (#258). Same checks as the staff edit (#23).
 const profileChange = z
@@ -147,4 +164,33 @@ export const portalRoutes = new Hono<AuthEnv>()
     const { patientId } = patientQuery.parse(c.req.query());
     const profile = await resolvePortalPatient(c, patientId);
     return c.json(await portalSurgeries(await dbOf(c), profile.patientId));
+  })
+  // #251
+  .get('/insurance', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalInsurance(await dbOf(c), profile.patientId));
+  })
+  // #252
+  .get('/record-requests', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalRecordRequests(await dbOf(c), profile.patientId));
+  })
+  // #253: the patient is resolved before the body is checked, so a foreign patientId is the generic 403 first.
+  .post('/record-requests', async (c) => {
+    const body = (await bodyOf(c)) as unknown;
+    const raw = body !== null && typeof body === 'object' ? (body as Record<string, unknown>).patientId : undefined;
+    // Not a string (a number, null): no patient it could name, so the generic 403.
+    const profile = await resolvePortalPatient(c, raw === undefined || typeof raw === 'string' ? raw : 'invalid');
+    const input = newRecordRequest.parse(body);
+    const request = await createPortalRecordRequest(await dbOf(c), profile, input, userOf(c).sub);
+    auditDetails(c, { patientId: request.patientId, recordType: 'record_request', recordId: request.id });
+    return c.json(request, 201);
+  })
+  // #254
+  .get('/access-log', async (c) => {
+    const { patientId, ...query } = accessLogQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    return c.json(await portalAccessLog(await dbOf(c), profile.patientId, query));
   });

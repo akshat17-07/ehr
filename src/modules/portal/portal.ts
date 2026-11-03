@@ -13,6 +13,10 @@ import { toSurgery } from '../surgeries/surgeries.js';
 import { getBill, toBill, type Bill, type BillLine, type BillSeries, type BillStatus } from '../billing/bills.js';
 import { billPayments, type PaymentMode } from '../billing/payments.js';
 import { billHtml, type PrintLanguage } from '../billing/print.js';
+import { patientPolicies } from '../insurance/policies.js';
+import { toClaim, toClaimEvent, type ClaimKind, type ClaimStatus } from '../insurance/claims.js';
+import { createRecordRequest, toRecordRequest, type RecordRequest } from '../records/record-requests.js';
+import { indiaDayStart } from '../../time/india.js';
 
 // Patient-portal views (api-list.md §8, #239-#241). The caller has been resolved by resolvePortalPatient; these
 // functions only shape what a patient may see: no staff-only fields (who saved what, sensitive labels, staff notes,
@@ -561,6 +565,238 @@ export async function portalBillHtml(db: Queryable, billId: string, lang: PrintL
   });
   const printed: Bill = (await hasSensitiveLabel(db, bill.patientId)) ? { ...bill, lines: bill.lines.map(masked) } : bill;
   return billHtml(db, printed, await billPayments(db, billId), lang);
+}
+
+// #251: insurance. The staff mappers (toPolicy, toClaim) with the staff-only fields taken off: version, who saved
+// what, void fields, and each claim step's `by` (the TPA desk user). Voided policies, claims and steps are left out;
+// so are draft claims (not sent to the insurer yet, the amount may still change, as with draft bills). A step's note
+// is the insurer's query or decision as the desk typed it, which the patient needs to answer a query; a patient with
+// any sensitive label gets no notes (a query or rejection can name the condition). Document ids are only those #246
+// would open (a labelled patient's are only ID proof and insurance files).
+
+export interface PortalPolicy {
+  id: string;
+  status: string;
+  patientId: string;
+  insurerId: string;
+  insurerName?: string;
+  tpaId?: string;
+  tpaName?: string;
+  policyNo: string;
+  memberId?: string;
+  holderName: string;
+  validFrom: string;
+  validTo: string;
+  sumInsuredPaise?: number;
+  documentIds: string[];
+}
+
+export interface PortalClaimEvent {
+  status: ClaimStatus;
+  at: string;
+  amountPaise?: number;
+  note?: string;
+}
+
+export interface PortalClaim {
+  id: string;
+  status: Exclude<ClaimStatus, 'draft'>;
+  patientId: string;
+  policyId: string;
+  insurerId: string;
+  insurerName?: string;
+  admissionId?: string;
+  kind: ClaimKind;
+  amountClaimedPaise: number;
+  amountApprovedPaise?: number;
+  dueBy?: string;
+  createdAt: string;
+  documentIds: string[];
+  events: PortalClaimEvent[];
+}
+
+export interface PortalInsurance {
+  policies: PortalPolicy[];
+  claims: PortalClaim[];
+}
+
+/** #251: policies latest cover first (as the staff list), claims newest first with their steps oldest first. */
+export async function portalInsurance(db: Queryable, patientId: string): Promise<PortalInsurance> {
+  const labelled = await hasSensitiveLabel(db, patientId);
+  const names = async (table: 'insurers' | 'tpas', ids: (string | undefined)[]) => {
+    const unique = [...new Set(ids.filter((id): id is string => id !== undefined))];
+    if (unique.length === 0) return new Map<string, string>();
+    const { rows } = await db.query(`SELECT id, name FROM ${table} WHERE id IN (${unique.map((_, i) => `$${i + 1}`).join(', ')})`, unique);
+    return new Map(rows.map((r) => [String(r.id), String(r.name)]));
+  };
+
+  const policies = await patientPolicies(db, patientId, {});
+  const claimRows = (
+    await db.query("SELECT * FROM claims WHERE patient_id = $1 AND voided_at IS NULL AND status <> 'draft' ORDER BY created_at DESC, id DESC", [patientId])
+  ).rows as Record<string, unknown>[];
+  const claims = claimRows.map((r) => toClaim(r));
+  const events = new Map<string, Record<string, unknown>[]>(claims.map((c) => [c.id, []]));
+  if (claims.length > 0) {
+    const { rows } = await db.query(
+      `SELECT * FROM claim_events WHERE claim_id IN (${claims.map((_, i) => `$${i + 1}`).join(', ')}) AND voided_at IS NULL ORDER BY created_at, id`,
+      claims.map((c) => c.id),
+    );
+    for (const r of rows) events.get(String(r.claim_id))?.push(r as Record<string, unknown>);
+  }
+
+  const insurers = await names('insurers', [...policies.map((p) => p.insurerId), ...claims.map((c) => c.insurerId)]);
+  const tpas = await names('tpas', policies.map((p) => p.tpaId));
+  const visible = await visibleDocumentIds(db, patientId, [...policies, ...claims].flatMap((x) => x.documentIds), labelled);
+  const docs = (ids: string[]) => ids.filter((id) => visible.has(id));
+
+  return {
+    policies: policies.map((p) => ({
+      id: p.id,
+      status: p.status,
+      patientId: p.patientId,
+      insurerId: p.insurerId,
+      ...(insurers.has(p.insurerId) && { insurerName: insurers.get(p.insurerId) }),
+      ...(p.tpaId !== undefined && { tpaId: p.tpaId }),
+      ...(p.tpaId !== undefined && tpas.has(p.tpaId) && { tpaName: tpas.get(p.tpaId) }),
+      policyNo: p.policyNo,
+      ...(p.memberId !== undefined && { memberId: p.memberId }),
+      holderName: p.holderName,
+      validFrom: p.validFrom,
+      validTo: p.validTo,
+      ...(p.sumInsuredPaise !== undefined && { sumInsuredPaise: p.sumInsuredPaise }),
+      documentIds: docs(p.documentIds),
+    })),
+    claims: claims.map((c) => ({
+      id: c.id,
+      status: c.status as PortalClaim['status'],
+      patientId: c.patientId,
+      policyId: c.policyId,
+      insurerId: c.insurerId,
+      ...(insurers.has(c.insurerId) && { insurerName: insurers.get(c.insurerId) }),
+      ...(c.admissionId !== undefined && { admissionId: c.admissionId }),
+      kind: c.kind,
+      amountClaimedPaise: c.amountClaimedPaise,
+      ...(c.amountApprovedPaise !== undefined && { amountApprovedPaise: c.amountApprovedPaise }),
+      ...(c.dueBy !== undefined && { dueBy: c.dueBy }),
+      createdAt: c.createdAt,
+      documentIds: docs(c.documentIds),
+      events: (events.get(c.id) ?? []).map((r) => {
+        const e = toClaimEvent(r);
+        return {
+          status: e.status,
+          at: e.at,
+          ...(e.amountPaise !== undefined && { amountPaise: e.amountPaise }),
+          ...(!labelled && e.note !== undefined && { note: e.note }),
+        };
+      }),
+    })),
+  };
+}
+
+// #252, #253: copies of the record (the staff record_requests table and createRecordRequest, #145-#148). The portal
+// shape drops version and who saved what (a counter request's createdBy is a staff sub).
+
+export type PortalRecordRequest = Omit<RecordRequest, 'version' | 'createdBy' | 'updatedBy' | 'voidedAt' | 'voidedBy' | 'voidReason'>;
+
+export function toPortalRecordRequest(r: RecordRequest): PortalRecordRequest {
+  return {
+    id: r.id,
+    status: r.status,
+    patientId: r.patientId,
+    requestedBy: r.requestedBy,
+    scope: r.scope,
+    ...(r.encounterIds !== undefined && { encounterIds: r.encounterIds }),
+    includeSensitive: r.includeSensitive,
+    email: r.email,
+    dueBy: r.dueBy,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    ...(r.shareLinkExpiresAt !== undefined && { shareLinkExpiresAt: r.shareLinkExpiresAt }),
+  };
+}
+
+/** #252: the patient's own requests (made at the counter or in the portal), newest first; voided ones left out. */
+export async function portalRecordRequests(db: Queryable, patientId: string): Promise<PortalRecordRequest[]> {
+  const { rows } = await db.query('SELECT * FROM record_requests WHERE patient_id = $1 AND voided_at IS NULL ORDER BY created_at DESC, id DESC', [patientId]);
+  return rows.map((r) => toPortalRecordRequest(toRecordRequest(r as Record<string, unknown>)));
+}
+
+export interface PortalRecordRequestInput {
+  scope: RecordRequest['scope'];
+  encounterIds?: string[];
+  includeSensitive?: boolean;
+  email?: string;
+}
+
+/**
+ * #253: a request due in 72 hours, sent to `email` or else the email on file (422 if there is none).
+ * 422 if an encounter isn't one of the patient's live visits (same answer for another patient's, a voided or an
+ * unknown id, so nothing about other patients leaks). includeSensitive only for the account holder's own record:
+ * a family member's labelled content is not released on a guardian's say-so (422). 409 already_pending while the
+ * same request (scope and visits) is still pending.
+ */
+export async function createPortalRecordRequest(
+  db: Queryable,
+  profile: { patientId: string; relation: string },
+  input: PortalRecordRequestInput,
+  by: string,
+): Promise<PortalRecordRequest> {
+  const patient = await getPatient(db, profile.patientId);
+  if (input.includeSensitive && profile.relation !== 'self') {
+    throw new AppError(422, 'validation_failed', 'includeSensitive: only for your own record');
+  }
+  const email = input.email ?? patient.email;
+  if (!email) throw new AppError(422, 'validation_failed', 'email: there is no email on file; give one');
+  const encounterIds = [...new Set(input.encounterIds ?? [])];
+  if (encounterIds.length > 0) {
+    const { rows } = await db.query(
+      `SELECT id FROM encounters WHERE patient_id = $1 AND voided_at IS NULL AND id IN (${encounterIds.map((_, i) => `$${i + 2}`).join(', ')})`,
+      [patient.id, ...encounterIds],
+    );
+    if (rows.length !== encounterIds.length) throw new AppError(422, 'validation_failed', "encounterIds: not this patient's");
+  }
+  const key = (scope: string, ids: string[]) => `${scope}:${[...ids].sort().join(',')}`;
+  const wanted = key(input.scope, encounterIds);
+  const { rows: pending } = await db.query("SELECT * FROM record_requests WHERE patient_id = $1 AND status = 'pending' AND voided_at IS NULL", [patient.id]);
+  const same = pending.map((r) => toRecordRequest(r as Record<string, unknown>)).find((r) => key(r.scope, r.encounterIds ?? []) === wanted);
+  if (same) throw new AppError(409, 'already_pending', 'the same request is already waiting', { requestId: same.id });
+  const request = await createRecordRequest(db, { patientId: patient.id, scope: input.scope, encounterIds, includeSensitive: input.includeSensitive, email }, 'patient', by);
+  return toPortalRecordRequest(request);
+}
+
+// #254: who looked at or changed the record. Only rows written by staff (an audit row whose user is a staff user):
+// the patient's own and family members' portal use is left out, since it is not what the log is for ("who at the
+// hospital saw my record") and would drown it. Name and role only: no user id, IP, device, record or reason.
+// An emergency (break-glass) opening shows as the action `emergency_access`, without its reason or review.
+
+export interface PortalAccessEntry {
+  at: string;
+  userName: string;
+  role: string;
+  action: string;
+}
+
+export async function portalAccessLog(db: Queryable, patientId: string, query: PageQuery & { from?: string; to?: string }): Promise<Page<PortalAccessEntry>> {
+  const params: unknown[] = [patientId];
+  const where = ['a.patient_id = $1'];
+  if (query.from) where.push(`a.at >= $${params.push(indiaDayStart(query.from))}`);
+  if (query.to) where.push(`a.at < $${params.push(new Date(indiaDayStart(query.to).getTime() + 86_400_000))}`);
+  return pageRows(
+    db,
+    {
+      select: 'SELECT a.at, a.role, a.action, a.record_type, u.name AS user_name FROM audit_events a JOIN users u ON u.cognito_sub = a.user_id',
+      where,
+      params,
+      orderBy: ['a.seq'],
+    },
+    query,
+    (r) => ({
+      at: (r.at as Date).toISOString(),
+      userName: String(r.user_name),
+      role: String(r.role),
+      action: r.record_type === 'break_glass_event' && r.action === 'create' ? 'emergency_access' : String(r.action),
+    }),
+  );
 }
 
 /** #244: the patient's prescriptions that were issued (confirmed or dispensed), newest first. */
