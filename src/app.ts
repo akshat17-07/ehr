@@ -52,6 +52,7 @@ import { depositsRoutes } from './modules/billing/deposits.routes.js';
 import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { policiesRoutes } from './modules/insurance/policies.routes.js';
 import { claimsRoutes } from './modules/insurance/claims.routes.js';
+import { gpReferralsRoutes } from './modules/referrals/gp.routes.js';
 import { agentLinksRoutes } from './modules/insurance/agent-links.routes.js';
 import { agentRoutes } from './modules/insurance/agent.routes.js';
 import { agentClaimsRoutes } from './modules/insurance/agent-claims.routes.js';
@@ -185,7 +186,7 @@ export function createApp({
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
-  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me', meRoutes);
+  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me', meRoutes).route('/referrals', gpReferralsRoutes);
 
   // Every request except /health gets an audit row (middleware/audit.ts).
   const audited = new Hono<AuthEnv>()
