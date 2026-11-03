@@ -36,8 +36,10 @@ export async function dayClose(db: Queryable, query: { date: string; userId?: st
     byMode[mode] += amount;
     if (mode !== 'deposit') users.set(String(r.created_by), (users.get(String(r.created_by)) ?? 0) + amount);
   }
+  // A refund counts on the day it was approved: its creation day if approved at once, else when #177 approved it.
+  const refundWindow = `COALESCE(approved_at, created_at) >= $1 AND COALESCE(approved_at, created_at) < $2${byWho}`;
   const { rows: refundRows } = await db.query(
-    `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM refunds WHERE status IN ('approved', 'paid') AND voided_at IS NULL AND ${window}`,
+    `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum FROM refunds WHERE status IN ('approved', 'paid') AND voided_at IS NULL AND ${refundWindow}`,
     params,
   );
   const refundsPaise = Number(refundRows[0]?.sum ?? 0);

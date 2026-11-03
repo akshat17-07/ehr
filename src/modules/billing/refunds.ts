@@ -5,6 +5,7 @@ import { baseFields, type BaseRow } from '../../db/table.js';
 import { withTransaction } from '../../db/transaction.js';
 import { AppError } from '../../middleware/errors.js';
 import type { BaseFields } from '../patients/patients.js';
+import { UUID } from '../users/users.js';
 import { getBill, toBill, type Bill } from './bills.js';
 
 // Refunds (api-list.md Refund) of money taken on a bill. Up to the hospital's limit one is approved at once and taken
@@ -25,6 +26,7 @@ export interface Refund extends Omit<BaseFields, 'status'> {
   reason: string;
   reference?: string;
   approvedBy?: string;
+  approvedAt?: string;
 }
 
 export function toRefund(r: Record<string, unknown>): Refund {
@@ -38,6 +40,7 @@ export function toRefund(r: Record<string, unknown>): Refund {
     reason: String(r.reason),
     ...(r.reference != null && { reference: String(r.reference) }),
     ...(r.approved_by != null && { approvedBy: String(r.approved_by) }),
+    ...(r.approved_at != null && { approvedAt: (r.approved_at as Date).toISOString() }),
   };
 }
 
@@ -76,5 +79,33 @@ export async function addRefund(
       [randomUUID(), status, by, billId, bill.patientId, input.amountPaise, input.mode, input.reason, input.reference ?? null],
     );
     return toRefund(inserted[0] as Record<string, unknown>);
+  });
+}
+
+/**
+ * #177 / #178: a second person decides a pending refund. 404 if there is none, 403 for whoever raised it, 409 if it is
+ * not pending. Approving takes the money off the bill (refundFromBill) and stamps approved_at, so day close counts the
+ * refund on this day; 409 if the bill no longer holds that much. Rejecting changes nothing on the bill. The note /
+ * reason is kept in the refund's history.
+ */
+export async function decideRefund(
+  db: Queryable,
+  id: string,
+  decision: { approve: true; note?: string } | { approve: false; reason: string },
+  by: string,
+  now = new Date(),
+): Promise<Refund> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM refunds WHERE id = $1', [id]) : { rows: [] };
+  const row = rows[0];
+  if (!row) throw new AppError(404, 'not_found');
+  if (row.created_by === by) throw new AppError(403, 'forbidden', "you can't decide a refund you raised");
+  if (row.status !== 'pending') throw new AppError(409, 'conflict', `this refund is already ${row.status}`);
+  const change = { id, version: Number(row.version), by, reason: decision.approve ? decision.note : decision.reason };
+  return withTransaction(db, async (tx) => {
+    if (!decision.approve) return toRefund(await updateRecord(tx, 'refunds', { ...change, set: { status: 'rejected' } }));
+    const bill = await getBill(tx, String(row.bill_id));
+    if (bill.status === 'void' || bill.paidPaise < Number(row.amount_paise)) throw new AppError(409, 'conflict', 'the bill no longer holds this much paid');
+    await refundFromBill(tx, bill, Number(row.amount_paise), by);
+    return toRefund(await updateRecord(tx, 'refunds', { ...change, set: { status: 'approved', approved_by: by, approved_at: now } }));
   });
 }

@@ -1302,4 +1302,10 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC grant_rules_grantor ON grant_rules (grantor_id)',
     ],
   },
+  {
+    // When a refund was approved. Day close (#130) counts a refund on the day money went out: a pending one that is
+    // approved later counts on its approval day. Empty for refunds approved at once (then created_at is the day).
+    id: '0087_refunds_approved_at',
+    statements: () => ['ALTER TABLE refunds ADD COLUMN approved_at timestamptz'],
+  },
 ];
