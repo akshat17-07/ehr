@@ -78,7 +78,7 @@ export async function appendAudit(db: Queryable, input: AuditInput): Promise<Aud
   }
 }
 
-function fromRow(r: Record<string, unknown>): AuditEvent {
+export function fromRow(r: Record<string, unknown>): AuditEvent {
   const opt = (v: unknown) => (v === null || v === undefined ? undefined : String(v));
   return {
     seq: Number(r.seq_text),
