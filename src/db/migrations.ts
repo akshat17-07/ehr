@@ -1439,4 +1439,22 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX ASYNC access_reviews_month ON access_reviews (month)',
     ],
   },
+  {
+    // Reorder settings per item (api-list.md ReorderSetting, #286). item_id is a drug or an item; one row each.
+    // Levels are NULL until set; lead and safety days default to 7.
+    id: '0097_reorder_settings',
+    statements: () => [
+      ...createTable('reorder_settings', [
+        'item_id uuid NOT NULL',
+        'reorder_level integer',
+        'min_level integer',
+        'reorder_qty integer',
+        'max_level integer',
+        'lead_time_days integer NOT NULL DEFAULT 7',
+        'safety_days integer NOT NULL DEFAULT 7',
+        'preferred_supplier_id uuid',
+      ]),
+      'CREATE UNIQUE INDEX ASYNC reorder_settings_item ON reorder_settings (item_id)',
+    ],
+  },
 ];
