@@ -1,5 +1,6 @@
 import { getDb } from '../db/client.js';
 import type { JobDeps } from './alert-digest.js';
+import { backupExport } from './backup-export.js';
 import { auditExport } from './audit-export.js';
 import { licenceCheck } from './licence-check.js';
 import { stockScan } from './stock-scan.js';
@@ -31,7 +32,7 @@ const notBuilt =
   };
 
 const jobs: Record<JobName, Job> = {
-  backup_export: notBuilt('backup_export'),
+  backup_export: (deps) => backupExport(deps),
   audit_export: auditExport,
   stock_scan: stockScan,
   licence_check: licenceCheck,

@@ -1,16 +1,16 @@
 import { gzipSync } from 'node:zlib';
-import { randomUUID } from 'node:crypto';
 import { verifyAuditChain } from '../audit/log.js';
 import { s3Backup } from '../backup/files.js';
 import { AGE_RECIPIENT, encryptForBackup } from '../backup/encrypt.js';
 import { env } from '../config/env.js';
-import type { Queryable } from '../db/migrate.js';
 import { usersWithPermission } from '../permissions/check.js';
 import { indiaDate } from '../time/india.js';
+import { recordRun as record, type RunRow } from './job-runs.js';
 import { raiseIfChanged, type JobDeps, type Tally } from './alert-digest.js';
 
 const JOB = 'audit_export';
 const PAGE = 1000;
+const recordRun = (db: Parameters<typeof record>[0], run: Omit<RunRow, 'job'>) => record(db, { job: JOB, ...run });
 
 /** #501: nightly check of the audit hash chain, then an encrypted copy of the new audit rows in the backup bucket. */
 export async function auditExport({ db, now = new Date(), backupFiles }: JobDeps): Promise<void> {
@@ -26,7 +26,7 @@ export async function auditExport({ db, now = new Date(), backupFiles }: JobDeps
     }
   }
   const chainFailure = chain.ok ? undefined : new Error(`Audit chain broken at entry ${chain.brokenAt}: ${chain.problem}`);
-  const finish = async (run: Omit<RunRow, 'startedAt' | 'ok'> & { ok?: boolean }) => {
+  const finish = async (run: Omit<RunRow, 'job' | 'startedAt' | 'ok'> & { ok?: boolean }) => {
     await recordRun(db, { startedAt, ok: chain.ok, ...run });
     if (chainFailure) throw chainFailure;
   };
@@ -86,21 +86,4 @@ export async function auditExport({ db, now = new Date(), backupFiles }: JobDeps
   }
   summary(toSeq - fromSeq + 1, { key, sizeBytes });
   return finish({ detail: { exported: toSeq - fromSeq + 1, fromSeq, toSeq }, lastSeq: toSeq, s3Key: key, sizeBytes });
-}
-
-interface RunRow {
-  startedAt: Date;
-  ok: boolean;
-  detail: Record<string, unknown>;
-  lastSeq?: number;
-  s3Key?: string;
-  sizeBytes?: number;
-}
-
-async function recordRun(db: Queryable, run: RunRow): Promise<void> {
-  await db.query(
-    `INSERT INTO job_runs (id, status, created_by, updated_by, job, started_at, finished_at, ok, detail, last_seq, s3_key, size_bytes)
-     VALUES ($1, 'done', $2, $2, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [randomUUID(), JOB, run.startedAt, new Date(), run.ok, JSON.stringify(run.detail), run.lastSeq ?? null, run.s3Key ?? null, run.sizeBytes ?? null],
-  );
 }
