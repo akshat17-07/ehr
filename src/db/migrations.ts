@@ -197,7 +197,9 @@ export const migrations: Migration[] = [
   },
   {
     // Employees on the payroll (api-list.md Employee). user_id links a login; contract staff may have none.
-    // *_enc columns hold ciphertext: PAN, UAN, ESIC and bank details are encrypted by the app before saving.
+    // *_enc columns hold ciphertext: Aadhaar, PAN, UAN, ESIC and bank details are encrypted by the app before saving.
+    // aadhaar_hash is a keyed hash of the Aadhaar number, so it can be unique (ciphertext is random).
+    // Edited in place on 2026-11-03, before any deploy: Aadhaar added; pan_enc and bank_enc made optional.
     id: '0013_employees',
     statements: () => [
       ...createTable('employees', [
@@ -205,14 +207,17 @@ export const migrations: Migration[] = [
         'name text NOT NULL',
         'designation text NOT NULL',
         'join_date date NOT NULL',
-        'pan_enc text NOT NULL',
+        'aadhaar_enc text',
+        'aadhaar_hash text',
+        'pan_enc text',
         'uan_enc text',
         'esic_enc text',
-        'bank_enc text NOT NULL',
+        'bank_enc text',
         'salary_structure_id text NOT NULL',
         'active boolean NOT NULL DEFAULT true',
       ]),
       'CREATE UNIQUE INDEX ASYNC employees_user ON employees (user_id)',
+      'CREATE UNIQUE INDEX ASYNC employees_aadhaar ON employees (aadhaar_hash)',
     ],
   },
   {

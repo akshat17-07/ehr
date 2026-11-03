@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { AppError } from '../middleware/errors.js';
 
@@ -61,3 +61,8 @@ export async function decryptField(stored: string): Promise<string> {
 
 /** '****' + the last 4 characters (all of them when shorter). */
 export const maskField = (plain: string): string => `****${plain.slice(-4)}`;
+
+/** Keyed hash (HMAC-SHA256, hex) for looking up or de-duplicating a field. `domain` (e.g. 'aadhaar:') keeps fields apart. */
+export async function hashField(domain: string, plain: string): Promise<string> {
+  return createHmac('sha256', await fieldKey()).update(`${domain}${plain}`).digest('hex');
+}
