@@ -79,7 +79,7 @@ export const MERGE_MOVES = [
   'problems', 'orders', 'order_results', 'prescriptions', 'admissions', 'mar_entries', 'discharge_summaries',
   'dental_entries', 'anc_records', 'form_f', 'mtp_register', 'surgeries', 'implants', 'documents', 'dispenses',
   'pharmacy_returns', 'pharmacy_bills', 'indents', 'stock_issues', 'bills', 'payments', 'deposits', 'refunds',
-  'policies', 'claims', 'agent_links', 'referrals', 'record_requests', 'share_links', 'rights_requests', 'legal_holds',
+  'policies', 'claims', 'agent_links', 'referrals', 'record_requests', 'share_links', 'rights_requests', 'legal_holds', 'deaths',
 ] as const;
 /** Kept as they were written: the merge itself, access / break-glass history, the audit log and generated exports.
  * patient_accounts stays too: a portal sign-in of the merged patient follows merged_into (portal-access.ts). */
@@ -122,6 +122,8 @@ export async function decideMerge(
     };
     for (const table of MERGE_MOVES) await move(table, 'patient_id');
     await move('guardians', 'guardian_patient_id');
+    await move('births', 'mother_patient_id');
+    await move('births', 'baby_patient_id');
 
     // Entries are strings; compared by their JSON so any other shape still folds duplicates (and ignoring case).
     const same = (e: unknown) => JSON.stringify(e).toLowerCase();

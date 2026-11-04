@@ -68,6 +68,7 @@ import { adminPurchaseOrdersRoutes } from './modules/inventory/admin-purchase-or
 import { purchaseOrdersRoutes } from './modules/inventory/purchase-orders.routes.js';
 import { registersRoutes } from './modules/pharmacy/registers.routes.js';
 import { surgeriesRoutes } from './modules/surgeries/surgeries.routes.js';
+import { birthsRoutes, deathsRoutes } from './modules/compliance/vital-events.routes.js';
 import { allergiesRoutes } from './modules/patients/allergies.routes.js';
 import { problemsRoutes } from './modules/patients/problems.routes.js';
 import { adminBreakGlassRoutes } from './modules/access/break-glass.routes.js';
@@ -159,6 +160,8 @@ export function createApp({
     .route('/purchase-orders', purchaseOrdersRoutes)
     .route('/registers', registersRoutes)
     .route('/allergies', allergiesRoutes)
+    .route('/births', birthsRoutes)
+    .route('/deaths', deathsRoutes)
     .route('/problems', problemsRoutes)
     .route('/', referenceRoutes);
   const admin = new Hono<AuthEnv>()

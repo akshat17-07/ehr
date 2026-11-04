@@ -3,10 +3,12 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
+import { adminBirthsDeathsRoutes } from './vital-events.routes.js';
 import { notifiableDiseases, notifiableQuery, pcpndtMonthly, pcpndtQuery } from './registers.js';
 
 // Mounted at /admin/registers.
 export const adminRegistersRoutes = new Hono<AuthEnv>()
+  .route('/births-deaths', adminBirthsDeathsRoutes)
   // #329
   .get('/pcpndt-monthly', requirePermission('compliance.registers'), async (c) => {
     const { month } = pcpndtQuery.parse(c.req.query());

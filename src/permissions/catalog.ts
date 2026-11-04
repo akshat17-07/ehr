@@ -197,6 +197,7 @@ const groups = {
     ['compliance.incident', 'Record and report security incidents', 'सुरक्षा घटनाएँ दर्ज करें और रिपोर्ट करें'],
     ['compliance.legal_hold', 'Place and release legal holds', 'क़ानूनी रोक लगाएँ और हटाएँ'],
     ['compliance.registers', 'Statutory registers and returns', 'वैधानिक रजिस्टर और रिटर्न'],
+    ['vital_events.record', 'Record births and deaths', 'जन्म और मृत्यु दर्ज करना'],
   ],
   audit: [
     ['audit.read', 'Read the audit log', 'ऑडिट लॉग पढ़ें'],

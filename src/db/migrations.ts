@@ -1503,4 +1503,50 @@ export const migrations: Migration[] = [
       'CREATE INDEX ASYNC job_runs_job ON job_runs (job, started_at)',
     ],
   },
+  {
+    // Statutory births and deaths (RBD Act 1969, MP rules; api-list.md #330). Reported to the Registrar within 21 days:
+    // reported_at / registrar_ref are filled once reported. antecedent_causes and icd10 are JSON arrays as text.
+    // delivered_by / certified_by are users.id. Voided, never deleted. The last statement gives the new permission
+    // to databases made before it existed (a fresh database already has it from the built-in lists).
+    id: '0102_vital_events',
+    statements: () => [
+      ...createTable('births', [
+        'mother_patient_id uuid NOT NULL',
+        'born_at timestamptz NOT NULL',
+        'sex text NOT NULL',
+        'weight_grams integer',
+        'outcome text NOT NULL',
+        'delivery text NOT NULL',
+        'birth_order integer NOT NULL DEFAULT 1',
+        'gestation_weeks integer',
+        'delivered_by uuid NOT NULL',
+        'encounter_id uuid',
+        'baby_patient_id uuid',
+        'note text',
+        'reported_at timestamptz',
+        'registrar_ref text',
+      ]),
+      'CREATE INDEX ASYNC births_born_at ON births (born_at)',
+      'CREATE INDEX ASYNC births_mother ON births (mother_patient_id)',
+      ...createTable('deaths', [
+        'patient_id uuid NOT NULL',
+        'died_at timestamptz NOT NULL',
+        'encounter_id uuid',
+        'admission_id uuid',
+        'immediate_cause text NOT NULL',
+        'antecedent_causes text',
+        'other_conditions text',
+        'icd10 text',
+        'manner text NOT NULL',
+        'mlc boolean NOT NULL',
+        'certified_by uuid NOT NULL',
+        'reported_at timestamptz',
+        'registrar_ref text',
+      ]),
+      'CREATE INDEX ASYNC deaths_died_at ON deaths (died_at)',
+      'CREATE INDEX ASYNC deaths_patient ON deaths (patient_id)',
+      `UPDATE type_permissions SET permissions = replace(permissions, ']', ',"vital_events.record"]')
+       WHERE type IN ('head_doctor', 'doctor', 'nurse') AND permissions NOT LIKE '%vital_events.record%'`,
+    ],
+  },
 ];

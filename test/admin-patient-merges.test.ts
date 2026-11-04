@@ -50,6 +50,35 @@ describe('every table with a patient_id is either moved or left on purpose', () 
   });
 });
 
+describe('births and deaths follow a merge', () => {
+  it('moves a mother and baby of a birth, and the patient of a death', async () => {
+    const keep = await newPatient();
+    const gone = await newPatient();
+    const baby = await newPatient();
+    const dr = seedId('a0000000', 3);
+    const birthId = randomUUID();
+    const babyBirth = randomUUID();
+    const deathId = randomUUID();
+    await db.query(
+      `INSERT INTO births (id, status, created_by, updated_by, mother_patient_id, born_at, sex, outcome, delivery, delivered_by, baby_patient_id)
+       VALUES ($1, 'active', 'x', 'x', $2, now(), 'F', 'live', 'normal', $3, $4), ($5, 'active', 'x', 'x', $6, now(), 'M', 'live', 'normal', $3, $2)`,
+      [birthId, gone, dr, baby, babyBirth, keep],
+    );
+    await db.query(
+      `INSERT INTO deaths (id, status, created_by, updated_by, patient_id, died_at, immediate_cause, manner, mlc, certified_by)
+       VALUES ($1, 'active', 'x', 'x', $2, now(), 'Cardiac arrest', 'natural', false, $3)`,
+      [deathId, gone, dr],
+    );
+    const id = await propose(keep, gone);
+    const { status, body } = await decide(id, 'approve');
+    expect(status).toBe(200);
+    expect(body.movedCounts).toEqual({ deaths: 1, 'births.mother_patient_id': 1, 'births.baby_patient_id': 1 });
+    expect((await row('births', birthId)).mother_patient_id).toBe(keep);
+    expect((await row('births', babyBirth)).baby_patient_id).toBe(keep);
+    expect((await row('deaths', deathId)).patient_id).toBe(keep);
+  });
+});
+
 describe('POST /admin/patient-merges/{id}/approve', () => {
   it('moves the records, folds in the labels and allergies, and points the other UHID at the kept one', async () => {
     const keep = patient(1);
