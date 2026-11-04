@@ -5,6 +5,8 @@ import { backupExport } from './backup-export.js';
 import { auditExport } from './audit-export.js';
 import { fullExportJob } from '../modules/records/full-export.js';
 import { licenceCheck } from './licence-check.js';
+import { pcpndtMonthlyJob } from './pcpndt-monthly.js';
+import { retentionReview } from './retention-review.js';
 import { stockScan } from './stock-scan.js';
 
 // Scheduled jobs, run by the jobs Lambda (same code as the API, 15 minutes) (EventBridge sends `{ job: "<name>" }`).
@@ -33,20 +35,14 @@ export interface JobEvent {
 
 type Job = (deps: JobDeps) => Promise<void>;
 
-const notBuilt =
-  (name: JobName): Job =>
-  async () => {
-    throw new Error(`Job ${name} is not built yet`);
-  };
-
 const jobs: Record<JobName, Job> = {
   backup_export: (deps) => backupExport(deps),
   audit_export: auditExport,
   stock_scan: stockScan,
   licence_check: licenceCheck,
   backup_check: backupCheck,
-  pcpndt_monthly: notBuilt('pcpndt_monthly'),
-  retention_review: notBuilt('retention_review'),
+  pcpndt_monthly: pcpndtMonthlyJob,
+  retention_review: retentionReview,
   fhir_export: fullExportJob,
 };
 

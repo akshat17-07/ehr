@@ -147,13 +147,12 @@ describe('audit_export job', () => {
     config();
   });
 
-  it('is wired into runJob; the others are still not built', async () => {
+  it('is wired into runJob', async () => {
     config();
     const db = await setup(1);
     const { puts, files } = fakeFiles();
     await expect(runJob({ job: 'audit_export' }, { db, now: NOW, backupFiles: files })).resolves.toEqual({ job: 'audit_export', ok: true });
     expect(puts).toHaveLength(1);
-    await expect(runJob({ job: 'pcpndt_monthly' }, { db })).rejects.toThrow('not built yet');
   });
 });
 

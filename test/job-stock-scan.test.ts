@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { openLocalDb } from '../src/db/local.js';
 import { seedDev } from '../src/db/seed-dev.js';
 import { seedId } from '../src/db/table.js';
-import { JOB_NAMES, runJob } from '../src/jobs/index.js';
+import { runJob } from '../src/jobs/index.js';
 import { stockScan } from '../src/jobs/stock-scan.js';
 
 const db = await openLocalDb();
@@ -101,12 +101,9 @@ describe('stock_scan job', () => {
     expect((await db.query('SELECT count(*)::int AS n FROM alerts')).rows[0]!.n).toBe(before);
   });
 
-  it('runJob wires the job to a database; the other five jobs are still not built', async () => {
+  it('runJob wires the job to a database', async () => {
     const quiet = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await expect(runJob({ job: 'stock_scan' }, { db, now: NOW })).resolves.toEqual({ job: 'stock_scan', ok: true });
     quiet.mockRestore();
-    for (const job of JOB_NAMES.filter((j) => j !== 'stock_scan' && j !== 'licence_check' && j !== 'audit_export' && j !== 'backup_export' && j !== 'backup_check' && j !== 'fhir_export')) {
-      await expect(runJob({ job })).rejects.toThrow(`Job ${job} is not built yet`);
-    }
   });
 });
