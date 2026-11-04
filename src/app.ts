@@ -1,4 +1,5 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
+import { adminBackupStatusRoutes } from './modules/admin-backup/backup-status.routes.js';
 import { adminAuditRoutes } from './audit/audit.routes.js';
 import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
 import { adminInventoryRoutes } from './modules/inventory/admin-items.routes.js';
@@ -184,6 +185,7 @@ export function createApp({
     .route('/suppliers', adminSuppliersRoutes)
     .route('/purchase-orders', adminPurchaseOrdersRoutes)
     .route('/audit', adminAuditRoutes)
+    .route('/backup-status', adminBackupStatusRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);

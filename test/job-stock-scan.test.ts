@@ -105,7 +105,7 @@ describe('stock_scan job', () => {
     const quiet = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await expect(runJob({ job: 'stock_scan' }, { db, now: NOW })).resolves.toEqual({ job: 'stock_scan', ok: true });
     quiet.mockRestore();
-    for (const job of JOB_NAMES.filter((j) => j !== 'stock_scan' && j !== 'licence_check' && j !== 'audit_export' && j !== 'backup_export')) {
+    for (const job of JOB_NAMES.filter((j) => j !== 'stock_scan' && j !== 'licence_check' && j !== 'audit_export' && j !== 'backup_export' && j !== 'backup_check')) {
       await expect(runJob({ job })).rejects.toThrow(`Job ${job} is not built yet`);
     }
   });

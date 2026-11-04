@@ -153,7 +153,7 @@ describe('audit_export job', () => {
     const { puts, files } = fakeFiles();
     await expect(runJob({ job: 'audit_export' }, { db, now: NOW, backupFiles: files })).resolves.toEqual({ job: 'audit_export', ok: true });
     expect(puts).toHaveLength(1);
-    await expect(runJob({ job: 'backup_check' }, { db })).rejects.toThrow('not built yet');
+    await expect(runJob({ job: 'pcpndt_monthly' }, { db })).rejects.toThrow('not built yet');
   });
 });
 

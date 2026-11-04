@@ -116,9 +116,9 @@ describe('app stack', () => {
 
   it('switches a scheduled job on only once it is built', () => {
     dev.app.resourceCountIs('AWS::Events::Rule', 7);
-    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'ENABLED' }, 4);
-    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'DISABLED' }, 3);
-    for (const job of ['stock_scan', 'licence_check', 'audit_export', 'backup_export']) {
+    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'ENABLED' }, 5);
+    dev.app.resourcePropertiesCountIs('AWS::Events::Rule', { State: 'DISABLED' }, 2);
+    for (const job of ['stock_scan', 'licence_check', 'audit_export', 'backup_export', 'backup_check']) {
       dev.app.hasResourceProperties('AWS::Events::Rule', { State: 'ENABLED', Targets: [{ Input: JSON.stringify({ job }) }] });
     }
   });

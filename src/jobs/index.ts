@@ -1,5 +1,6 @@
 import { getDb } from '../db/client.js';
 import type { JobDeps } from './alert-digest.js';
+import { backupCheck } from './backup-check.js';
 import { backupExport } from './backup-export.js';
 import { auditExport } from './audit-export.js';
 import { licenceCheck } from './licence-check.js';
@@ -36,7 +37,7 @@ const jobs: Record<JobName, Job> = {
   audit_export: auditExport,
   stock_scan: stockScan,
   licence_check: licenceCheck,
-  backup_check: notBuilt('backup_check'),
+  backup_check: backupCheck,
   pcpndt_monthly: notBuilt('pcpndt_monthly'),
   retention_review: notBuilt('retention_review'),
 };

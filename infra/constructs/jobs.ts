@@ -10,7 +10,7 @@ const JOBS = [
   { job: 'audit_export', schedule: 'cron(0 20 * * ? *)', ist: 'nightly 01:30', enabled: true },
   { job: 'stock_scan', schedule: 'cron(30 20 * * ? *)', ist: 'nightly 02:00', enabled: true },
   { job: 'licence_check', schedule: 'cron(0 21 * * ? *)', ist: 'nightly 02:30', enabled: true },
-  { job: 'backup_check', schedule: 'cron(30 1 * * ? *)', ist: 'daily 07:00', enabled: false },
+  { job: 'backup_check', schedule: 'cron(30 1 * * ? *)', ist: 'daily 07:00', enabled: true },
   { job: 'pcpndt_monthly', schedule: 'cron(30 0 3 * ? *)', ist: '3rd of the month 06:00', enabled: false },
   { job: 'retention_review', schedule: 'cron(30 21 1 * ? *)', ist: '2nd of the month 03:00', enabled: false },
 ] as const;
