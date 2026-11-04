@@ -82,8 +82,8 @@ export const MERGE_MOVES = [
   'policies', 'claims', 'agent_links', 'referrals', 'record_requests', 'share_links', 'rights_requests', 'legal_holds', 'deaths',
 ] as const;
 /** Kept as they were written: the merge itself, access / break-glass history, the audit log and generated exports.
- * patient_accounts stays too: a portal sign-in of the merged patient follows merged_into (portal-access.ts). */
-export const MERGE_STAYS = ['patient_merges', 'access_requests', 'break_glass_events', 'audit_events', 'exports', 'patient_accounts'] as const;
+ * patient_accounts stays too: a portal sign-in of the merged patient follows merged_into (portal-access.ts); portal_invites stay too (accepting follows merged_into). */
+export const MERGE_STAYS = ['patient_merges', 'access_requests', 'break_glass_events', 'audit_events', 'exports', 'patient_accounts', 'portal_invites'] as const;
 
 /**
  * #181 / #182: a second person decides a pending merge. 404 if there is none, 403 for whoever proposed it, 409 if it

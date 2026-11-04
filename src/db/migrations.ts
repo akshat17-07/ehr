@@ -1549,4 +1549,26 @@ export const migrations: Migration[] = [
        WHERE type IN ('head_doctor', 'doctor', 'nurse') AND permissions NOT LIKE '%vital_events.record%'`,
     ],
   },
+  {
+    // Portal invites (#409-#412): the hospital invites a patient by an email or phone link; only the sha256 of the
+    // token is kept. status: pending | accepted | revoked (expired is worked out from expires_at). accepted_sub is the
+    // sign-in subject that accepted. Also gives portal.invite to admin, head doctor and staff (reception).
+    id: '0103_portal_invites',
+    statements: () => [
+      ...createTable('portal_invites', [
+        'patient_id uuid NOT NULL',
+        'channel text NOT NULL',
+        'sent_to text NOT NULL',
+        'token_hash text NOT NULL',
+        'expires_at timestamptz NOT NULL',
+        'accepted_at timestamptz',
+        'accepted_sub text',
+        'revoked_reason text',
+      ]),
+      'CREATE INDEX ASYNC portal_invites_token ON portal_invites (token_hash)',
+      'CREATE INDEX ASYNC portal_invites_patient ON portal_invites (patient_id, created_at)',
+      `UPDATE type_permissions SET permissions = CASE WHEN permissions = '[]' THEN '["portal.invite"]' ELSE replace(permissions, ']', ',"portal.invite"]') END
+       WHERE type IN ('admin', 'head_doctor', 'staff') AND permissions NOT LIKE '%portal.invite%'`,
+    ],
+  },
 ];

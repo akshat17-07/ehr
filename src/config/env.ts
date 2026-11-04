@@ -17,6 +17,8 @@ const schema = z.object({
   BACKUP_AGE_RECIPIENT: z.string().optional(),
   // Sender of record-copy emails (an SES-verified address or domain in ap-south-1).
   MAIL_FROM: z.string().optional(),
+  // Patient portal website; an invite link is PORTAL_URL/invite/<token>. Required in production.
+  PORTAL_URL: z.string().optional(),
   // Website page that opens a share link; the token is added at the end.
   SHARE_URL: z.string().optional(),
   // Local only: folder of the embedded Postgres used when DSQL_ENDPOINT is not set.

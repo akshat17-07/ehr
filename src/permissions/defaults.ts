@@ -45,6 +45,7 @@ const ROWS: [permissions: Permission[], types: StaffType[]][] = [
   [['inventory.manage', 'reorder.check', 'purchase.create'], [A, H]],
   [['insurance.policy', 'insurance.agent_link', 'claim.view', 'claim.create', 'claim.update'], [A, H, D]],
   [['records.release'], [A, H]],
+  [['portal.invite'], [A, H, S]],
   [['fhir.export'], [A, H, D]],
   [['vital_events.record'], [H, D, N]],
   [['referrer.view', 'referrer.create_pseudo', 'referral.record'], [A, H, D]],

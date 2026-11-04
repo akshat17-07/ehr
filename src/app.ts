@@ -56,6 +56,7 @@ import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { policiesRoutes } from './modules/insurance/policies.routes.js';
 import { claimsRoutes } from './modules/insurance/claims.routes.js';
 import { gpPaymentsRoutes, gpReferralsRoutes } from './modules/referrals/gp.routes.js';
+import { patientAcceptRoutes, patientInviteRoutes, staffInviteRoutes } from './modules/portal/invites.routes.js';
 import { getHospital } from './modules/reference/hospital.js';
 import { dbOf } from './middleware/context.js';
 import { agentLinksRoutes } from './modules/insurance/agent-links.routes.js';
@@ -129,6 +130,8 @@ export function createApp({
     .route('/me/alerts', myAlertsRoutes)
     .route('/me/access-requests', myAccessRequestsRoutes)
     .route('/me/payslips', myPayslipsRoutes)
+    .route('/patients', patientInviteRoutes)
+    .route('/portal-invites', staffInviteRoutes)
     .route('/patients', patientsRoutes)
     .route('/patient-merges', patientMergesRoutes)
     .route('/access-requests', accessRequestsRoutes)
@@ -199,7 +202,7 @@ export function createApp({
     .route('/fhir', adminFhirRoutes)
     .route('/exports', adminExportsRoutes)
     .route('/', permissionsAdminRoutes);
-  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
+  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/invites', patientAcceptRoutes).route('/', portalRoutes);
   const hospitalRoutes = new Hono<AuthEnv>().get('/', async (c) => c.json(await getHospital(await dbOf(c))));
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
   const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/referrals', gpReferralsRoutes).route('/payments', gpPaymentsRoutes);

@@ -154,6 +154,7 @@ const groups = {
   ],
   records: [
     ['records.release', 'Release record copies to patients', 'मरीज़ों को रिकॉर्ड की कॉपी दें'],
+    ['portal.invite', 'Invite patients to the patient portal', 'मरीज़ों को पेशेंट पोर्टल पर आमंत्रित करें'],
     ['fhir.export', "Export a patient's records (FHIR)", 'मरीज़ के रिकॉर्ड निर्यात करें (FHIR)'],
     ['fhir.export_all', 'Export the whole database (FHIR)', 'पूरा डेटाबेस निर्यात करें (FHIR)', 'adminOnly'],
   ],
