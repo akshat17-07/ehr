@@ -133,6 +133,33 @@ describe('staff tokens in AWS (pool check)', () => {
   });
 });
 
+describe('GET /patient/profile', () => {
+  it('returns own profile with version, then PATCH with that version works; audited', async () => {
+    const res = await get('/patient/profile', A);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ id: ramesh, version: await versionOf(ramesh), name: 'Ramesh Kumar Sharma' });
+    expect(body).not.toHaveProperty('labels');
+    const audit = await db.query(
+      "SELECT action, record_type, record_id, user_id FROM audit_events WHERE patient_id = $1 AND record_type = 'patient' AND user_id = 'pt-ramesh' AND action <> 'update' AND action <> 'denied' ORDER BY seq DESC LIMIT 1",
+      [ramesh],
+    );
+    expect(audit.rows).toMatchObject([{ record_type: 'patient', record_id: ramesh, user_id: 'pt-ramesh' }]);
+    expect((await patch('', { version: body.version, email: 'viaget@x.in' }, A)).status).toBe(200);
+  });
+
+  it('a linked family member works; unlinked is 403 forbidden; staff token 403', async () => {
+    const res = await get(`/patient/profile?patientId=${rahul}`, A);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: rahul });
+    const bad = await get(`/patient/profile?patientId=${kavita}`, A);
+    expect(bad.status).toBe(403);
+    expect(await bad.json()).toMatchObject({ error: 'forbidden' });
+    expect((await get('/patient/profile', asStaff('dev-reception', ['staff']))).status).toBe(403);
+    expect((await app.request('/patient/profile')).status).toBe(401);
+  });
+});
+
 describe('PATCH /patient/profile', () => {
   const address = { line1: '7 Arera Colony', city: 'Bhopal', district: 'Bhopal', state: 'Madhya Pradesh', pincode: '462016' };
 

@@ -31,6 +31,7 @@ import {
   portalDocumentPatient,
   portalDocuments,
   portalHome,
+  portalPatient,
   portalPrescriptions,
   portalSurgeries,
   portalVisitDetail,
@@ -94,6 +95,14 @@ export const portalRoutes = new Hono<AuthEnv>()
     const profiles = await portalProfiles(await dbOf(c), userOf(c).sub);
     auditDetails(c, { patientId: profiles[0]?.patientId });
     return c.json(profiles);
+  })
+  // #413
+  .get('/profile', async (c) => {
+    const { patientId } = patientQuery.parse(c.req.query());
+    const profile = await resolvePortalPatient(c, patientId);
+    const patient = await portalPatient(await dbOf(c), profile.patientId);
+    auditDetails(c, { patientId: patient.id, recordType: 'patient', recordId: patient.id });
+    return c.json(patient);
   })
   // #240
   .patch('/profile', async (c) => {
