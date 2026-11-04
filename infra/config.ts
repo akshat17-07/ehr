@@ -39,6 +39,7 @@ export function readConfig(app: App): StageConfig {
 /** Fixed names, so the backup account (a different account) can refer to them. */
 export const names = {
   apiRole: (stage: string) => `ehr-${stage}-api`,
+  jobsFunction: (stage: string) => `ehr-${stage}-jobs`,
   replicationRole: (stage: string) => `ehr-${stage}-files-replication`,
   backupBucket: (stage: string, backupAccountId: string) => `ehr-${stage}-backup-${backupAccountId}`,
 };

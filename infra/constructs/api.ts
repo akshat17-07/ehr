@@ -30,10 +30,12 @@ export interface ApiProps {
  *   ANY /other/{proxy+}        staff pool token   (insurance, gp)
  *   ANY /other/share/{proxy+}  no login           (record-copy links: token + OTP, checked in the Lambda)
  *   ANY /patient/{proxy+}      patient pool token
- * The same Lambda also runs the scheduled jobs (constructs/jobs.ts).
+ * A second copy of the Lambda (jobsFunction, 15 minutes) runs the scheduled jobs (constructs/jobs.ts).
  */
 export class Api extends Construct {
   readonly function: NodejsFunction;
+  /** Same code and role as `function`, with a 15 minute limit: scheduled jobs and the full FHIR export run here. */
+  readonly jobsFunction: NodejsFunction;
   readonly role: iam.Role;
   readonly httpApi: apigw.HttpApi;
 
@@ -56,11 +58,7 @@ export class Api extends Construct {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    this.function = backendFunction(this, 'Function', {
-      entry: 'handler.ts',
-      role: this.role,
-      timeout: Duration.seconds(15),
-      environment: {
+    const environment: Record<string, string> = {
         STAGE: config.stage,
         DSQL_ENDPOINT: props.database.endpoint,
         DB_USER: 'ehr_app',
@@ -76,7 +74,21 @@ export class Api extends Construct {
         ...(config.backupAccountId
           ? { BACKUP_BUCKET: names.backupBucket(config.stage, config.backupAccountId) }
           : {}),
-      },
+    };
+    this.function = backendFunction(this, 'Function', {
+      entry: 'handler.ts',
+      role: this.role,
+      timeout: Duration.seconds(15),
+      // The jobs function's fixed name (no reference to it: the shared role would make a dependency cycle).
+      environment: { ...environment, JOBS_FUNCTION_NAME: names.jobsFunction(config.stage) },
+    });
+    this.jobsFunction = backendFunction(this, 'JobsFunction', {
+      entry: 'handler.ts',
+      functionName: names.jobsFunction(config.stage),
+      role: this.role,
+      timeout: Duration.minutes(15),
+      memorySize: 1024,
+      environment,
     });
     props.database.grantConnect(this.role);
     props.files.grantPutAndRead(this.role);
@@ -84,6 +96,13 @@ export class Api extends Construct {
     // Record-copy share links and their one-time codes (#147, #274), from this account's SES identities only.
     this.role.addToPolicy(
       new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [`arn:aws:ses:${Stack.of(this).region}:${Stack.of(this).account}:identity/*`] }),
+    );
+    // The API starts the full FHIR export (#348) by invoking the jobs function, and only that function.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['lambda:InvokeFunction'],
+        resources: [`arn:aws:lambda:${Stack.of(this).region}:${Stack.of(this).account}:function:${names.jobsFunction(config.stage)}`],
+      }),
     );
     // Staff accounts are made and disabled by the API (#154, #158); never deleted, so no AdminDeleteUser.
     props.auth.staff.pool.grant(

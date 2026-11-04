@@ -4,6 +4,7 @@ import { createMiddleware } from 'hono/factory';
 import { env } from '../config/env.js';
 import type { Queryable } from '../db/migrate.js';
 import type { SignGetUrl } from '../files/signed-url.js';
+import type { StartJob } from '../jobs/start-job.js';
 import type { ExportFiles } from '../files/exports.js';
 import type { FileUploads } from '../files/uploads.js';
 import type { Mailer } from '../mail/mailer.js';
@@ -46,6 +47,8 @@ export type AuthEnv = {
     staffAccounts?: StaffAccounts;
     /** Writes to the exports bucket, set by createApp. */
     exportFiles?: ExportFiles;
+    /** Starts a job on the jobs Lambda, set by createApp. */
+    startJob?: StartJob;
     /** Sends email, set by createApp. */
     mailer?: Mailer;
   };

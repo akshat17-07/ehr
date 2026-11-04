@@ -8,6 +8,8 @@ import { Construct } from 'constructs';
 
 export interface MonitoringProps {
   apiFunction: lambda.IFunction;
+  /** Scheduled jobs and the full export; a failed run emails the team too. */
+  jobsFunction?: lambda.IFunction;
   /** Gets an email for every alarm. AWS first sends a "confirm subscription" email. */
   alertEmail?: string;
 }
@@ -30,5 +32,16 @@ export class Monitoring extends Construct {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     apiErrors.addAlarmAction(new actions.SnsAction(this.topic));
+
+    if (props.jobsFunction) {
+      const jobErrors = new cloudwatch.Alarm(this, 'JobErrors', {
+        alarmDescription: 'A scheduled job or the full FHIR export failed (Lambda failure).',
+        metric: props.jobsFunction.metricErrors({ period: Duration.minutes(5) }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      jobErrors.addAlarmAction(new actions.SnsAction(this.topic));
+    }
   }
 }

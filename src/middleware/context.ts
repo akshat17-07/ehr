@@ -3,6 +3,7 @@ import type { Queryable } from '../db/migrate.js';
 import { signGetUrl, type SignGetUrl } from '../files/signed-url.js';
 import { s3Exports, type ExportFiles } from '../files/exports.js';
 import { s3Uploads, type FileUploads } from '../files/uploads.js';
+import { lambdaStartJob, type StartJob } from '../jobs/start-job.js';
 import { sesMailer, type Mailer } from '../mail/mailer.js';
 import { cognitoStaffAccounts, type StaffAccounts } from '../identity/staff-accounts.js';
 import type { AuthEnv, CurrentUser } from './auth.js';
@@ -26,6 +27,10 @@ export function uploadsOf(c: Context<AuthEnv>): FileUploads {
 
 export function exportsOf(c: Context<AuthEnv>): ExportFiles {
   return c.get('exportFiles') ?? s3Exports;
+}
+
+export function startJobOf(c: Context<AuthEnv>): StartJob {
+  return c.get('startJob') ?? lambdaStartJob;
 }
 
 export function mailerOf(c: Context<AuthEnv>): Mailer {

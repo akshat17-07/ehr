@@ -123,6 +123,26 @@ describe('app stack', () => {
     }
   });
 
+  it('runs jobs in their own 15 minute function; the API can start only that one', () => {
+    const fns = Object.values(dev.app.findResources('AWS::Lambda::Function')).map(
+      (f) => (f as { Properties: { FunctionName?: string; Timeout?: number; MemorySize?: number; Environment?: { Variables: Record<string, string> } } }).Properties,
+    ).filter((f) => f.Environment?.Variables.FIELD_KEY_SECRET_ARN !== undefined);
+    expect(fns).toHaveLength(2);
+    const jobs = fns.find((f) => f.FunctionName === 'ehr-dev-jobs');
+    const api = fns.find((f) => f.FunctionName !== 'ehr-dev-jobs');
+    expect(jobs).toMatchObject({ Timeout: 900, MemorySize: 1024 });
+    expect(api).toMatchObject({ Timeout: 15 });
+    expect(api?.Environment?.Variables.JOBS_FUNCTION_NAME).toBe('ehr-dev-jobs');
+    // Every job rule targets the jobs function, none the API function.
+    const rules = Object.values(dev.app.findResources('AWS::Events::Rule')) as { Properties: { Targets: { Arn: unknown }[] } }[];
+    for (const r of rules) expect(JSON.stringify(r.Properties.Targets[0]!.Arn)).toContain('JobsFunction');
+    // lambda:InvokeFunction only on the jobs function.
+    const invokes = statements(dev.app).filter((s) => actions(s).includes('lambda:InvokeFunction') && !JSON.stringify(s.Resource).includes('Fn::GetAtt'));
+    expect(invokes).toHaveLength(1);
+    expect(JSON.stringify(invokes[0]!.Resource)).toContain(':function:ehr-dev-jobs');
+    expect(JSON.stringify(invokes[0]!.Resource)).not.toContain('*');
+  });
+
   it('records account activity in every region', () => {
     dev.app.hasResourceProperties('AWS::CloudTrail::Trail', {
       IsMultiRegionTrail: true,

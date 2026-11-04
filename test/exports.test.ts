@@ -17,7 +17,7 @@ const app = createApp({
   exportFiles: {
     put: async (key, body) => {
       if (bucketDown) throw new Error('S3 down');
-      exported.set(key, body);
+      exported.set(key, String(body));
     },
   },
   signUrl: async (bucket, key, seconds) => `https://s3.test/${bucket}/${key}?get=${seconds}`,

@@ -19,6 +19,8 @@ export interface BackendFunctionProps {
   environment: Record<string, string>;
   timeout: Duration;
   memorySize?: number;
+  /** A fixed name, so a policy can name the function without referring to it. */
+  functionName?: string;
 }
 
 /** A Lambda built from backend/src: Node 24 on ARM, one minified ESM file, logs kept a year. */
@@ -30,6 +32,7 @@ export function backendFunction(scope: Construct, id: string, props: BackendFunc
     depsLockFilePath: backend('package-lock.json'),
     runtime: lambda.Runtime.NODEJS_24_X,
     architecture: lambda.Architecture.ARM_64,
+    ...(props.functionName && { functionName: props.functionName }),
     memorySize: props.memorySize ?? 512,
     timeout: props.timeout,
     role: props.role,

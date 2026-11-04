@@ -21,6 +21,8 @@ const schema = z.object({
   SHARE_URL: z.string().optional(),
   // Local only: folder of the embedded Postgres used when DSQL_ENDPOINT is not set.
   LOCAL_DB_DIR: z.string().default('.data/db'),
+  // The jobs Lambda's name; the API invokes it to start the full FHIR export (#348).
+  JOBS_FUNCTION_NAME: z.string().optional(),
   // Migration Lambda only.
   API_ROLE_ARN: z.string().optional(),
 });

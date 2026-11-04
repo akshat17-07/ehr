@@ -34,9 +34,9 @@ export class EhrStack extends Stack {
     const auth = new Auth(this, 'Auth', { prod: config.prod });
     const api = new Api(this, 'Api', { config, database, files, auth, allowedOrigins });
     new Migrations(this, 'Migrations', { database, apiRole: api.role });
-    new Jobs(this, 'Jobs', { handler: api.function });
+    new Jobs(this, 'Jobs', { handler: api.jobsFunction });
     new AuditTrail(this, 'AuditTrail');
-    new Monitoring(this, 'Monitoring', { apiFunction: api.function, alertEmail: config.alertEmail });
+    new Monitoring(this, 'Monitoring', { apiFunction: api.function, jobsFunction: api.jobsFunction, alertEmail: config.alertEmail });
 
     website.writeConfig({
       apiUrl: api.url,

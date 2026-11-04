@@ -16,11 +16,13 @@ const JOBS = [
 ] as const;
 
 export interface JobsProps {
-  /** The API Lambda; it runs a job when the event is `{ job: "<name>" }`. */
+  /** The jobs Lambda (api.jobsFunction); it runs a job when the event is `{ job: "<name>" }`. */
   handler: lambda.IFunction;
 }
 
-/** Scheduled jobs: one EventBridge rule per job, each invoking the API Lambda with `{ job }`. */
+// Not here on purpose: 'fhir_export' is on demand (started by POST /admin/fhir/$export), so it has no rule.
+
+/** Scheduled jobs: one EventBridge rule per job, each invoking the jobs Lambda with `{ job }`. */
 export class Jobs extends Construct {
   constructor(scope: Construct, id: string, props: JobsProps) {
     super(scope, id);

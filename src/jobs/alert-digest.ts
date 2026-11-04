@@ -1,4 +1,5 @@
 import type { BackupFiles } from '../backup/files.js';
+import type { ExportFiles } from '../files/exports.js';
 import type { Queryable } from '../db/migrate.js';
 import { createAlert, type AlertKind } from '../modules/alerts/alerts.js';
 
@@ -10,6 +11,11 @@ export interface JobDeps {
   now?: Date;
   /** Where backup files go; the real backup bucket when not given. */
   backupFiles?: BackupFiles;
+  /** The exports bucket, for the full FHIR export; the real one when not given. */
+  exportFiles?: ExportFiles;
+  /** fhir_export only: the exports row to fill, and the optional `since` (ISO) filter. */
+  exportId?: string;
+  since?: string;
 }
 
 export interface Tally {

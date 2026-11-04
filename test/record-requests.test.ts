@@ -16,7 +16,7 @@ const sent: Mail[] = [];
 let mailDown = false;
 const app = createApp({
   db: async () => db,
-  exportFiles: { put: async (key, body) => void exported.set(key, body) },
+  exportFiles: { put: async (key, body) => void exported.set(key, String(body)) },
   mailer: {
     send: vi.fn(async (mail: Mail) => {
       if (mailDown) throw new Error('SES down');

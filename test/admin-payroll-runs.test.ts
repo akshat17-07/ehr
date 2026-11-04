@@ -14,7 +14,7 @@ env.EXPORTS_BUCKET = 'exports-test';
 const exported = new Map<string, { body: string; mime: string }>();
 const app = createApp({
   db: async () => db,
-  exportFiles: { put: async (key, body, mime) => void exported.set(key, { body, mime }) },
+  exportFiles: { put: async (key, body, mime) => void exported.set(key, { body: String(body), mime }) },
   signUrl: async (bucket, key, seconds) => `https://s3.test/${bucket}/${key}?get=${seconds}`,
 });
 

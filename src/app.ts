@@ -1,4 +1,5 @@
 import { adminPatientsRoutes } from './modules/patients/admin-patients.routes.js';
+import { adminExportsRoutes, adminFhirRoutes } from './modules/records/full-export.routes.js';
 import { adminBackupStatusRoutes } from './modules/admin-backup/backup-status.routes.js';
 import { adminAuditRoutes } from './audit/audit.routes.js';
 import { adminRegistersRoutes } from './modules/compliance/registers.routes.js';
@@ -24,6 +25,7 @@ import {
 import { getDb } from './db/client.js';
 import type { Queryable } from './db/migrate.js';
 import { signGetUrl, type SignGetUrl } from './files/signed-url.js';
+import { lambdaStartJob, type StartJob } from './jobs/start-job.js';
 import { s3Exports, type ExportFiles } from './files/exports.js';
 import { s3Uploads, type FileUploads } from './files/uploads.js';
 import { sesMailer, type Mailer } from './mail/mailer.js';
@@ -102,6 +104,8 @@ export interface AppDeps {
   staffAccounts?: StaffAccounts;
   /** The exports bucket (tests pass a fake). */
   exportFiles?: ExportFiles;
+  /** Starts the full FHIR export job (tests pass a fake). */
+  startJob?: StartJob;
   /** Email (tests pass a fake). */
   mailer?: Mailer;
 }
@@ -112,6 +116,7 @@ export function createApp({
   uploads = s3Uploads,
   staffAccounts = cognitoStaffAccounts,
   exportFiles = s3Exports,
+  startJob = lambdaStartJob,
   mailer = sesMailer,
 }: AppDeps = {}) {
   const staff = new Hono<AuthEnv>()
@@ -186,6 +191,8 @@ export function createApp({
     .route('/purchase-orders', adminPurchaseOrdersRoutes)
     .route('/audit', adminAuditRoutes)
     .route('/backup-status', adminBackupStatusRoutes)
+    .route('/fhir', adminFhirRoutes)
+    .route('/exports', adminExportsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
@@ -202,6 +209,7 @@ export function createApp({
       c.set('uploads', uploads);
       c.set('staffAccounts', staffAccounts);
       c.set('exportFiles', exportFiles);
+      c.set('startJob', startJob);
       c.set('mailer', mailer);
       await next();
     })
