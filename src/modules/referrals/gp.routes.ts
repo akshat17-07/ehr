@@ -109,3 +109,70 @@ async function hasReferrerConsent(db: Queryable, patientId: string): Promise<boo
   const r = rows[0] as { given?: unknown; withdrawn_at?: unknown } | undefined;
   return r?.given === true && r.withdrawn_at == null;
 }
+
+// GET /other/gp/payments (api-list.md #273): did the patients this GP sent pay? Status only, never an amount.
+// The GP percentage / commission is ON HOLD pending legal advice (NMC conduct rules on referral fees), so this
+// answer carries NO money amounts and no percentage. Do not add them without that advice.
+const PAYMENT_STATUSES = ['none', 'unpaid', 'part_paid', 'paid'] as const;
+const paymentsQuery = pageQuery.extend({ status: z.enum(PAYMENT_STATUSES).optional() });
+
+// Bills that count: made on/after the referral date (India), final or later (not draft, not void).
+const COUNT_BILLS = (status: string) => `(SELECT COUNT(*) FROM bills WHERE bills.patient_id = referrals.patient_id AND bills.voided_at IS NULL
+  AND bills.status ${status}
+  AND to_char(bills.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') >= referrals.referral_date::text)`;
+const N_FINAL = COUNT_BILLS("= 'final'");
+const N_PART = COUNT_BILLS("= 'part_paid'");
+const N_PAID = COUNT_BILLS("= 'paid'");
+const PAYMENT_STATUS_SQL = `(CASE WHEN ${N_FINAL} + ${N_PART} + ${N_PAID} = 0 THEN 'none'
+  WHEN ${N_PAID} = ${N_FINAL} + ${N_PART} + ${N_PAID} THEN 'paid'
+  WHEN ${N_FINAL} = ${N_FINAL} + ${N_PART} + ${N_PAID} THEN 'unpaid'
+  ELSE 'part_paid' END)`;
+
+export const gpPaymentsRoutes = new Hono<AuthEnv>().get('/', async (c) => {
+  const query = paymentsQuery.parse(c.req.query());
+  const db = await dbOf(c);
+  const where = [OWN_REFERRAL('$1')];
+  const params: unknown[] = [userOf(c).sub];
+  if (query.status) where.push(`${PAYMENT_STATUS_SQL} = $${params.push(query.status)}`);
+  const page = await pageRows(
+    db,
+    {
+      select: `SELECT referrals.id, referrals.patient_id, referrals.referral_date::text AS date_text, patients.name AS patient_name,
+        ${PAYMENT_STATUS_SQL} AS payment_status
+        FROM referrals JOIN patients ON patients.id = referrals.patient_id`,
+      where,
+      params,
+      orderBy: ['referrals.referral_date', 'referrals.created_at', 'referrals.id'],
+    },
+    query,
+    (r) => r as Record<string, unknown>,
+  );
+  const patientIds = [...new Set(page.items.map((r) => String(r.patient_id)))];
+  const billsOf = new Map<string, { number?: string; date: string; status: string }[]>();
+  if (patientIds.length) {
+    const marks = patientIds.map((_, i) => `$${i + 1}`).join(', ');
+    const { rows } = await db.query(
+      `SELECT patient_id, number, status, to_char(created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS date_text
+       FROM bills WHERE patient_id IN (${marks}) AND voided_at IS NULL AND status IN ('final', 'part_paid', 'paid')
+       ORDER BY created_at, id`,
+      patientIds,
+    );
+    for (const b of rows as Record<string, unknown>[]) {
+      const list = billsOf.get(String(b.patient_id)) ?? [];
+      list.push({ ...(b.number != null && { number: String(b.number) }), date: String(b.date_text), status: String(b.status) });
+      billsOf.set(String(b.patient_id), list);
+    }
+  }
+  // One audit row per call (the audit details hold a single record); like the referral list it names none.
+  auditDetails(c, { recordType: 'referral' });
+  return c.json({
+    ...page,
+    items: page.items.map((r) => ({
+      referralId: String(r.id),
+      patientName: String(r.patient_name),
+      referralDate: String(r.date_text),
+      bills: (billsOf.get(String(r.patient_id)) ?? []).filter((b) => b.date >= String(r.date_text)),
+      paymentStatus: String(r.payment_status),
+    })),
+  });
+});

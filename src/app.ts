@@ -55,7 +55,9 @@ import { depositsRoutes } from './modules/billing/deposits.routes.js';
 import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { policiesRoutes } from './modules/insurance/policies.routes.js';
 import { claimsRoutes } from './modules/insurance/claims.routes.js';
-import { gpReferralsRoutes } from './modules/referrals/gp.routes.js';
+import { gpPaymentsRoutes, gpReferralsRoutes } from './modules/referrals/gp.routes.js';
+import { getHospital } from './modules/reference/hospital.js';
+import { dbOf } from './middleware/context.js';
 import { agentLinksRoutes } from './modules/insurance/agent-links.routes.js';
 import { agentRoutes } from './modules/insurance/agent.routes.js';
 import { agentClaimsRoutes } from './modules/insurance/agent-claims.routes.js';
@@ -198,8 +200,9 @@ export function createApp({
     .route('/exports', adminExportsRoutes)
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/', portalRoutes);
-  const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me', meRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
-  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me', meRoutes).route('/referrals', gpReferralsRoutes);
+  const hospitalRoutes = new Hono<AuthEnv>().get('/', async (c) => c.json(await getHospital(await dbOf(c))));
+  const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
+  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/referrals', gpReferralsRoutes).route('/payments', gpPaymentsRoutes);
 
   // No sign-in: the token in the link and the emailed code are the proof (modules/records/share.routes.ts).
   const share = new Hono<AuthEnv>().route('/', shareRoutes);

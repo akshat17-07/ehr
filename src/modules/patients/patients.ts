@@ -233,6 +233,14 @@ export async function registerPatient(db: Queryable, input: NewPatient, by: stri
   const { guardian, ...row } = input;
   if (row.referrerId) await assertReferrer(db, row.referrerId);
   return addPatient(db, row, by, now, async (tx, id) => {
+    // The referring doctor sees the patient only through a referral row, so registering with a referrer adds one.
+    if (row.referrerId) {
+      await tx.query(
+        `INSERT INTO referrals (id, status, created_by, updated_by, patient_id, referrer_id, referral_date, reason)
+         VALUES ($1, 'received', $2, $2, $3, $4, $5, NULL)`,
+        [randomUUID(), by, id, row.referrerId, indiaDate(now)],
+      );
+    }
     if (!guardian) return;
     await tx.query(
       `INSERT INTO guardians (id, status, created_by, updated_by, patient_id, name, relation, mobile)
