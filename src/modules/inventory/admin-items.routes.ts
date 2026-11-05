@@ -5,7 +5,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { changeItem, listAdminItems, setReorderSettings, setReorderSettingsBulk } from './admin-items.js';
+import { adminItem, changeItem, listAdminItems, setReorderSettings, setReorderSettingsBulk } from './admin-items.js';
 import { ITEM_KINDS } from './items.js';
 import { listReorderChecks, reorderCheckDetail, reorderCheckHtml, runReorderCheck } from './reorder-checks.js';
 
@@ -68,6 +68,8 @@ export const adminInventoryRoutes = new Hono<AuthEnv>()
     const query = itemsQuery.parse(c.req.query());
     return c.json(await listAdminItems(await dbOf(c), query));
   })
+  // #706
+  .get('/items/:id', requirePermission('inventory.manage'), async (c) => c.json(await adminItem(await dbOf(c), c.req.param('id'))))
   // #351
   .patch('/items/:id', requirePermission('inventory.manage'), async (c) => {
     const input = itemChange.parse(await c.req.json().catch(() => undefined));

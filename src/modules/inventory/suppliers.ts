@@ -50,6 +50,13 @@ export async function listSuppliers(db: Queryable, query: { q?: string; active?:
   return rows.map(toSupplier);
 }
 
+/** #706: one supplier; 404 if none. */
+export async function getSupplier(db: Queryable, id: string): Promise<Supplier> {
+  const row = UUID.test(id) ? (await db.query('SELECT * FROM suppliers WHERE id = $1', [id])).rows[0] : undefined;
+  if (!row) throw new AppError(404, 'not_found');
+  return toSupplier(row);
+}
+
 export interface NewSupplier {
   name: string;
   gstin?: string;

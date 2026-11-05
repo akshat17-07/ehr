@@ -4,7 +4,7 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { auditDetails } from '../../middleware/audit.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addSupplier, changeSupplier, listSuppliers } from './suppliers.js';
+import { addSupplier, changeSupplier, getSupplier, listSuppliers } from './suppliers.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true');
@@ -59,6 +59,8 @@ const supplierChange = z
 export const adminSuppliersRoutes = new Hono<AuthEnv>()
   // #292
   .get('/', requirePermission('inventory.manage'), async (c) => c.json(await listSuppliers(await dbOf(c), listQuery.parse(c.req.query()))))
+  // #706
+  .get('/:id', requirePermission('inventory.manage'), async (c) => c.json(await getSupplier(await dbOf(c), c.req.param('id'))))
   // #293
   .post('/', requirePermission('inventory.manage'), async (c) => {
     const input = newSupplier.parse(await c.req.json().catch(() => undefined));

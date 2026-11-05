@@ -63,6 +63,13 @@ export async function searchDrugs(db: Queryable, search: DrugSearch): Promise<Dr
   return rows.map(toDrug);
 }
 
+/** #706: one drug (active or not); 404 if none. */
+export async function getDrug(db: Queryable, id: string): Promise<Drug> {
+  const row = UUID.test(id) ? (await db.query('SELECT * FROM drugs WHERE id = $1', [id])).rows[0] : undefined;
+  if (!row) throw new AppError(404, 'not_found');
+  return toDrug(row);
+}
+
 export type AdminDrug = Drug & { ceilingPaise?: number };
 
 // The staff search does not show the purchase ceiling; the Admin's add and edit do.

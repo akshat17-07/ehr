@@ -83,8 +83,9 @@ async function findItem(db: Queryable, id: string): Promise<{ table: 'drugs' | '
   throw new AppError(404, 'not_found');
 }
 
-async function adminItem(db: Queryable, id: string, now = new Date()): Promise<AdminItem> {
-  const { rows } = await db.query(`${ITEMS} WHERE i.id = $1`, [id]);
+/** #706: one item with stock totals and reorder settings; 404 if none. */
+export async function adminItem(db: Queryable, id: string, now = new Date()): Promise<AdminItem> {
+  const { rows } = UUID.test(id) ? await db.query(`${ITEMS} WHERE i.id = $1`, [id]) : { rows: [] };
   const row = rows[0];
   if (!row) throw new AppError(404, 'not_found');
   const [byItem, settings] = await Promise.all([stockByItem(db, [id], now), settingsByItem(db, [id])]);

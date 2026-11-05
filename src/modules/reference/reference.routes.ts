@@ -6,7 +6,9 @@ import { requirePermission } from '../../permissions/check.js';
 import { listDrugBatches } from '../inventory/batches.js';
 import { searchCodes } from './codes.js';
 import { listDepartments } from './departments.js';
-import { DRUG_SCHEDULES, searchDrugs } from './drugs.js';
+import { DRUG_SCHEDULES, getDrug, searchDrugs } from './drugs.js';
+import { listDoctors } from '../users/doctors.js';
+import { pageQuery } from '../../db/page.js';
 import { getHospital } from './hospital.js';
 import { listInsurers, listPartnerHospitals, listTpas } from './payers.js';
 import { listTariffs, rateBoardRows } from './tariffs.js';
@@ -30,6 +32,11 @@ export const referenceRoutes = new Hono<AuthEnv>()
   .get('/departments', async (c) => {
     const query = z.object({ active: boolText }).parse(c.req.query());
     return c.json(await listDepartments(await dbOf(c), query));
+  })
+  // #701
+  .get('/doctors', async (c) => {
+    const query = pageQuery.extend({ q: z.string().trim().min(1).max(100).optional(), departmentId: z.uuid().optional() }).parse(c.req.query());
+    return c.json(await listDoctors(await dbOf(c), query));
   })
   // #10
   .get('/tariffs', async (c) => {
@@ -60,6 +67,8 @@ export const referenceRoutes = new Hono<AuthEnv>()
       .parse(c.req.query());
     return c.json(await searchDrugs(await dbOf(c), query));
   })
+  // #706
+  .get('/drugs/:id', async (c) => c.json(await getDrug(await dbOf(c), c.req.param('id'))))
   // #13
   .get('/drugs/:id/batches', requirePermission('stock.view'), async (c) => {
     const query = z.object({ inStock: boolText }).parse(c.req.query());
