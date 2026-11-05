@@ -25,6 +25,7 @@ import { closeEncounter, createEncounter, encounterDetail, ENCOUNTER_STATUSES, E
 
 const listQuery = pageQuery.extend({
   date: z.iso.date().optional(),
+  patientId: z.uuid().optional(),
   doctorId: z.uuid().optional(),
   departmentId: z.uuid().optional(),
   type: z.enum(ENCOUNTER_TYPES).optional(),
@@ -111,7 +112,17 @@ const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
 export const encountersRoutes = new Hono<AuthEnv>()
   // #36
-  .get('/', requirePermission('encounter.view'), async (c) => c.json(await listEncounters(await dbOf(c), listQuery.parse(c.req.query()))))
+  // #707: with patientId it is that patient's visits (all dates unless date is given), after the same patient access check as #38.
+  .get('/', requirePermission('encounter.view'), async (c) => {
+    const query = listQuery.parse(c.req.query());
+    const db = await dbOf(c);
+    if (query.patientId) {
+      const patient = await getPatient(db, query.patientId);
+      auditDetails(c, { patientId: patient.id, recordType: 'encounter' });
+      await assertPatientAccess(db, userOf(c), patient);
+    }
+    return c.json(await listEncounters(db, query));
+  })
   // #37: with an appointment it is that appointment's check-in (#34), which also marks it arrived.
   .post('/', requirePermission('encounter.create'), async (c) => {
     const { appointmentId, ...visit } = newEncounter.parse(await bodyOf(c));

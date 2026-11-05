@@ -81,8 +81,10 @@ export async function openEncounter(db: Queryable, input: NewEncounter, by: stri
 }
 
 export interface EncounterQuery extends PageQuery {
-  /** India date the encounter started, YYYY-MM-DD; today if not given. */
+  /** India date the encounter started, YYYY-MM-DD; today if not given (all dates when patientId is given). */
   date?: string;
+  /** #707: one patient's visits; the caller has checked patient access. */
+  patientId?: string;
   doctorId?: string;
   departmentId?: string;
   type?: EncounterType;
@@ -93,9 +95,13 @@ const DAY_MS = 86_400_000;
 
 /** #36: one day's encounters in the order they started (the waiting order), each with the patient's summary. */
 export async function listEncounters(db: Queryable, query: EncounterQuery, now = new Date()): Promise<Page<Encounter>> {
-  const start = indiaDayStart(query.date ?? indiaDate(now));
-  const params: unknown[] = [start, new Date(start.getTime() + DAY_MS)];
-  const where = ['started_at >= $1', 'started_at < $2'];
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.date || !query.patientId) {
+    const start = indiaDayStart(query.date ?? indiaDate(now));
+    where.push(`started_at >= $${params.push(start)}`, `started_at < $${params.push(new Date(start.getTime() + DAY_MS))}`);
+  }
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
   if (query.doctorId) where.push(`doctor_id = $${params.push(query.doctorId)}`);
   if (query.departmentId) where.push(`department_id = $${params.push(query.departmentId)}`);
   if (query.type) where.push(`type = $${params.push(query.type)}`);
