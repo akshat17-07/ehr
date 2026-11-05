@@ -32,7 +32,7 @@ import { DEPOSIT_MODES, patientDeposits, takeDeposit } from '../billing/deposits
 import { addPolicy, patientPolicies } from '../insurance/policies.js';
 import { policyFields } from '../insurance/policies.routes.js';
 import { addReferral } from '../referrals/referrals.js';
-import { linkAgent } from '../insurance/agent-links.js';
+import { linkAgent, listPatientAgentLinks } from '../insurance/agent-links.js';
 
 // /staff/patients (api-list.md 6.3).
 
@@ -388,6 +388,15 @@ export const patientsRoutes = new Hono<AuthEnv>()
     const policy = await addPolicy(await dbOf(c), c.req.param('id'), input, userOf(c).sub);
     auditDetails(c, { patientId: policy.patientId, recordType: 'policy', recordId: policy.id });
     return c.json(policy, 201);
+  })
+  // #702
+  .get('/:id/agent-links', requirePermission('insurance.agent_link'), async (c) => {
+    const { active } = z.object({ active: z.enum(['true', 'false']).transform((v) => v === 'true').optional() }).parse(c.req.query());
+    const db = await dbOf(c);
+    const patient = await getPatient(db, c.req.param('id'));
+    auditDetails(c, { patientId: patient.id, recordType: 'agent_link' });
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json(await listPatientAgentLinks(db, patient.id, { active }));
   })
   // #139
   .post('/:id/agent-links', requirePermission('insurance.agent_link'), async (c) => {

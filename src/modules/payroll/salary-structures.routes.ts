@@ -3,7 +3,7 @@ import { auditDetails } from '../../middleware/audit.js';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
-import { addSalaryStructure, listSalaryStructures, newSalaryStructureBody, salaryStructureChange, updateSalaryStructure } from './salary-structures.js';
+import { addSalaryStructure, getSalaryStructure, listSalaryStructures, newSalaryStructureBody, salaryStructureChange, updateSalaryStructure } from './salary-structures.js';
 
 // Mounted at /admin/salary-structures.
 export const adminSalaryStructuresRoutes = new Hono<AuthEnv>()
@@ -11,6 +11,12 @@ export const adminSalaryStructuresRoutes = new Hono<AuthEnv>()
   .get('/', requirePermission('payroll.employee'), async (c) => {
     auditDetails(c, { recordType: 'salary_structure' });
     return c.json(await listSalaryStructures(await dbOf(c)));
+  })
+  // #703
+  .get('/:id', requirePermission('payroll.employee'), async (c) => {
+    const structure = await getSalaryStructure(await dbOf(c), c.req.param('id'));
+    auditDetails(c, { recordType: 'salary_structure', recordId: structure.id });
+    return c.json(structure);
   })
   // #322
   .patch('/:id', requirePermission('payroll.employee'), async (c) => {

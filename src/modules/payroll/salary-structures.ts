@@ -41,6 +41,13 @@ export async function listSalaryStructures(db: Queryable): Promise<SalaryStructu
   return rows.map((r) => toSalaryStructure(r as Record<string, unknown>));
 }
 
+/** #703: one structure; 404 if none (or voided). */
+export async function getSalaryStructure(db: Queryable, id: string): Promise<SalaryStructure> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM salary_structures WHERE id = $1 AND voided_at IS NULL', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  return toSalaryStructure(rows[0] as Record<string, unknown>);
+}
+
 const paise = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const name = z.string().trim().min(1).max(100);
 

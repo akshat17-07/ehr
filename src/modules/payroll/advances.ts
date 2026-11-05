@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Queryable } from '../../db/migrate.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
 import { indiaDate } from '../../time/india.js';
@@ -31,6 +32,24 @@ export function toAdvance(r: Record<string, unknown>): Advance {
     recoveredPaise: recovered,
     balancePaise: amount - recovered,
   };
+}
+
+export type AdvanceRow = Omit<Advance, 'status'> & { status: 'open' | 'closed' };
+
+/** #703: advances newest first; open: still has a balance, closed: fully recovered. */
+export async function listAdvances(
+  db: Queryable,
+  query: PageQuery & { employeeId?: string; status?: 'open' | 'closed' },
+): Promise<Page<AdvanceRow>> {
+  const params: unknown[] = [];
+  const where = ['voided_at IS NULL'];
+  if (query.employeeId) where.push(`employee_id = $${params.push(query.employeeId)}`);
+  if (query.status === 'open') where.push('recovered_paise < amount_paise');
+  if (query.status === 'closed') where.push('recovered_paise >= amount_paise');
+  return pageRows(db, { select: 'SELECT * FROM advances', where, params, orderBy: ['created_at', 'id'], direction: 'desc' }, query, (r) => {
+    const a = toAdvance(r);
+    return { ...a, status: a.balancePaise > 0 ? 'open' : 'closed' };
+  });
 }
 
 const paise = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);

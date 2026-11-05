@@ -39,6 +39,45 @@ export async function getAgentLink(db: Queryable, id: string): Promise<AgentLink
   return toAgentLink(rows[0] as Record<string, unknown>);
 }
 
+export interface PatientAgentLink {
+  id: string;
+  version: number;
+  status: 'active' | 'ended';
+  /** users.id of the insurance agent. */
+  agentId: string;
+  agentName: string;
+  /** YYYY-MM-DD */
+  fromDate: string;
+  /** YYYY-MM-DD, the last day; null: until ended. */
+  toDate: string | null;
+  createdAt: string;
+}
+
+/** #702: a patient's agent links, newest first, ended ones included; active keeps links still open today. */
+export async function listPatientAgentLinks(db: Queryable, patientId: string, query: { active?: boolean }, now = new Date()): Promise<PatientAgentLink[]> {
+  const params: unknown[] = [patientId];
+  let where = 'l.patient_id = $1';
+  if (query.active) {
+    params.push(indiaDate(now));
+    where += " AND l.status = 'active' AND (l.to_date IS NULL OR l.to_date >= $2)";
+  }
+  const { rows } = await db.query(
+    `SELECT l.id, l.version, l.status, l.agent_user_id, l.from_date::text AS from_text, l.to_date::text AS to_text, l.created_at, u.name AS agent_name
+     FROM agent_links l LEFT JOIN users u ON u.id = l.agent_user_id WHERE ${where} ORDER BY l.created_at DESC, l.id LIMIT 500`,
+    params,
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    version: Number(r.version),
+    status: r.status as 'active' | 'ended',
+    agentId: String(r.agent_user_id),
+    agentName: r.agent_name == null ? '' : String(r.agent_name),
+    fromDate: String(r.from_text),
+    toDate: r.to_text == null ? null : String(r.to_text),
+    createdAt: (r.created_at as Date).toISOString(),
+  }));
+}
+
 /**
  * #139: links an active insurance agent to the patient from today. 404 for no patient; 422 for a user who isn't an
  * active insurance agent or a `to` before today; 409 duplicate if the agent already has an open link to the patient.

@@ -7,7 +7,7 @@ import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { recordCount } from './counts.js';
 import { receiveGoods } from './grn.js';
-import { issueIndent, requestIndent } from './indents.js';
+import { getIndent, issueIndent, listIndents, requestIndent } from './indents.js';
 import { issueStock } from './issues.js';
 import { QUARANTINE_REASONS, quarantineStock } from './quarantine.js';
 import { ITEM_KINDS } from './items.js';
@@ -124,6 +124,17 @@ export const stockRoutes = new Hono<AuthEnv>()
     const indent = await requestIndent(await dbOf(c), input, userOf(c).sub);
     auditDetails(c, { ...(indent.patientId && { patientId: indent.patientId }), recordType: 'indent', recordId: indent.id });
     return c.json(indent, 201);
+  })
+  // #710
+  .get('/indents', requirePermission('stock.view'), async (c) => {
+    const query = pageQuery.extend({ status: z.enum(['requested', 'issued', 'cancelled']).optional(), patientId: z.uuid().optional() }).parse(c.req.query());
+    return c.json(await listIndents(await dbOf(c), userOf(c), query));
+  })
+  // #710
+  .get('/indents/:id', requirePermission('stock.view'), async (c) => {
+    const indent = await getIndent(await dbOf(c), userOf(c), c.req.param('id'));
+    auditDetails(c, { ...(indent.patientId && { patientId: indent.patientId }), recordType: 'indent', recordId: indent.id });
+    return c.json(indent);
   })
   // #278
   .post('/indents/:id/issue', requirePermission('stock.issue'), async (c) => {

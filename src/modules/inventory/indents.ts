@@ -4,6 +4,8 @@ import { updateRecord } from '../../db/records.js';
 import { withTransaction } from '../../db/transaction.js';
 import { baseFields, type BaseRow } from '../../db/table.js';
 import { AppError } from '../../middleware/errors.js';
+import { pageRows, type Page, type PageQuery } from '../../db/page.js';
+import { assertPatientAccess, type Caller } from '../access/patient-access.js';
 import { getPatient, type BaseFields } from '../patients/patients.js';
 import { UUID } from '../users/users.js';
 import { prepareIssue, writeIssue, type StockIssue } from './issues.js';
@@ -43,6 +45,49 @@ export async function requestIndent(db: Queryable, input: Omit<Indent, keyof Bas
     [randomUUID(), by, input.ward, input.patientId ?? null, JSON.stringify(input.lines)],
   );
   return toIndent(inserted[0] as Record<string, unknown>);
+}
+
+/** The patient ids among these that the caller may not open (sensitive label, inactive rule). */
+async function blockedPatients(db: Queryable, caller: Caller, ids: string[]): Promise<Set<string>> {
+  const blocked = new Set<string>();
+  for (const id of ids) {
+    try {
+      await assertPatientAccess(db, caller, await getPatient(db, id));
+    } catch (e) {
+      if (!(e instanceof AppError) || (e.status !== 403 && e.status !== 404)) throw e;
+      blocked.add(id);
+    }
+  }
+  return blocked;
+}
+
+/**
+ * #710: indents newest first. A patient filter needs patient access (403 otherwise); without it, indents of
+ * patients the caller may not open are left out of the page.
+ */
+export async function listIndents(
+  db: Queryable,
+  caller: Caller,
+  query: PageQuery & { status?: Indent['status']; patientId?: string },
+): Promise<Page<Indent>> {
+  if (query.patientId) await assertPatientAccess(db, caller, await getPatient(db, query.patientId));
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (query.status) where.push(`status = $${params.push(query.status)}`);
+  if (query.patientId) where.push(`patient_id = $${params.push(query.patientId)}`);
+  const page = await pageRows(db, { select: 'SELECT * FROM indents', where, params, orderBy: ['created_at', 'id'], direction: 'desc' }, query, toIndent);
+  const patients = query.patientId ? [] : [...new Set(page.items.flatMap((i) => (i.patientId ? [i.patientId] : [])))];
+  const blocked = await blockedPatients(db, caller, patients);
+  return { ...page, items: page.items.filter((i) => !i.patientId || !blocked.has(i.patientId)) };
+}
+
+/** #710: one indent with its lines; 404 if none; 403 when it is for a patient the caller may not open. */
+export async function getIndent(db: Queryable, caller: Caller, id: string): Promise<Indent> {
+  const { rows } = UUID.test(id) ? await db.query('SELECT * FROM indents WHERE id = $1', [id]) : { rows: [] };
+  if (!rows[0]) throw new AppError(404, 'not_found');
+  const indent = toIndent(rows[0]);
+  if (indent.patientId) await assertPatientAccess(db, caller, await getPatient(db, indent.patientId));
+  return indent;
 }
 
 /**
