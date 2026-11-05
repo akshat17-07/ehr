@@ -27,6 +27,14 @@ export function toAgentPolicy(p: Policy): AgentPolicy {
   return out as AgentPolicy;
 }
 
+// #711: when this agent's live link(s) to the patient end (to_date), or null for an open-ended link. Only the
+// caller's own links count, and only live ones (the WHERE has LIVE_LINK too).
+const LINK_ENDS_ON = `(SELECT CASE WHEN COUNT(l.to_date) = COUNT(*) THEN MAX(l.to_date)::text END
+  FROM agent_links l JOIN users u ON u.id = l.agent_user_id
+  WHERE l.patient_id = patients.id AND u.cognito_sub = $1 AND l.voided_at IS NULL
+    AND l.from_date <= $2 AND (l.to_date IS NULL OR l.to_date >= $2)) AS link_ends_on`;
+const AGENT_PATIENT_SELECT = PATIENT_SELECT.replace(' FROM patients', `, ${LINK_ENDS_ON} FROM patients`);
+
 const listQuery = pageQuery.extend({ q: z.string().trim().min(1).max(100).optional() });
 const newPolicy = z.object(policyFields).strict();
 
@@ -52,9 +60,9 @@ export const agentRoutes = new Hono<AuthEnv>()
       where.push('(patients.name_search LIKE $3 OR lower(patients.uhid) LIKE $3)');
       params.push(`%${query.q.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`);
     }
-    const page = await pageRows(await dbOf(c), { select: PATIENT_SELECT, where, params, orderBy: ['patients.name', 'patients.id'], direction: 'asc' }, query, (r) => {
+    const page = await pageRows(await dbOf(c), { select: AGENT_PATIENT_SELECT, where, params, orderBy: ['patients.name', 'patients.id'], direction: 'asc' }, query, (r) => {
       const p = toPatient(r, now);
-      return { patientId: p.id, uhid: p.uhid, name: p.name, sex: p.sex, ...(p.ageYears !== undefined && { ageYears: p.ageYears }) };
+      return { patientId: p.id, uhid: p.uhid, name: p.name, sex: p.sex, ...(p.ageYears !== undefined && { ageYears: p.ageYears }), linkEndsOn: r.link_ends_on == null ? null : String(r.link_ends_on) };
     });
     return c.json(page);
   })

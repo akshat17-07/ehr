@@ -34,7 +34,7 @@ import { cognitoStaffAccounts, type StaffAccounts } from './identity/staff-accou
 import { auditRequests } from './middleware/audit.js';
 import { onError, onNotFound } from './middleware/errors.js';
 import { healthRoutes } from './modules/health/health.routes.js';
-import { meRoutes } from './modules/me/me.routes.js';
+import { gpMeRoutes, meRoutes, patientMeRoutes } from './modules/me/me.routes.js';
 import { myPermissionsRoutes } from './modules/me/permissions.routes.js';
 import { myAlertsRoutes } from './modules/alerts/alerts.routes.js';
 import { appointmentsRoutes } from './modules/appointments/appointments.routes.js';
@@ -204,14 +204,14 @@ export function createApp({
     .route('/fhir', adminFhirRoutes)
     .route('/exports', adminExportsRoutes)
     .route('/', permissionsAdminRoutes);
-  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/invites', patientAcceptRoutes).route('/', portalRoutes);
+  const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', patientMeRoutes).route('/invites', patientAcceptRoutes).route('/', portalRoutes);
   const hospitalRoutes = new Hono<AuthEnv>().get('/', async (c) => c.json(await getHospital(await dbOf(c))));
   // #708: the same payer lists the staff read
   const payerRoutes = new Hono<AuthEnv>()
     .get('/insurers', async (c) => c.json(await listInsurers(await dbOf(c))))
     .get('/tpas', async (c) => c.json(await listTpas(await dbOf(c))));
   const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/', payerRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
-  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/referrals', gpReferralsRoutes).route('/payments', gpPaymentsRoutes);
+  const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', gpMeRoutes).route('/hospital', hospitalRoutes).route('/referrals', gpReferralsRoutes).route('/payments', gpPaymentsRoutes);
 
   // No sign-in: the token in the link and the emailed code are the proof (modules/records/share.routes.ts).
   const share = new Hono<AuthEnv>().route('/', shareRoutes);

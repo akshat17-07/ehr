@@ -59,9 +59,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
-      # Does nothing if the account is already bootstrapped.
-      - run: npx cdk bootstrap
-        working-directory: infra
       - run: npx cdk deploy ehr-dev --require-approval never -c alertEmail="$ALERT_EMAIL" --outputs-file outputs.json
         working-directory: infra
         env:

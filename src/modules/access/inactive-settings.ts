@@ -57,12 +57,22 @@ export async function listInactiveSettings(db: Queryable): Promise<StoredInactiv
   return rows.map(toSetting);
 }
 
+/**
+ * The version of the whole list: it goes up whenever any setting is added, edited or ended (every row version
+ * is at least 1 and each change adds to the sum), so a stale PATCH can be told apart. 0 when nothing was ever set.
+ */
+export async function inactiveSettingsVersion(db: Queryable): Promise<number> {
+  const { rows } = await db.query('SELECT COALESCE(SUM(version), 0) AS v FROM inactive_settings');
+  return Number(rows[0]?.v ?? 0);
+}
+
 /** #186: the list is replaced as a whole. Unchanged rows stay, changed ones are edited (history kept), missing ones end. */
 export async function replaceInactiveSettings(
   db: Queryable,
   settings: InactiveSetting[],
   by: string,
   reason?: string,
+  version?: number,
 ): Promise<StoredInactiveSetting[]> {
   const keys = settings.map(keyOf);
   if (new Set(keys).size !== keys.length) throw new AppError(422, 'invalid_input', 'settings: each role or user can have one setting');
@@ -73,6 +83,9 @@ export async function replaceInactiveSettings(
     }
   }
   await withTransaction(db, async (tx) => {
+    if (version !== undefined && (await inactiveSettingsVersion(tx)) !== version) {
+      throw new AppError(409, 'stale_version', 'the inactive-access settings were changed by someone else');
+    }
     const current = new Map((await listInactiveSettings(tx)).map((s) => [keyOf(s), s]));
     for (const s of settings) {
       const old = current.get(keyOf(s));

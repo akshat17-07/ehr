@@ -20,13 +20,21 @@ const med = seedId('de000000', 1);
 const day = 86_400_000;
 
 type Setting = { id: string; version: number; appliesTo: string; role?: string; userId?: string; mode: string; days: number; approver: string; accessHours: number };
-const get = async (who = admin) => {
+const getRaw = async (who = admin) => {
   const res = await app.request('/admin/settings/inactive-access', {}, who);
-  return { status: res.status, body: (await res.json()) as Setting[] };
+  return { status: res.status, body: (await res.json()) as { version: number; settings: Setting[] } };
 };
-const patch = async (body: unknown, who = admin) => {
-  const res = await app.request('/admin/settings/inactive-access', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, who);
-  return { status: res.status, body: (await res.json()) as Setting[] };
+/** The settings only (the list inside the answer). */
+const get = async (who = admin) => {
+  const { status, body } = await getRaw(who);
+  return { status, body: body.settings };
+};
+/** PATCH with the current version unless the test passes its own. */
+const patch = async (body: any, who = admin) => {
+  const version = body?.version ?? (await getRaw(who)).body.version ?? 0;
+  const res = await app.request('/admin/settings/inactive-access', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...body, version }) }, who);
+  const json = (await res.json()) as { settings?: Setting[] };
+  return { status: res.status, body: (json.settings ?? json) as Setting[] };
 };
 const rule = (role: string, days: number, extra: Partial<Setting> = {}) => ({ appliesTo: 'role', role, mode: 'request_after_days', days, approver: 'head_doctor', accessHours: 24, ...extra });
 
@@ -48,6 +56,24 @@ async function patientWithEncounter(daysAgo: number) {
   return { patientId, encounterId: String(enc.rows[0]!.id) };
 }
 const open = async (encounterId: string, who = doctor) => (await app.request(`/staff/encounters/${encounterId}`, {}, who)).status;
+
+describe('inactive-access version (709)', () => {
+  it('GET carries a version that moves on every change; PATCH needs it and answers 409 stale_version when old', async () => {
+    const v0 = (await getRaw()).body.version;
+    const first = await app.request('/admin/settings/inactive-access', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ settings: [rule('nurse', 30)], version: v0 }) }, admin);
+    expect(first.status).toBe(200);
+    const after = (await first.json()) as { version: number; settings: Setting[] };
+    expect(after.version).toBeGreaterThan(v0);
+    expect(after.settings).toHaveLength(1);
+    const stale = await app.request('/admin/settings/inactive-access', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ settings: [], version: v0 }) }, admin);
+    expect(stale.status).toBe(409);
+    expect(JSON.stringify(await stale.json())).toContain('stale_version');
+    expect((await get()).body).toHaveLength(1);
+    const missing = await app.request('/admin/settings/inactive-access', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ settings: [] }) }, admin);
+    expect(missing.status).toBe(422);
+    expect((await patch({ settings: [] })).status).toBe(200);
+  });
+});
 
 describe('GET and PATCH /admin/settings/inactive-access', () => {
   it('starts empty (the default applies), then holds what the Admin set, roles before users', async () => {

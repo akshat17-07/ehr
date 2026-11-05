@@ -7,7 +7,8 @@ import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf, userOf } from '../../middleware/context.js';
 import { requirePermission } from '../../permissions/check.js';
 import { getPatient } from '../patients/patients.js';
-import { assertPatientAccess } from '../access/patient-access.js';
+import type { Queryable } from '../../db/migrate.js';
+import { assertPatientAccess, type Caller } from '../access/patient-access.js';
 import { addDiscount, billDiscounts } from './discounts.js';
 import { billPayments, payBill } from './payments.js';
 import { billHtml, PRINT_LANGUAGES } from './print.js';
@@ -69,6 +70,25 @@ const versionOnly = z.object({ version: z.number().int().min(1) }).strict();
 /** A JSON body, or undefined (then the schema answers 422). */
 const bodyOf = (c: Context) => c.req.json().catch(() => undefined);
 
+/**
+ * #711: the patient's name and UHID for a bill. The caller gets them only if they may open that patient's record
+ * (same check as the detail); otherwise (or if the patient is gone) both are null, so a list never shows a name the
+ * detail would refuse.
+ */
+async function patientLabels(db: Queryable, caller: Caller, ids: string[]): Promise<Map<string, { patientName: string | null; uhid: string | null }>> {
+  const out = new Map<string, { patientName: string | null; uhid: string | null }>();
+  for (const id of new Set(ids)) {
+    try {
+      const patient = await getPatient(db, id);
+      await assertPatientAccess(db, caller, patient);
+      out.set(id, { patientName: patient.name, uhid: patient.uhid });
+    } catch {
+      out.set(id, { patientName: null, uhid: null });
+    }
+  }
+  return out;
+}
+
 /** /staff/bills */
 export const billsRoutes = new Hono<AuthEnv>()
   // #116
@@ -81,15 +101,19 @@ export const billsRoutes = new Hono<AuthEnv>()
   // #117
   .get('/', requirePermission('bill.view'), async (c) => {
     const query = billsQuery.parse(c.req.query());
-    return c.json(await listBills(await dbOf(c), query));
+    const db = await dbOf(c);
+    const page = await listBills(db, query);
+    const labels = await patientLabels(db, userOf(c), page.items.map((b) => b.patientId));
+    return c.json({ ...page, items: page.items.map((b) => ({ ...b, ...labels.get(b.patientId) })) });
   })
   // #118
   .get('/:id', requirePermission('bill.view'), async (c) => {
     const db = await dbOf(c);
     const bill = await getBill(db, c.req.param('id'));
     auditDetails(c, { patientId: bill.patientId, recordType: 'bill', recordId: bill.id });
-    await assertPatientAccess(db, userOf(c), await getPatient(db, bill.patientId));
-    return c.json({ ...bill, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id), refunds: await billRefunds(db, bill.id) });
+    const patient = await getPatient(db, bill.patientId);
+    await assertPatientAccess(db, userOf(c), patient);
+    return c.json({ ...bill, patientName: patient.name, uhid: patient.uhid, discounts: await billDiscounts(db, bill.id), payments: await billPayments(db, bill.id), refunds: await billRefunds(db, bill.id) });
   })
   // #124
   .get('/:id/versions', requirePermission('bill.view'), async (c) => {

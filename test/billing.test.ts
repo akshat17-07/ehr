@@ -103,7 +103,7 @@ describe('GET /staff/bills/{id}', () => {
     const made = (await (await bill({ patientId: irfan, lines: [{ tariffId: tariff(5), qty: 1 }] })).json()) as Bill;
     const res = await app.request(`/staff/bills/${made.id}`, {}, doctor);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...made, discounts: [], payments: [], refunds: [] });
+    expect(await res.json()).toEqual({ ...made, patientName: expect.any(String), uhid: expect.any(String), discounts: [], payments: [], refunds: [] });
     const { rows } = await db.query(`SELECT action FROM audit_events WHERE record_id = $1 ORDER BY at`, [made.id]);
     expect(rows.map((r) => r.action)).toContain('view');
     expect((await app.request(`/staff/bills/${seedId('b1000000', 999)}`, {}, doctor)).status).toBe(404);

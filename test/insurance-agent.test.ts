@@ -96,8 +96,8 @@ describe('GET /other/insurance/patients (#393)', () => {
     const page = await list();
     expect(page.items.map((p) => p.patientId)).toEqual([ramesh, sita]);
     expect(page.nextCursor).toBeUndefined();
-    expect(Object.keys(page.items[0] ?? {}).sort()).toEqual(['ageYears', 'name', 'patientId', 'sex', 'uhid']);
-    expect(page.items[0]).toEqual({ patientId: ramesh, uhid: 'U24000001', name: 'Ramesh Kumar Sharma', sex: 'M', ageYears: yearsBetween('1968-05-14', today) });
+    expect(Object.keys(page.items[0] ?? {}).sort()).toEqual(['ageYears', 'linkEndsOn', 'name', 'patientId', 'sex', 'uhid']);
+    expect(page.items[0]).toEqual({ patientId: ramesh, uhid: 'U24000001', name: 'Ramesh Kumar Sharma', sex: 'M', ageYears: yearsBetween('1968-05-14', today), linkEndsOn: expect.toSatisfy((v: unknown) => v === null || typeof v === 'string') });
   });
 
   it('q matches name or UHID in any case; pages by cursor', async () => {
