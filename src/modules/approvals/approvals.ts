@@ -12,6 +12,8 @@ export interface Approval {
   kind: ApprovalKind;
   id: string;
   summary: string;
+  /** Refund, discount or payroll net amount in paise; null for the other kinds. */
+  amountPaise: number | null;
   requestedBy: string;
   requestedByName?: string;
   requestedAt: string;
@@ -20,7 +22,7 @@ export interface Approval {
 const rupees = (paise: unknown) => '₹' + (Number(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Per kind: the permission, and a query giving id, by (sub), at and the summary parts. $1 is the caller's sub. */
-const SOURCES: Record<ApprovalKind, { permission: Permission; sql: string; summary: (r: Record<string, unknown>) => string }> = {
+const SOURCES: Record<ApprovalKind, { permission: Permission; sql: string; summary: (r: Record<string, unknown>) => string; amount?: string }> = {
   access_request: {
     permission: 'approval.access',
     sql: `SELECT a.id, a.requested_by AS by, a.created_at AS at, a.reason, p.uhid FROM access_requests a
@@ -31,6 +33,7 @@ const SOURCES: Record<ApprovalKind, { permission: Permission; sql: string; summa
     permission: 'approval.refund',
     sql: `SELECT r.id, r.created_by AS by, r.created_at AS at, r.amount_paise, r.reason, p.uhid FROM refunds r
           LEFT JOIN patients p ON p.id = r.patient_id WHERE r.status = 'pending' AND r.created_by <> $1`,
+    amount: 'amount_paise',
     summary: (r) => `Refund ${rupees(r.amount_paise)} to ${r.uhid ?? 'a patient'}: ${r.reason}`,
   },
   discount: {
@@ -38,11 +41,13 @@ const SOURCES: Record<ApprovalKind, { permission: Permission; sql: string; summa
     sql: `SELECT d.id, d.created_by AS by, d.created_at AS at, d.amount_paise, d.reason, p.uhid FROM discounts d
           LEFT JOIN bills b ON b.id = d.bill_id LEFT JOIN patients p ON p.id = b.patient_id
           WHERE d.status = 'pending' AND d.created_by <> $1`,
+    amount: 'amount_paise',
     summary: (r) => `Discount ${rupees(r.amount_paise)} for ${r.uhid ?? 'a patient'}: ${r.reason}`,
   },
   payroll: {
     permission: 'approval.payroll',
     sql: `SELECT id, run_by AS by, created_at AS at, month, total_net_paise FROM payroll_runs WHERE status = 'draft' AND run_by <> $1`,
+    amount: 'total_net_paise',
     summary: (r) => `Payroll for ${r.month}: ${rupees(r.total_net_paise)} net`,
   },
   patient_merge: {
@@ -72,6 +77,7 @@ export async function listApprovals(db: Queryable, callerSub: string, permission
           kind: k,
           id: String(r.id),
           summary: SOURCES[k].summary(r),
+          amountPaise: SOURCES[k].amount ? Number(r[SOURCES[k].amount!]) : null,
           requestedBy: String(r.user_row_id ?? r.by),
           ...(r.user_name != null && { requestedByName: String(r.user_name) }),
           requestedAt: (r.at as Date).toISOString(),

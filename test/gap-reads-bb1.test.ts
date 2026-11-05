@@ -74,7 +74,7 @@ describe('#706 GET /staff/drugs/{id}', () => {
     const search = ((await get('/staff/drugs?q=paracetamol')).body as { id: string }[]).find((d) => d.id === id);
     expect(one.body).toEqual(search);
     expect(one.body).toMatchObject({ id, name: 'Paracetamol', version: expect.any(Number), active: true });
-    expect(one.body).not.toHaveProperty('ceilingPaise');
+    expect(one.body).toHaveProperty('ceilingPaise');
     // an inactive drug can still be read (old movements show its name)
     await db.query('UPDATE drugs SET active = false WHERE id = $1', [id]);
     expect(((await get(`/staff/drugs/${id}`)).body as { active: boolean }).active).toBe(false);

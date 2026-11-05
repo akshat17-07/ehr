@@ -20,6 +20,8 @@ export interface Drug {
   /** Percent. */
   gstRate?: number;
   mrpPaise?: number;
+  /** The NPPA ceiling price per unit; null when none. */
+  ceilingPaise: number | null;
   active: boolean;
 }
 
@@ -37,6 +39,7 @@ function toDrug(r: Record<string, unknown>): Drug {
     hsn: opt(r.hsn),
     gstRate: optNumber(r.gst_rate),
     mrpPaise: optNumber(r.mrp_paise),
+    ceilingPaise: optNumber(r.ceiling_paise) ?? null,
     active: r.active === true,
   };
   for (const key of Object.keys(drug) as (keyof Drug)[]) if (drug[key] === undefined) delete drug[key];
@@ -70,13 +73,12 @@ export async function getDrug(db: Queryable, id: string): Promise<Drug> {
   return toDrug(row);
 }
 
-export type AdminDrug = Drug & { ceilingPaise?: number };
+export type AdminDrug = Omit<Drug, 'ceilingPaise'> & { ceilingPaise?: number };
 
-// The staff search does not show the purchase ceiling; the Admin's add and edit do.
+// The Admin's add and edit leave ceilingPaise out when there is none; the staff reads say null (#705).
 function toAdminDrug(r: Record<string, unknown>): AdminDrug {
-  const drug: AdminDrug = { ...toDrug(r), ceilingPaise: optNumber(r.ceiling_paise) };
-  if (drug.ceilingPaise === undefined) delete drug.ceilingPaise;
-  return drug;
+  const { ceilingPaise, ...rest } = toDrug(r);
+  return ceilingPaise === null ? rest : { ...rest, ceilingPaise };
 }
 
 export interface NewDrug {

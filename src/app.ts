@@ -12,6 +12,7 @@ import { adminRightsRequestsRoutes } from './modules/compliance/rights-requests.
 import { adminReferrersRoutes } from './modules/referrals/admin-referrers.routes.js';
 import { adminPatientMergesRoutes, patientMergesRoutes } from './modules/patients/merges.routes.js';
 import { patientsRoutes } from './modules/patients/patients.routes.js';
+import { listInsurers, listTpas } from './modules/reference/payers.js';
 import { referenceRoutes } from './modules/reference/reference.routes.js';
 import { Hono } from 'hono';
 import {
@@ -205,7 +206,11 @@ export function createApp({
     .route('/', permissionsAdminRoutes);
   const patient = new Hono<AuthEnv>().use(requireUser('patient')).route('/me', meRoutes).route('/invites', patientAcceptRoutes).route('/', portalRoutes);
   const hospitalRoutes = new Hono<AuthEnv>().get('/', async (c) => c.json(await getHospital(await dbOf(c))));
-  const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
+  // #708: the same payer lists the staff read
+  const payerRoutes = new Hono<AuthEnv>()
+    .get('/insurers', async (c) => c.json(await listInsurers(await dbOf(c))))
+    .get('/tpas', async (c) => c.json(await listTpas(await dbOf(c))));
+  const insurance = new Hono<AuthEnv>().use(requireUser('staff', INSURANCE_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/', payerRoutes).route('/claims', agentClaimsRoutes).route('/documents', agentDocumentsRoutes).route('/', agentRoutes);
   const gp = new Hono<AuthEnv>().use(requireUser('staff', GP_GROUPS)).route('/me/permissions', myPermissionsRoutes).route('/me', meRoutes).route('/hospital', hospitalRoutes).route('/referrals', gpReferralsRoutes).route('/payments', gpPaymentsRoutes);
 
   // No sign-in: the token in the link and the emailed code are the proof (modules/records/share.routes.ts).

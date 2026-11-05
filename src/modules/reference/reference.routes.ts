@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AuthEnv } from '../../middleware/auth.js';
 import { dbOf } from '../../middleware/context.js';
-import { requirePermission } from '../../permissions/check.js';
+import { permissionsOf, requirePermission } from '../../permissions/check.js';
 import { listDrugBatches } from '../inventory/batches.js';
 import { searchCodes } from './codes.js';
 import { listDepartments } from './departments.js';
@@ -10,6 +10,7 @@ import { DRUG_SCHEDULES, getDrug, searchDrugs } from './drugs.js';
 import { listDoctors } from '../users/doctors.js';
 import { pageQuery } from '../../db/page.js';
 import { getHospital } from './hospital.js';
+import { getAdminHospital } from './hospital-edit.js';
 import { listInsurers, listPartnerHospitals, listTpas } from './payers.js';
 import { listTariffs, rateBoardRows } from './tariffs.js';
 
@@ -27,7 +28,11 @@ const boolText = z
 
 export const referenceRoutes = new Hono<AuthEnv>()
   // #8
-  .get('/hospital', async (c) => c.json(await getHospital(await dbOf(c))))
+  .get('/hospital', async (c) => {
+    const db = await dbOf(c);
+    // #705: the refund and discount limits are for those who manage settings
+    return c.json((await permissionsOf(c)).effective.includes('settings.manage') ? await getAdminHospital(db) : await getHospital(db));
+  })
   // #9
   .get('/departments', async (c) => {
     const query = z.object({ active: boolText }).parse(c.req.query());
