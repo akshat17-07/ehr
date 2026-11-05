@@ -93,6 +93,17 @@ export class Api extends Construct {
     props.database.grantConnect(this.role);
     props.files.grantPutAndRead(this.role);
     fieldKey.grantRead(this.role);
+    // Nightly backup and audit exports, written to the locked bucket in the backup account (write only, never read or
+    // delete). The backup account's bucket policy allows the same two prefixes.
+    if (config.backupAccountId) {
+      const backupBucket = names.backupBucket(config.stage, config.backupAccountId);
+      this.role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['s3:PutObject'],
+          resources: [`arn:aws:s3:::${backupBucket}/backup/${config.stage}/*`, `arn:aws:s3:::${backupBucket}/audit/${config.stage}/*`],
+        }),
+      );
+    }
     // Record-copy share links and their one-time codes (#147, #274), from this account's SES identities only.
     this.role.addToPolicy(
       new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [`arn:aws:ses:${Stack.of(this).region}:${Stack.of(this).account}:identity/*`] }),

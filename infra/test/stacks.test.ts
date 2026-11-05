@@ -44,6 +44,13 @@ describe('app stack', () => {
     expect(deletes).toHaveLength(1);
   });
 
+  it('never lets a role change Object Lock retention or legal holds', () => {
+    // Except CDK's own config.json helper on the website bucket (no Object Lock there, no patient data).
+    for (const s of statements(dev.app).filter((x) => !/WebsiteBucket/.test(JSON.stringify(x.Resource)))) {
+      expect(actions(s).filter((a) => /^s3:(\*|PutObjectRetention|PutObjectLegalHold|BypassGovernanceRetention)/.test(a))).toEqual([]);
+    }
+  });
+
   it('keeps a generated, retained field-encryption key for the API (value never in the template)', () => {
     for (const [stage, t] of [['dev', dev], ['prod', prod]] as const) {
       t.app.hasResource('AWS::SecretsManager::Secret', {

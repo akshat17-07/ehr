@@ -73,12 +73,19 @@ export class Files extends Construct {
     });
   }
 
-  // Upload and read only. The API never gets permission to delete patient files.
+  // Upload and read only. The API never gets permission to delete patient files, nor to touch Object Lock retention or
+  // legal holds (so no grantPut, whose PutObjectRetention / PutObjectLegalHold would let it alter locks).
+  // s3:ListBucket is kept so a missing key answers 404 (NotFound) instead of 403 on HeadObject.
   grantPutAndRead(grantee: iam.IGrantable): void {
-    this.bucket.grantPut(grantee);
-    this.bucket.grantRead(grantee);
-    this.exportsBucket.grantPut(grantee);
-    this.exportsBucket.grantRead(grantee);
+    for (const bucket of [this.bucket, this.exportsBucket]) {
+      grantee.grantPrincipal.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload'],
+          resources: [bucket.arnForObjects('*')],
+        }),
+      );
+      grantee.grantPrincipal.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [bucket.bucketArn] }));
+    }
   }
 
   // Copies every new file to the locked bucket in the backup account. Deletes are never copied.

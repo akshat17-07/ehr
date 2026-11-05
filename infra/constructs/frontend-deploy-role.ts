@@ -38,8 +38,11 @@ export class FrontendDeployRole extends Construct {
     });
 
     const { bucket, distribution } = props.website;
-    bucket.grantRead(this.role);
-    bucket.grantPut(this.role);
+    // Explicit actions (not grantPut): no Object Lock retention or legal-hold changes.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({ actions: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload'], resources: [bucket.arnForObjects('*')] }),
+    );
+    this.role.addToPolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [bucket.bucketArn] }));
     // config.json belongs to the backend deploy.
     this.role.addToPolicy(
       new iam.PolicyStatement({

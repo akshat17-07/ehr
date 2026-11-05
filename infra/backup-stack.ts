@@ -69,13 +69,14 @@ export class BackupStack extends Stack {
         conditions: { ArnEquals: { 'aws:PrincipalArn': appRole(names.replicationRole(config.stage)) } },
       }),
     );
-    // Nightly export from the API Lambda: add files under exports/ only.
+    // Nightly backup and audit exports from the API Lambda (src/jobs): add files under backup/<stage>/ and audit/<stage>/ only.
+    const exportPrefixes = [`backup/${config.stage}/*`, `audit/${config.stage}/*`];
     bucket.addToResourcePolicy(
       new iam.PolicyStatement({
         sid: 'NightlyExportFromApi',
         principals: [appAccount],
         actions: ['s3:PutObject'],
-        resources: [bucket.arnForObjects('exports/*')],
+        resources: exportPrefixes.map((p) => bucket.arnForObjects(p)),
         conditions: { ArnEquals: { 'aws:PrincipalArn': appRole(names.apiRole(config.stage)) } },
       }),
     );
@@ -102,7 +103,17 @@ export class BackupStack extends Stack {
 
     // Backup 2: the hospital PC downloads with this user (read only). Make its access key in the console.
     const pcUser = new iam.User(this, 'HospitalPcReader', { userName: `ehr-${config.stage}-hospital-pc` });
-    bucket.grantRead(pcUser, 'exports/*');
+    // Only those export prefixes: no replicated patient files, no bucket settings.
+    pcUser.addToPolicy(
+      new iam.PolicyStatement({ actions: ['s3:GetObject', 's3:GetObjectVersion'], resources: exportPrefixes.map((p) => bucket.arnForObjects(p)) }),
+    );
+    pcUser.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:ListBucket', 's3:ListBucketVersions'],
+        resources: [bucket.bucketArn],
+        conditions: { StringLike: { 's3:prefix': ['backup/*', 'audit/*'] } },
+      }),
+    );
 
     new CfnOutput(this, 'BackupBucket', { value: bucket.bucketName });
     new CfnOutput(this, 'HospitalPcUser', { value: pcUser.userName });
